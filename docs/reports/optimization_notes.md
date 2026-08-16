@@ -368,3 +368,10 @@
 - 落地: storage order_failures 表(ts/base/inst_id/side/qty/stage/error);引擎 13 个失败点接线(开仓/平仓/止损挂单/TP 挂单/预检拒绝——含"名义不足最小张数"等信号未成单原因);体检 H11(近 24h 失败 ≤5 告警);看板闭环健康页新增下单失败面板。
 - 测试: test_strategy_b 新增失败落库用例(15 项全绿)。
 - 说明: XRP 23:16 的拒单早于本日志上线,不在表内(未来失败全量记录)。
+
+## 2026-08-17 凌晨 dsh-alert-inject 推送插件落地（用户方案"异常推入本 session"）
+- 成果: 监控失败 → POST 127.0.0.1:3080/alert-inject → 转发事件 → 客户端注入当前会话,端到端实测通过(beacon 全链 injected-ok)。
+- 实现: 工作区 dsh-alert-inject 插件(host 路由+客户端 bundle);dsh-api-remotes 白名单加 alert/injected;装进 web profile + cordis.patch.yml;dsh web 移交 launchd(com.dsh.web KeepAlive)托管。
+- 调试踩坑: sessions.sessionOf(ctx) 吃 context 非 id,正确 API sessions.binding(id).session;客户端 bundle 热更新、host 改动需重启;首次事件未达是浏览器未刷新加载新 bundle。
+- crypto-agent 侧: alert_diag.diagnose_and_alert 失败时同时 POST 注入(飞书之外第二通道)。
+- 遗留(可接受): 插件内调试埋点保留(beacon+probe,probe 仅显式触发,生产无害)。
