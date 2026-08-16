@@ -276,3 +276,10 @@
 
 ### 既有发现（未改，防越界）
 - code_graph --check 报 1 处 pre-existing：directional_trader.pid 被 engines 与 service 两层写入（本次未引入，建议后续单独处理）。
+
+### DEF-8 收尾（2026-08-16 晚）：test_service_api 漏隔离被捕获并修复
+- 现象：生产 scan_decisions 在测试运行时刻新增 BTC 行（19:23:06、19:26:59 等），复查全表共 33 条 BTC 行。
+- 根因：test_service_api.main() 构造 ServiceTrader 未传 db_path（Phase0 编辑该文件时只删了套利引用，漏了隔离）；其 trader.tick() 触发 scan_signals → 写共享生产库。生产引擎当日候选池为 AEON/LINK（日志可证），从未扫描 BTC → 全部 BTC 行均为测试痕迹（含 test_threshold_gate 的"阈值85/70 成对"签名行）。
+- 修复：① ServiceTrader.__init__ 增加 db_path 透传（worker.py，生产默认 None 行为不变）；② test_service_api 传隔离路径；③ 清理生产表 33 条 BTC 测试行（DELETE WHERE base='BTC'，理由与证据如上）。
+- 验证：test_service_api 24/24 绿；重跑前后生产 scan_decisions 计数不变（24）；py_compile OK。活体进程无需重启（db_path 默认 None 与现运行行为一致，下次自然重启生效）。
+- 预防：任何构造 DirectionalTrader/ServiceTrader 的测试必须全对象隔离清单核对（journal/ledger/threshold/exp_bank/scan_decisions 五项）；改动测试文件时重跑该文件并核对生产库行数不变。

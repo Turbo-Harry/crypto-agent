@@ -29,8 +29,8 @@ from engines.directional_trader import DirectionalTrader, connect as connect_dir
 class ServiceTrader(DirectionalTrader):
     """方向性引擎 + 暂停开关。暂停时跳过 scan_signals，监控照常。"""
 
-    def __init__(self, exchange=None, rt=None):
-        super().__init__(exchange=exchange, rt=rt)
+    def __init__(self, exchange=None, rt=None, db_path=None):
+        super().__init__(exchange=exchange, rt=rt, db_path=db_path)
         self._pause = threading.Event()   # set() = 暂停开仓
         self.last_error = ""
 

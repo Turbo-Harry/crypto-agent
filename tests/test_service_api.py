@@ -51,11 +51,14 @@ class _FakeWorker:
 def main():
     # 组装：FakeAdapter + ServiceTrader（离线）+ TestClient
     fake = FakeAdapter(usdt_free=10_000.0)
-    trader = ServiceTrader(exchange=fake, rt=None)
-    trader.last_hb = time.time()
     # 隔离持久化（临时 journal/账本，不碰活体服务状态文件）
     import tempfile
     tmp = tempfile.mkdtemp(prefix="tst_svc_")
+    # Phase0 T0.4：ServiceTrader 也必须传 db_path——本测试会 tick() 触发
+    # scan_signals，不隔离会把测试决策行写进生产 scan_decisions（DEF-8）。
+    trader = ServiceTrader(exchange=fake, rt=None,
+                           db_path=os.path.join(tmp, "scan.db"))
+    trader.last_hb = time.time()
     from execution.trade_journal import TradeJournal
     from execution.position_ownership import PositionLedger
     from decision.threshold_learning import ThresholdLearner
