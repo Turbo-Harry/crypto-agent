@@ -18,6 +18,9 @@ import json
 import os
 import time
 
+# 旧记录单位回填用的合约面值表（legacy size 是"张"时换算币数；新代码不再依赖此表）
+LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0}
+
 
 class TradeJournal:
     def __init__(self, path="trade_journal.json"):
@@ -35,15 +38,28 @@ class TradeJournal:
                 self._backfill_notional()
 
     def _backfill_notional(self):
-        """旧记录缺投注额字段时按 size×price 回填（只补一次，落盘）。"""
+        """旧记录缺 size_unit/notional 时回填（只补一次，落盘）。
+
+        单位坑（2026-08-16 实盘对账发现）：旧版 journal 的 size 存的是【合约张数】
+        而非基础币数（0.53 张 = 0.053 ETH）。用交易所持仓对账印证：3 笔合计 1.22 张
+        = 交易所 1.22 张。故 legacy 回填按 张 × ctVal × price 计算名义额，
+        并打 size_unit="contracts(legacy)" 标注；新代码从此只写币数。
+        """
         dirty = False
         for t in self.trades:
-            if "notional_usdt" not in t:
+            if "size_unit" not in t:
+                t["size_unit"] = "contracts(legacy)"
+                dirty = True
+            if "notional_usdt" not in t or (t.get("size_unit") == "contracts(legacy)"
+                                             and t.get("notional_calc") != "legacy"):
                 size = float(t.get("size") or 0)
                 entry = float(t.get("entry_price") or 0)
                 stop = float(t.get("stop_loss") or entry)
-                t["notional_usdt"] = round(size * entry, 2)
-                t["risk_usdt"] = round(abs(entry - stop) * size, 2)
+                ct_val = float(t.get("ct_val") or LEGACY_CT_VAL.get(t.get("symbol"), 1.0))
+                t["ct_val"] = ct_val
+                t["notional_usdt"] = round(size * ct_val * entry, 2)
+                t["risk_usdt"] = round(abs(entry - stop) * size * ct_val, 2)
+                t["notional_calc"] = "legacy"
                 dirty = True
         if dirty:
             self._save()
@@ -70,6 +86,7 @@ class TradeJournal:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "size": size,
+            "size_unit": "base",   # 新代码统一存基础币数量（旧记录是 contracts(legacy)）
             "direction": direction,
             "venue": venue,   # "swap"（合约）/ "spot"（现货，美股代币等无合约标的）
             "score": score,

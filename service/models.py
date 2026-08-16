@@ -127,3 +127,13 @@ class ScanOut(BaseModel):
     date: str
     fallback: bool
     candidates: List[dict]      # {base, dir, score, ...}
+
+
+class ReconcileOut(BaseModel):
+    """journal 记账 vs 交易所真实持仓 对账结果。"""
+    snapshot_ts: Optional[float]     # 本地仓位快照时间（None=尚无快照）
+    journal_open: List[dict]         # journal 未平仓（含折算币数与投注额）
+    exchange_positions: List[dict]   # 交易所实时持仓
+    per_symbol: List[dict]           # {symbol, journal_base, exchange_base, diff}
+    balanced: bool                   # 全部一致？
+    notes: List[str]                 # 差异说明（如 legacy 单位换算）

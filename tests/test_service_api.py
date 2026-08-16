@@ -121,10 +121,30 @@ def main():
           jr["trades"] and jr["trades"][0].get("notional_usdt") is not None)
     r = client.get("/status")
     check("/status 未平仓投注额 > 0", r.json()["open_notional_usdt"] > 0)
+    # 对账：journal 记账 vs 交易所持仓（FakeAdapter 记账一致 → balanced=true）
+    r = client.get("/reconcile")
+    rc = r.json()
+    check("/reconcile 200 且 balanced", r.status_code == 200 and rc["balanced"] is True)
+    check("/reconcile per_symbol 含 BTC", any(p["symbol"] == "BTC" for p in rc["per_symbol"]))
 
     # 心跳文件（tick 会写 heartbeat_directional.txt）
     check("tick 写心跳文件", os.path.exists("heartbeat_directional.txt")
           and time.time() - float(open("heartbeat_directional.txt").read().strip()) < 30)
+
+    # 旧记录 legacy 单位回填：写入一张 legacy journal 记录（0.5 张 ETH），
+    # 回填后 notional = 0.5 × ctVal(0.1) × entry，且标 size_unit
+    legacy_path = os.path.join(tmp, "legacy.json")
+    import json as _json
+    with open(legacy_path, "w") as f:
+        _json.dump({"trades": [{"id": "txn_legacy", "symbol": "ETH", "size": 0.5,
+                                "entry_price": 1885.0, "stop_loss": 1844.0,
+                                "take_profit": 1968.0, "status": "open",
+                                "direction": "long"}], "lessons": []}, f)
+    j2 = TradeJournal(path=legacy_path)
+    leg = j2.trades[0]
+    check("legacy 回填 notional（张×ctVal×价）",
+          abs(leg.get("notional_usdt") - 0.5 * 0.1 * 1885.0) < 0.01)
+    check("legacy 标 size_unit", leg.get("size_unit") == "contracts(legacy)")
 
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)

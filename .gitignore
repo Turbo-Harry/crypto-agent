@@ -22,6 +22,7 @@ heartbeat_*.txt
 watchdog_state.json
 trade_journal.json
 watchlist.json
+positions_snapshot.json
 position_ownership.json
 position_ownership.lock
 threshold_state*.json

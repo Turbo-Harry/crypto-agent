@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException
 from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             StatusOut, WatchItem, WatchlistOut, SignalOut,
                             TradeItem, JournalOut, ControlOut, ArbStatusOut,
-                            RealtimeOut, ScanOut)
+                            RealtimeOut, ScanOut, ReconcileOut)
 
 app = FastAPI(
     title="Crypto Agent 交易服务",
@@ -221,6 +221,59 @@ def resume():
     """恢复方向性开仓信号扫描。"""
     _trader().resume()
     return ControlOut(action="resume", paused=False, message="已恢复开仓信号扫描")
+
+
+@app.get("/reconcile", response_model=ReconcileOut, tags=["观测"])
+def reconcile():
+    """对账：journal 记账（本地） vs 交易所真实持仓（唯一事实源）。
+    legacy 记录 size 是张数，按 ct_val 折算币数后对比；不一致即报告，不静默。"""
+    import json as _json
+    from collections import defaultdict
+    t = _trader()
+    # 快照（最近一次本地落盘）
+    snap = None
+    try:
+        with open("positions_snapshot.json") as f:
+            snap = _json.load(f)
+    except Exception:
+        pass
+    # journal 未平仓 → 折算币数
+    from execution.trade_journal import LEGACY_CT_VAL
+    journal_open, j_by_sym = [], defaultdict(float)
+    notes = []
+    for x in t.journal.trades:
+        if x["status"] != "open":
+            continue
+        size = float(x.get("size") or 0)
+        if x.get("size_unit") == "contracts(legacy)":
+            ct_val = float(x.get("ct_val") or LEGACY_CT_VAL.get(x["symbol"], 1.0))
+            base = size * ct_val
+            notes.append(f"{x['id']} {x['symbol']} 为 legacy 单位（{size} 张 × ctVal {ct_val}），已折算")
+        else:
+            base = size
+        j_by_sym[x["symbol"]] += base
+        journal_open.append({"id": x["id"], "symbol": x["symbol"],
+                             "base_qty": round(base, 8), "venue": x.get("venue") or "swap",
+                             "notional_usdt": x.get("notional_usdt")})
+    # 交易所持仓 → 币数
+    positions = t.exchange.fetch_positions()
+    exchange_positions, e_by_sym = [], defaultdict(float)
+    for p in positions:
+        e_by_sym[p.base] += p.base_qty
+        exchange_positions.append({"inst_id": p.inst_id, "side": p.side,
+                                   "contracts": p.contracts,
+                                   "base_qty": round(p.base_qty, 8), "avg_px": p.avg_px})
+    syms = sorted(set(j_by_sym) | set(e_by_sym))
+    per_symbol = [{"symbol": s,
+                   "journal_base": round(j_by_sym.get(s, 0.0), 8),
+                   "exchange_base": round(e_by_sym.get(s, 0.0), 8),
+                   "diff": round(e_by_sym.get(s, 0.0) - j_by_sym.get(s, 0.0), 8)}
+                  for s in syms]
+    balanced = all(abs(p["diff"]) < 1e-9 for p in per_symbol)
+    return ReconcileOut(snapshot_ts=snap.get("ts") if snap else None,
+                        journal_open=journal_open,
+                        exchange_positions=exchange_positions,
+                        per_symbol=per_symbol, balanced=balanced, notes=notes)
 
 
 @app.get("/error", response_model=dict, tags=["观测"])

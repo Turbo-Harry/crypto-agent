@@ -16,6 +16,7 @@
 import threading
 import time
 import traceback
+import json
 
 import os
 import sys
@@ -97,15 +98,34 @@ class TraderWorker:
         return all(not t.is_alive() for t in self._threads)
 
     # ---------- 引擎循环 ----------
+    def _save_positions_snapshot(self):
+        """本地仓位快照：把交易所持仓（唯一事实源）定期落盘。
+        进程崩溃/重启后可对账：journal 记账 vs 交易所真实持仓。原子写。"""
+        try:
+            pos = [{"inst_id": p.inst_id, "side": p.side, "contracts": p.contracts,
+                    "base_qty": round(p.base_qty, 8), "avg_px": p.avg_px}
+                   for p in self.exchange.fetch_positions()]
+            tmp = "positions_snapshot.json.tmp"
+            with open(tmp, "w") as f:
+                json.dump({"ts": time.time(), "positions": pos}, f, ensure_ascii=False)
+            os.replace(tmp, "positions_snapshot.json")
+        except Exception as e:
+            print(f"仓位快照失败: {e}")
+
     def _dir_loop(self):
         t = self.trader
         t._last_scan = 0
         t._last_risk_update = 0
         t.signal_cool = {}
+        self._last_snapshot = 0
         while not self._stop.is_set():
             try:
                 t.tick()                       # 心跳在 tick 内写
                 self.last_hb_dir = time.time()
+                # 本地仓位快照（每 60 秒，交易所持仓是唯一事实源）
+                if time.time() - self._last_snapshot >= 60:
+                    self._last_snapshot = time.time()
+                    self._save_positions_snapshot()
             except Exception as e:
                 t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{traceback.format_exc(limit=3)}"
                 print(f"方向性引擎异常: {e}")
