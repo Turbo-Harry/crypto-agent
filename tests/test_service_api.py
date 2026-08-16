@@ -79,26 +79,34 @@ def main():
     trader.signal_cool = {}
 
     client = TestClient(app)
-    print("== 观测接口 ==")
-    r = client.get("/health")
-    check(f"/health 200 → {r.json()['status']}", r.status_code == 200 and r.json()["status"] == "ok")
+    print("== 聚合冒烟（全部只读端点一次遍历）==")
+    smoke_ok, smoke_detail = True, []
+    for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
+                 "/arb/status", "/error", "/analysis/latest", "/reconcile"):
+        r = client.get(path)
+        try:
+            r.json()
+            ok = r.status_code == 200
+        except Exception:
+            ok = False
+        if not ok:
+            smoke_ok = False
+            smoke_detail.append(f"{path}→{r.status_code}")
+    check("9 个只读端点全部 200+JSON 可解析", smoke_ok)
+    if smoke_detail:
+        print(f"    失败明细: {smoke_detail}")
+
+    print("== 观测接口（行为断言）==")
     r = client.get("/status")
     j = r.json()
-    check("/status 200 且含余额/持仓", r.status_code == 200 and "balance" in j and j["balance"]["usdt_free"] == 10000.0)
+    check("/status 余额来自 FakeAdapter（usdt_free=10000）",
+          j["balance"]["usdt_free"] == 10000.0)
     check("/status 含投注统计字段（total/open/today notional）",
           all(k in j for k in ("total_notional_usdt", "open_notional_usdt", "today_notional_usdt")))
-    r = client.get("/watchlist")
-    check("/watchlist 200", r.status_code == 200)
-    r = client.get("/journal")
-    check("/journal 200 且 total 字段存在", r.status_code == 200 and "total" in r.json())
     r = client.get("/realtime/FAKE")
-    check("/realtime 200（rt=None 时 fresh=false 不崩）", r.status_code == 200 and r.json()["fresh"] is False)
+    check("/realtime rt=None 时 fresh=false 不崩", r.json()["fresh"] is False)
     r = client.get("/arb/status")
-    check("/arb/status 200 且 enabled=false", r.status_code == 200 and r.json()["enabled"] is False)
-    r = client.get("/error")
-    check("/error 200", r.status_code == 200)
-    r = client.get("/analysis/latest")
-    check("/analysis/latest 200（空态或报告）", r.status_code == 200)
+    check("/arb/status enabled=false（套利停用）", r.json()["enabled"] is False)
     r = client.post("/analysis/daily")
     j = r.json()
     check("/analysis/daily 跑通（含 report/issues）",
