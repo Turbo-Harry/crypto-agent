@@ -128,6 +128,25 @@ CREATE TABLE IF NOT EXISTS factor_trials (
     expression TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_factor_trials_ts ON factor_trials(ts);
+
+-- Phase 1 结构化特征采集（每笔交易一行，开仓写入入场特征、平仓更新离场特征）
+-- 字段定义与来源见 docs/architecture/trade_features_schema.md
+CREATE TABLE IF NOT EXISTS trade_features (
+    trade_id TEXT PRIMARY KEY,
+    entry_ts REAL, symbol TEXT, direction TEXT, venue TEXT,
+    entry_price REAL, stop_loss REAL, take_profit REAL, atr REAL,
+    signal_score REAL,                     -- 信号连续分(影子模式:只记录不进决策)
+    regime_tag TEXT,                       -- trend / range / vol 三分位标签
+    vol_pct REAL, trend_slope REAL, tf4h_spread REAL,
+    of_imbalance REAL, of_taker_ratio REAL,          -- 订单流(币安镜像)
+    of_oi_usd REAL, of_lsr_taker REAL,               -- 持仓/多空比(Gate.io)
+    of_long_liq REAL, of_short_liq REAL,             -- 爆仓量
+    exit_ts REAL, exit_price REAL, exit_reason TEXT,
+    pnl REAL, r_multiple REAL, mfe_r REAL, mae_r REAL,
+    holding_hours REAL, slippage_bps REAL, reversal INTEGER,
+    features_missing TEXT                  -- 缺失字段清单(质量报告;生产目标=空串)
+);
+CREATE INDEX IF NOT EXISTS idx_tf_symbol_ts ON trade_features(symbol, entry_ts);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）

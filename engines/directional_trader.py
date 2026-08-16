@@ -305,11 +305,34 @@ class DirectionalTrader:
         last = klines[-1]
         body = abs(last["close"] - last["open"])
         lower_wick = min(last["open"], last["close"]) - last["low"]
+        upper_wick = last["high"] - max(last["open"], last["close"])
         # 日内入场参考价用实时 tick 价（市价单实际成交价），
         # 趋势/ATR 仍来自 1 小时线——避免"信号收盘价 vs 市价成交"错位（RES-11）
         entry_ref = self._ticker_last(base)
         if entry_ref is None:
             entry_ref = last["close"]
+
+        def _shadow(price_near_ema, wick):
+            """Phase 1 T1.3 影子连续分（0-100，只记录、不进决策——阈值逻辑零改动）:
+            拒绝K线强度 34% + 回踩深度适中 33% + 1h 趋势离散度 33%。
+            同时采集轻量 regime 标签（T1.4:波动率分位+趋势斜率,不用 HMM）。"""
+            try:
+                wick_s = min(wick / body, 3.0) / 3.0 if body > 0 else 0.0
+                depth_s = (max(0.0, 1.0 - abs(price_near_ema - ema20[-1]) / atr_val)
+                           if atr_val and atr_val > 0 else 0.0)
+                trend_s = (min(abs(ema20[-1] - ema50[-1]) / (ema50[-1] * 0.02), 1.0)
+                           if ema50[-1] else 0.0)
+                score = round(100 * (0.34 * wick_s + 0.33 * depth_s
+                                     + 0.33 * trend_s), 1)
+                reg = None
+                try:
+                    from engines.feature_collector import compute_regime
+                    reg = compute_regime(klines, locals().get("c4"))
+                except Exception:
+                    reg = None
+                return score, reg
+            except Exception:
+                return None, None
 
         # 做多信号：多头趋势 + 回踩 EMA20 不破 + 拒绝K线（下影线）
         if ema20[-1] > ema50[-1] and last["low"] <= ema20[-1] and last["close"] > ema20[-1]:
@@ -317,21 +340,24 @@ class DirectionalTrader:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != 1:
                     return None
+                score, regime = _shadow(last["low"], lower_wick)
                 return {"dir": "long", "entry": entry_ref,
                         "stop": entry_ref - atr_val,
                         "tp": entry_ref + 2 * atr_val,
-                        "atr": atr_val}
+                        "atr": atr_val,
+                        "shadow_score": score, "regime": regime}  # Phase1 影子
         # 做空信号：空头趋势 + 反弹 EMA20 不破 + 拒绝K线（上影线）
-        upper_wick = last["high"] - max(last["open"], last["close"])
         if ema20[-1] < ema50[-1] and last["high"] >= ema20[-1] and last["close"] < ema20[-1]:
             if upper_wick >= body * 1.5:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != -1:
                     return None
+                score, regime = _shadow(last["high"], upper_wick)
                 return {"dir": "short", "entry": entry_ref,
                         "stop": entry_ref + atr_val,
                         "tp": entry_ref - 2 * atr_val,
-                        "atr": atr_val}
+                        "atr": atr_val,
+                        "shadow_score": score, "regime": regime}  # Phase1 影子
         return None
 
     # ---------- 执行：开仓（合约或现货） ----------
@@ -420,6 +446,13 @@ class DirectionalTrader:
                 size=qty, direction="long", score=score,
                 adopted_lesson_ids=adopted_ids, atr_value=sig["atr"],
                 signal_price=sig["entry"], venue="spot")
+            # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
+            try:
+                from engines.feature_collector import collect_entry_features
+                collect_entry_features(tid, base, sig, "spot",
+                                       self.exchange.name, db_path=self._db_path)
+            except Exception:
+                pass
             msg = (f"🎯 现货开仓 {base} long\n入场 {price:.2f} | 止损 {sig['stop']:.2f} | "
                    f"止盈 {sig['tp']:.2f}\n数量 {qty}（现货无杠杆，止损由本地监控执行）")
             print(msg)
@@ -514,6 +547,13 @@ class DirectionalTrader:
                 adopted_lesson_ids=adopted_ids,          # R2-3：本笔实际采纳的经验
                 atr_value=sig["atr"], signal_price=sig["entry"],
                 venue="swap")  # 合约腿
+            # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
+            try:
+                from engines.feature_collector import collect_entry_features
+                collect_entry_features(tid, base, sig, "swap",
+                                       self.exchange.name, db_path=self._db_path)
+            except Exception:
+                pass
             # R2-5: TP 挂失败 → 台账打标 tp_missing（本地 monitor 止盈兜底）
             if FLAG_ENABLE_EXCHANGE_TP and not tp_ok:
                 for t in self.journal.trades:
@@ -698,6 +738,14 @@ class DirectionalTrader:
                              post_exit_reverse=post_rev)   # Phase0 T0.3
         # 复盘报告落盘（写入 trade_journal.json 该笔记录的 review 字段，事后可查）
         self.journal.save_review(t["id"], report)
+        # Phase 1: 离场特征落库（MFE/MAE 由 1m K 线高低点计算;采集失败不影响复盘链）
+        try:
+            kl1m = self._fetch_klines_any(base, "1m", 500)
+            from engines.feature_collector import collect_close_features
+            collect_close_features(t["id"], t, closed, kl1m, post_rev,
+                                   db_path=self._db_path)
+        except Exception:
+            pass
         lessons = report.get("lessons", [])
         pnl = closed.get("pnl")
         for l in lessons:

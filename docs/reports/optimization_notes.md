@@ -302,3 +302,12 @@
 - 离线单测 tests/test_factor_gate.py 6 项全绿(随机拒/单调过/高成本拒/冗余拒/无逻辑降级/日志落库);全量回归 104 项绿。
 - Deflated Sharpe/PBO 留接口钩子(试验日志字段齐备),诚实标注未实现(见 prompt §4)。
 - 影子政策: 任何因子 promote+人工批准前不得进决策(prompt §6 红线 1);factor_top.json 保持无消费方。
+
+## 2026-08-16 晚 Phase 1 特征采集实施（用户启动）
+- 新增 storage trade_features 表 + engines/feature_collector.py（入场/离场特征采集，影子模式、离线安全、失败记账不阻断）。
+- 接线：scan_signal 影子连续分(0-100,拒绝K线34%+回踩深度33%+趋势离散度33%)与轻量 regime(波动率分位+趋势斜率+4h 离散度,不用 HMM)；open_position 两路径采集入场特征；_post_close_review 采集离场特征（MFE/MAE 由 1m K 线高低点算 R 计、滑点、持仓时长、反转）。
+- 修复真实缺口：TradeJournal.log_exit 此前不落 exit_time（持仓时长/MFE 依赖），已补。
+- deep_review 双轨输出（metrics 数值伴文字教训）。
+- 订单流特征接入（币安镜像订单簿/主动买占比 + Gate.io OI/爆仓量），仅生产 OKX 适配器启用；失败→null+features_missing 记账。
+- 验收：test_phase1_features.py 16 项全绿；全量回归 120 项全绿（零回归）；schema 文档 docs/architecture/trade_features_schema.md。
+- 影子政策：signal_score 等特征只记录不进决策，消费方须过 S1-S3 验证（schema 文档 §三）。

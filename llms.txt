@@ -15,6 +15,7 @@
 - [docs/architecture/code_graph.md](docs/architecture/code_graph.md): 代码知识图谱（模块/符号/数据流三层 + --check/--query）
 - [docs/architecture/exchange_layers.md](docs/architecture/exchange_layers.md): 交易所访问四层（transport/adapter/base/models）
 - [docs/architecture/mtf_resonance_design.md](docs/architecture/mtf_resonance_design.md): 1h+4h 多周期共振设计
+- [docs/architecture/trade_features_schema.md](docs/architecture/trade_features_schema.md): Phase 1 特征采集 schema（影子模式，trade_features 表）
 
 ## 经验与踩坑（写代码前必读）
 

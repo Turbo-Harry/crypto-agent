@@ -158,6 +158,8 @@ class TradeJournal:
                 t["status"] = "closed"
                 t["exit_price"] = exit_price
                 t["exit_reason"] = exit_reason
+                # Phase 1: 平仓时间落盘（持仓时长/MFE/MAE 特征依赖,此前缺失）
+                t["exit_time"] = time.time()
                 if t.get("direction") == "short":
                     t["pnl"] = (t["entry_price"] - exit_price) / t["entry_price"]
                 else:

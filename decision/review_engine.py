@@ -119,7 +119,12 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
             "implies": "loss",
             "lesson": f"盈亏比 {rr:.1f} < 2，这笔交易本就不该入场，下次入场前先算 R:R"})
 
-    return {"pnl": pnl, "rr": rr, "lessons": lessons}
+    # Phase 1 T1.2 双轨输出: 文字教训给人看,数值 metrics 供统计(MFE/MAE 等
+    # 由 feature_collector 另行采集,R 倍数/止损距离等基础量随复盘报告落盘)。
+    return {"pnl": pnl, "rr": rr, "lessons": lessons,
+            "metrics": {"stop_dist": round(stop_dist, 6),
+                        "tp_dist": round(tp_dist, 6),
+                        "rr": round(rr, 4)}}
 
 
 class ExperienceBank:

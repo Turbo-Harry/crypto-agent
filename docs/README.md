@@ -15,7 +15,7 @@
 
 根目录保留三个入口文档（不在 docs/ 内）：`README.md`（项目总览）、`AGENTS.md`（AI 协作模型）、`docs/README.md`（本索引）。
 
-## 二、按时间线（全部 28 篇）
+## 二、按时间线（全部 29 篇）
 
 | 时间 | 文档 | 一句话 |
 |---|---|---|
@@ -47,6 +47,7 @@
 | 08-16 19:10 | [plans/2026-08-16_self_evolution_design.md](plans/2026-08-16_self_evolution_design.md) | 自进化系统设计方案 v0.2（现状/DEF 缺陷/业界标准验收/Phase 路线图/质疑轮） |
 | 08-16 19:40 | [reports/2026-08-16_strategy_research.md](reports/2026-08-16_strategy_research.md) | 业界策略调研：订单流/聪明钱/分场景选策略（Agent A 格式，附来源） |
 | 08-16 21:20 | [prompts/2026-08-16_factor_mining_goal_prompt.md](prompts/2026-08-16_factor_mining_goal_prompt.md) | 因子挖掘完善目标 prompt（验证门/试验日志/影子政策） |
+| 08-16 22:10 | [architecture/trade_features_schema.md](architecture/trade_features_schema.md) | Phase 1 特征采集 schema（MFE/MAE/R 倍数/regime/订单流/影子分） |
 
 ## 三、命名约定
 
