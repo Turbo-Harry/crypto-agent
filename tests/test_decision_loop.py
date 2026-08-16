@@ -40,13 +40,18 @@ def check(name, cond):
 
 
 def _make_trader(tmp):
-    """隔离环境：临时 DB 的 journal + 经验库 + 空 FakeAdapter。"""
+    """隔离环境：临时 DB 的 journal + 经验库 + 空 FakeAdapter。
+    Phase0 T0.4：决策日志（scan_decisions）与阈值状态也全隔离，防污染生产库。"""
     fake = FakeAdapter(usdt_free=10_000.0)
-    dt = DirectionalTrader(exchange=fake, rt=None)
+    dt = DirectionalTrader(exchange=fake, rt=None,
+                           db_path=os.path.join(tmp, "scan.db"))
     from execution.position_ownership import PositionLedger
+    from decision.threshold_learning import ThresholdLearner
     dt.journal = TradeJournal(path=os.path.join(tmp, "j.json"))
     dt.exp_bank = ScoredExperience(path=os.path.join(tmp, "e.json"))
     dt.ledger = PositionLedger(path=os.path.join(tmp, "ledger.json"))
+    dt.threshold_learner = ThresholdLearner(path="test_dir",
+                                            db_path=os.path.join(tmp, "th.db"))
     dt.evolver.bank = _ExpAdapter(dt.exp_bank)
     return dt, fake
 

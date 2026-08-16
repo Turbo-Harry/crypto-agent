@@ -49,11 +49,13 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
         if chase > 0.02:
             lessons.append({
                 "category": "入场时机",
+                "implies": "loss",   # Phase0 T0.2：归因方向=追高导致亏损
                 "lesson": f"追高 {chase*100:.1f}%：入场价 {entry} 比信号价 {signal_price} 高出 {chase*100:.1f}%，"
                           f"下次用限价单挂在信号价附近，不追市价"})
         elif chase < -0.02:
             lessons.append({
                 "category": "入场时机",
+                "implies": "loss",
                 "lesson": f"入场价低于信号价 {abs(chase)*100:.1f}%（可能信号已失效才成交），下次检查信号是否仍成立"})
 
     # ---- 2. 止损质量 ----
@@ -63,16 +65,19 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
         if stop_in_atr < 1.0:
             lessons.append({
                 "category": "止损",
+                "implies": "loss",
                 "lesson": f"止损 {stop_dist*100:.1f}% 只有 {stop_in_atr:.1f}×ATR，太紧，容易被噪音扫掉，"
                           f"建议至少 1.5×ATR"})
         elif stop_in_atr > 3.0:
             lessons.append({
                 "category": "止损",
+                "implies": "loss",
                 "lesson": f"止损 {stop_dist*100:.1f}% 达 {stop_in_atr:.1f}×ATR，太宽，单笔亏损过大，"
                           f"建议 1.5~2.0×ATR 并相应缩小仓位"})
     if post_exit_reverse:
         lessons.append({
             "category": "止损",
+            "implies": "loss",
             "lesson": "止损后被插针扫掉、价格反转，说明止损位放在流动性扫损区（整数关口/前低），"
                       "下次止损放结构点外 + 0.3×ATR 缓冲"})
 
@@ -83,6 +88,7 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
         if actual_loss > stop_dist * 1.3:
             lessons.append({
                 "category": "出场",
+                "implies": "loss",
                 "lesson": f"实际亏损 {actual_loss*100:.1f}% 明显超过预设止损 {stop_dist*100:.1f}%（跳空/滑点），"
                           f"说明止损单未及时成交，下次用市价止损而非限价止损"})
     else:
@@ -90,6 +96,7 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
         if pnl < tp_dist * 0.5:
             lessons.append({
                 "category": "出场",
+                "implies": "win",
                 "lesson": f"盈利 {pnl*100:.1f}% 未达目标 {tp_dist*100:.1f}% 的一半，止盈太早，"
                           f"下次让利润奔跑（移动止盈）"})
 
@@ -97,16 +104,19 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
     if pnl > 0:
         lessons.append({
             "category": "信号",
+            "implies": "win",
             "lesson": f"信号有效（盈利 {pnl*100:.1f}%），该信号模式加权，下次同类信号可提高置信度"})
     else:
         lessons.append({
             "category": "信号",
+            "implies": "loss",
             "lesson": f"信号失效（亏损 {pnl*100:.1f}%），复盘：入场时是否满足全部共振条件？是否在震荡市错误入场？"})
 
     # ---- 5. 盈亏比 ----
     if rr < 2.0:
         lessons.append({
             "category": "盈亏比",
+            "implies": "loss",
             "lesson": f"盈亏比 {rr:.1f} < 2，这笔交易本就不该入场，下次入场前先算 R:R"})
 
     return {"pnl": pnl, "rr": rr, "lessons": lessons}

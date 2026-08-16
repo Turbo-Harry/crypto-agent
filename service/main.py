@@ -3,13 +3,13 @@
 
 一个进程托管全部功能：
   - 方向性引擎（2s 止损监控 + 15min 信号扫描 + 每日候选刷新）
-  - 套利引擎（60s 事件检测 + 费率告警 + 套利持仓管理；开仓受 ENABLE_FUNDING_ARB 开关）
-  - 共享 WebSocket 实时行情（两引擎复用一条连接）
-  - 心跳文件沿用 watchdog 命名（heartbeat_directional / heartbeat_arb）
+  - WebSocket 实时行情
+  - 心跳文件沿用 watchdog 命名（heartbeat_directional）
+（2026-08-16 用户决定：套利引擎移除并归档 legacy/，不再托管。）
 
 HTTP（只绑本机 127.0.0.1）：
   GET  /docs               Swagger UI（AI 可读 API 文档）
-  GET  /health /status /watchlist /journal /signals/{base} /realtime/{base} /arb/status
+  GET  /health /status /watchlist /journal /signals/{base} /realtime/{base}
   POST /pause /resume     暂停/恢复方向性开仓
   POST /scan/daily        手动触发全市场候选扫描
 

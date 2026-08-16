@@ -60,14 +60,16 @@ class ScoredExperience:
             self._sync_status(l)
 
     def _sync_status(self, l):
-        """状态只由 分数+验证次数 决定：≥3次且≥60=trusted；≥3次且<40=discarded；其余 unverified。"""
+        """状态由 分数+验证次数 决定：≥3次且≥60=trusted；≥3次且<40=discarded；
+        其余保持现状（unverified/candidate/dubious 在凑满 3 次独立验证前不动——
+        Phase0 T0.2：candidate 是打破死锁的采纳通道，不能被 40/60 规则提前改写）。"""
         if l.get("adoptions", 0) >= 3:
             if l["score"] >= 60:
                 l["status"] = "trusted"
             elif l["score"] < 40:
                 l["status"] = "discarded"
             else:
-                l["status"] = "unverified"   # 40-60 保持未验证（v1 曾强行 discarded）
+                l["status"] = "unverified"
 
     def _save(self):
         import storage.db as sdb
@@ -81,8 +83,9 @@ class ScoredExperience:
                    l.get("ts"), l.get("last_update")], db_path=self.db_path)
 
     # ---------- 经验生命周期 ----------
-    def add(self, symbol, category, content, source_trade):
-        """新增经验（初始分 50，未验证）。"""
+    def add(self, symbol, category, content, source_trade, status="unverified"):
+        """新增经验（初始分 50）。status 默认 unverified；平仓复盘链按一致性初筛
+        传入 candidate/dubious（Phase0 T0.2，见 directional_trader._post_close_review）。"""
         now = time.time()
         lesson = {
             "id": len(self.lessons) + 1,
@@ -93,7 +96,7 @@ class ScoredExperience:
             "adoptions": 0,
             "good": 0,
             "bad": 0,
-            "status": "unverified",
+            "status": status,
             "source_trade": source_trade,
             "ts": now,
             "last_update": now,
@@ -135,6 +138,21 @@ class ScoredExperience:
     def unverified(self, symbol=None):
         """未验证经验（仅提示，不强制）。"""
         out = [l for l in self.lessons if l["status"] == "unverified"]
+        if symbol:
+            out = [l for l in out if l["symbol"] == symbol]
+        return out
+
+    def candidates(self, symbol=None):
+        """候选经验（Phase0 T0.2：平仓复盘一致性初筛通过，等待后续独立交易验证）。
+        决策层低权重参考（只写理由+采纳追踪，不改参数）。"""
+        out = [l for l in self.lessons if l["status"] == "candidate"]
+        if symbol:
+            out = [l for l in out if l["symbol"] == symbol]
+        return out
+
+    def dubious(self, symbol=None):
+        """存疑经验（一致性初筛未通过：教训归因与本笔结果矛盾）。不进采纳池，仅观察。"""
+        out = [l for l in self.lessons if l["status"] == "dubious"]
         if symbol:
             out = [l for l in out if l["symbol"] == symbol]
         return out

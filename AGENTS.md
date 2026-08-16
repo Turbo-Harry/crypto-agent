@@ -5,7 +5,8 @@
 ## 1. 这是什么
 
 自动化加密货币交易系统（OKX 模拟盘，虚拟资金）。
-两条策略线：**方向性日内短线**（活跃）与**资金费率套利**（用户已停用，代码保留）。
+策略线：**方向性日内短线**（活跃）。（2026-08-16 用户决定：资金费率套利引擎整线移除，
+代码归档 `legacy/`——trading_main/trading_agent/funding_arb/weight_learning/scoring 与对应测试。）
 
 核心哲学（用户反复强调，不可违背）：
 - 宁可做对，也不做错；空仓是默认，持仓是例外
@@ -17,24 +18,19 @@
 
 ```
 service/            服务端外壳（FastAPI + uvicorn，完整功能唯一入口）
-  ├─ main.py        进程入口：启动双引擎 + HTTP
+  ├─ main.py        进程入口：方向性引擎 + HTTP
   ├─ app.py         HTTP 接口层（观测/控制/运维，禁止下单接口）
   ├─ models.py      Pydantic 响应模型（AI 可读 schema，自动进 /docs）
-  └─ worker.py      引擎托管：两后台线程 + 共享 WS + watchdog 心跳
+  └─ worker.py      引擎托管：后台线程 + 共享 WS + watchdog 心跳
 
 engines/           交易引擎层
   ├─ directional_trader.py  方向性引擎（回踩确认 + 2:1 盈亏比 + tick 止损）
-  ├─ trading_main.py        套利引擎（事件驱动 + 费率告警 + 持仓管理）
-  ├─ trading_agent.py       旧套利 agent（保留）
-  ├─ funding_arb.py         套利 CLI（保留）
   └─ daily_scan.py          每日全市场候选扫描 → watchlist.json
 
 decision/          决策与进化层
   ├─ self_evolving_trader.py  决策进化（综合经验库做开仓决策）
   ├─ experience_scoring.py    经验评分库
   ├─ threshold_learning.py    阈值自适应
-  ├─ weight_learning.py       权重自进化
-  ├─ scoring.py               套利评分体系
   ├─ review_engine.py         复盘引擎
   └─ evolution_gate.py        进化验证门
 
@@ -62,7 +58,7 @@ data/              数据源（fetch_okx / fetch_* / realtime_okx / economic_cal
 strategy/  risk/  backtest/   指标 / 风控 / 回测
 tests/             全部测试（test_exchange_layers.py / test_service_api.py / test_r*）
 docs/              文档中心（architecture/plans/reports/ops/prompts，索引见 docs/README.md）
-legacy/            废弃文件（trading_daemon.py.legacy）
+legacy/            废弃/归档文件（trading_daemon.py.legacy + 2026-08-16 归档的套利引擎与测试）
 config.py          全局配置（根目录，被所有层 import）
 llms.txt           AI 入口索引（llmstxt 标准，指向 AGENTS/README/docs 关键文档）
 ```
@@ -82,20 +78,18 @@ PYTHONPATH=lib python3 -m service.main --port 8090
 
 一个进程承载全部功能：
 - 方向性引擎：2s 止损监控 + 15min 信号扫描（tick 由 run() 抽取，逻辑不重复）
-- 套利引擎：60s 事件检测/告警/持仓管理（开仓受 `ENABLE_FUNDING_ARB` 开关）
-- 共享 WebSocket 实时行情；心跳文件沿用 watchdog 命名
+- WebSocket 实时行情；心跳文件沿用 watchdog 命名
 
 HTTP 接口（127.0.0.1，Swagger 文档在 `GET /docs`）：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | /health | 双引擎心跳健康 |
+| GET | /health | 方向性引擎心跳健康 |
 | GET | /status | 余额/持仓/风控全景 |
 | GET | /watchlist | 今日候选池（评分→笔数） |
 | GET | /signals/{base} | 按需信号检查（只读） |
 | GET | /journal | 交易台账+胜率 |
 | GET | /realtime/{base} | WS 实时行情快照 |
-| GET | /arb/status | 套利引擎状态 |
 | POST | /pause /resume | 暂停/恢复方向性开仓 |
 | POST | /scan/daily | 手动触发全市场扫描 |
 | GET | /error | 引擎最近异常堆栈 |
@@ -117,9 +111,8 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 2. 交易所侧止损（slTriggerPx 条件单）必须随每笔合约开仓挂出——本地监控只是兜底。
 3. 单笔风险 1%、名义上限 150 USDT、组合总敞口 ≤600（PositionLedger）。
 4. 最小下单量不足时**拒绝开仓**，绝不放大仓位凑最小张数。
-5. `ENABLE_FUNDING_ARB=False` 是用户决定，不得擅自改回 True。
-6. 条件单字段：止损 `slTriggerPx`、止盈 `tpTriggerPx`（triggerPx 会 50015）；`orders-algo-pending` 必须带 `ordType`。
-7. HTTP 层只读观测 + 暂停/恢复；**不允许暴露下单接口**。
+5. 条件单字段：止损 `slTriggerPx`、止盈 `tpTriggerPx`（triggerPx 会 50015）；`orders-algo-pending` 必须带 `ordType`。
+6. HTTP 层只读观测 + 暂停/恢复；**不允许暴露下单接口**。
 
 ## 6. 文档路径约束（写文档必守）
 
@@ -171,7 +164,7 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 3. ❌ 删除/绕过风控闸门（1% 风险、150 上限、600 总敞口、熔断）。
 4. ❌ 移除或弱化交易所侧止损；或改为仅本地止损。
 5. ❌ 伪造回测/复盘数据，或向用户夸大收益、承诺胜率。
-6. ❌ 擅自改 `ENABLE_FUNDING_ARB`、策略阈值等用户已拍板的配置。
+6. ❌ 擅自改策略阈值等用户已拍板的配置。
 7. ❌ 用"自动进化的模型输出"直接下单而不经既有闸门。
 8. ❌ 引入新的重依赖（框架/SDK）而不先说明理由；交易所访问只走 exchange 层。
 9. ❌ 在活体进程运行中直接改它读写的状态文件（trade_journal.json / watchlist.json / 心跳）。

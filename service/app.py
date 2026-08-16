@@ -2,9 +2,10 @@
 HTTP 接口层 — FastAPI 应用（完整功能的服务端外壳）。
 
 暴露三大类接口：
-  观测：/health /status /watchlist /signals/{base} /journal /realtime/{base} /arb/status
+  观测：/health /status /watchlist /signals/{base} /journal /realtime/{base}
   控制：/pause /resume（暂停/恢复方向性开仓；止损监控永不暂停）
   运维：/scan/daily（手动触发全市场候选扫描）/error
+（2026-08-16 用户决定：套利引擎移除，/arb/status 已下线，代码归档 legacy/。）
 
 【禁止】暴露"下单"类接口：交易决策只由后台引擎的既定策略做出，
 HTTP 只是观测窗口与最小控制面，不是交易入口 —— 宁可做对，也不做错。
@@ -24,18 +25,17 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 
 from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             StatusOut, WatchItem, WatchlistOut, SignalOut,
-                            TradeItem, JournalOut, ControlOut, ArbStatusOut,
+                            TradeItem, JournalOut, ControlOut,
                             RealtimeOut, ScanOut, ReconcileOut, RiskEventOut)
 
 app = FastAPI(
     title="Crypto Agent 交易服务",
     description=(
-        "完整交易系统服务端：方向性日内短线引擎 + 资金费率套利引擎 + 实时行情。\n\n"
+        "交易系统服务端：方向性日内短线引擎 + 实时行情。\n\n"
         "- 方向性引擎：2s 止损监控 + 15min 回踩信号扫描（后台线程）\n"
-        "- 套利引擎：60s 事件检测/费率告警/套利持仓管理（后台线程）\n"
         "- 本接口只读观测 + 暂停/恢复开仓，不提供手动下单\n"
         "- 模拟盘（OKX sandbox），虚拟资金"),
-    version="2.0.0")
+    version="2.1.0")
 
 
 def require_control(request: Request):
@@ -60,23 +60,16 @@ def _trader():
     return _worker().trader
 
 
-def _arb():
-    return _worker().arb
-
-
 @app.get("/health", response_model=HealthOut, tags=["观测"])
 def health():
-    """服务健康：两引擎心跳年龄超时判定 degraded。"""
-    import config
+    """服务健康：方向性引擎心跳年龄超时判定 degraded。"""
     w = _worker()
-    hb_d, hb_a = w.heartbeat_age(), w.arb_heartbeat_age()
-    ok = (hb_d >= 0 and hb_d < 30) and (hb_a < 0 or hb_a < 300)
+    hb_d = w.heartbeat_age()
+    ok = hb_d >= 0 and hb_d < 30
     return HealthOut(status="ok" if ok else "degraded",
                      adapter=_trader().exchange.name,
                      uptime_seconds=round(w.uptime(), 1),
                      directional_heartbeat_age=round(hb_d, 1),
-                     arb_heartbeat_age=round(hb_a, 1),
-                     arb_enabled=config.ENABLE_FUNDING_ARB,
                      paused=_trader().paused)
 
 
@@ -189,19 +182,6 @@ def realtime(base: str):
                        funding=data.get("funding"),
                        vol_15m=data.get("vol_15m"),
                        fresh=fresh)
-
-
-@app.get("/arb/status", response_model=ArbStatusOut, tags=["观测"])
-def arb_status():
-    """套利引擎状态：配置开关、持仓台账、事件快照。"""
-    import config
-    a = _arb()
-    return ArbStatusOut(
-        enabled=config.ENABLE_FUNDING_ARB,
-        positions_ledger=len(a.arb_positions),
-        risk_halted=not a.risk.can_trade(),
-        decision_threshold=a.threshold_learner.threshold,
-        last_events=[f"{b}: {a.signal_state.get(b, {})}" for b in a.signal_state][-10:])
 
 
 @app.post("/scan/daily", response_model=ScanOut, tags=["运维"],

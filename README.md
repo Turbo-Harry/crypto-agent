@@ -1,7 +1,7 @@
 # 加密货币自动化交易系统（宁可做对，不可做错）
 
 以「宁可错过、不可做错」为核心哲学的自动化交易 agent。
-OKX 模拟盘（虚拟资金），方向性日内短线 + 资金费率套利（已停用，代码保留）。
+OKX 模拟盘（虚拟资金），方向性日内短线（2026-08-16 用户决定：资金费率套利引擎移除，代码归档 legacy/）。
 完整功能收在 FastAPI 服务端进程里，HTTP 只读观测 + 最小控制面。
 
 > ⚠️ 重要声明：没有任何系统能"保证"收益率。本系统保证的是**风险上限**
@@ -27,9 +27,8 @@ PYTHONPATH=lib python3 -m service.main --port 8090
 | 组件 | 说明 |
 |---|---|
 | 方向性引擎 | 2s 止损监控 + 15min 回踩信号扫描 + 每日候选刷新 |
-| 套利引擎 | 60s 事件检测/费率告警/持仓管理（开仓受 ENABLE_FUNDING_ARB 开关） |
-| 实时行情 | 原生 WebSocket，两引擎共享 |
-| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/arb/status、POST /pause /resume /scan/daily |
+| 实时行情 | 原生 WebSocket |
+| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、POST /pause /resume /scan/daily |
 
 ## 目录结构（分层）
 
@@ -38,17 +37,14 @@ crypto-agent/
 ├── AGENTS.md               # AI 协作模型：分层/入口/安全不变量/最佳实践/红线
 ├── docs/architecture/exchange_layers.md      # 交易所访问四层架构
 ├── service/                # 服务端外壳（FastAPI + uvicorn，完整功能入口）
-│   ├── main.py             #   进程入口：双引擎 + HTTP
+│   ├── main.py             #   进程入口：方向性引擎 + HTTP
 │   ├── app.py              #   HTTP 接口层（只读观测 + 暂停/恢复，禁止下单）
 │   ├── models.py           #   Pydantic 响应模型（AI 可读 schema）
-│   └── worker.py           #   引擎托管：两后台线程 + 共享 WS + 心跳
+│   └── worker.py           #   引擎托管：后台线程 + 共享 WS + 心跳
 ├── engines/                # 交易引擎层
 │   ├── directional_trader.py   # 方向性引擎（回踩确认 + 2:1 盈亏比 + tick 止损）
-│   ├── trading_main.py         # 套利引擎（事件驱动，ENABLE_FUNDING_ARB=False 停用）
-│   ├── trading_agent.py        # 旧套利 agent（保留）
-│   ├── funding_arb.py          # 套利 CLI（保留）
 │   └── daily_scan.py           # 每日全市场候选扫描 → watchlist.json
-├── decision/               # 决策与进化层（self_evolving/experience/threshold/weight/scoring/review/evolution_gate）
+├── decision/               # 决策与进化层（self_evolving/experience/threshold/review/evolution_gate）
 ├── execution/              # 执行与台账层（quantity/trade_journal/position_ownership）
 ├── exchange/               # 交易所访问四层（transport/okx_adapter/base/models/fake）
 ├── factors/                # 因子挖掘研究层
@@ -57,7 +53,7 @@ crypto-agent/
 ├── strategy/  risk/  backtest/
 ├── tests/                  # 全部测试
 ├── docs/                   # 文档中心（architecture/plans/reports/ops/prompts，索引 docs/README.md）
-├── legacy/                 # 废弃文件
+├── legacy/                 # 废弃/归档文件（含已移除的套利引擎与对应测试）
 └── config.py               # 全局配置
 ```
 

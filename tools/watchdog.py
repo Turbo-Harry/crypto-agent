@@ -22,7 +22,7 @@ import time
 
 HEARTBEATS = {
     "directional": {"timeout": 30, "proc": "directional_trader.py"},
-    "arb": {"timeout": 300, "proc": "trading_main.py"},
+    # （2026-08-16 用户决定：套利引擎移除，"arb" 项已随 trading_main.py 归档删除）
 }
 MISSING_TOLERANCE = 3          # 心跳文件连续缺失 N 次才 kill（去抖）
 STATE_FILE = "watchdog_state.json"

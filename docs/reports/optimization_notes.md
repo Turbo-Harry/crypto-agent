@@ -237,3 +237,42 @@
 - trading_main.execute 开仓路径直接拦截；check_signal_event 的"费率年化突破"事件（唯一用途=触发套利决策）停用时跳过；费率翻转/价格异动/清算级联告警保留（对方向仓仍有参考价值）。
 - 套利代码完整保留，置 True 即恢复。
 - 附带影响：跨进程账户串扰问题（杠杆互顶/持仓合并）大幅缓解——单策略运行时不冲突；子账户隔离方案不再必要（组合方案 R1-6+R1-12 已足够）。
+
+## 2026-08-16 复盘链路审计 + 设计立项（协调者，本会话记录）
+
+### 审计发现（全部写入 docs/plans/2026-08-16_self_evolution_design.md §1，编号 DEF-1~9）
+- **DEF-1** 熔断强平路径（_liquidate_all）不走复盘链 → 复盘覆盖率 0/1（唯一平仓 txn_004 review 为空）。
+- **DEF-2** unverified→trusted 死锁：决策只读 trusted、验证只验证"本笔采纳"，新教训永远无法晋升。
+- **DEF-3** post_exit_reverse 死参数：活体调用从不传参，插针维度永不触发。
+- **DEF-4** 信号分恒 80 单点 → 方向侧阈值学习被设计性禁用（R1-3）；thresholds 表被临时路径 key 污染（1 行，样本 1 条）。
+- **DEF-5** evolution_gate 死代码（全仓库零引用）；**DEF-6** weight_learning 仅接线停用中的套利引擎。
+- **DEF-7** analyst 教训 symbol='*'，决策按具体 symbol 过滤，永不匹配。
+- **DEF-8** scan_decisions 同秒矛盾行（18:58:54 open+reject、阈值 85 来源不明）→ 疑测试/非生产进程写共享库，待 Phase 0 溯源。
+- **DEF-9** 策略级复盘维度缺失：MFE/MAE、R 分布、regime、信号连续分。
+
+### 本轮其他动作
+- git：audit-fixes rebase 到 main（快进，无冲突），两分支同点 1fb7e41；工作区干净。
+- 建立自进化设计方案 v0.1（含业界标准 S1-S5 与验收表、Phase 0-5 路线图、质疑轮 Q1-Q8）。
+- 结论：样本 1 笔平仓前系统定位=「采集观察期」，复盘维度需补策略级指标才可支撑参数改进。
+
+## 2026-08-16 Phase 0 实施记录（复盘链断点修复 + 套利移除，协调者实施）
+
+### 设计先行
+- v0.2 设计文档落盘（回答 v0.1 质疑 Q1/Q3/Q6：影子重放集只有证伪权 / 一致性初筛+独立验证两级机制 / 权责矩阵 §7）+ 新质疑轮 Q9-Q14。
+- 业界策略调研报告落盘（订单流 CVD/聪明钱 SMC 批评/分场景策略套件/开源机器人，全部附来源）。
+
+### 断点修复（全过零回归约束：基线 6 绿保持、3 红闭环、新增回归测试）
+- ✅ T0.1 DEF-1：_liquidate_all 两处（现货/合约）log_exit 后补调 _post_close_review → 复盘覆盖率从此 100%。
+- ✅ T0.2 DEF-2：死锁打破——deep_review 每条教训带 implies 归因方向；_post_close_review 做一致性初筛（candidate/dubious）；ScoredExperience 支持状态参数 + candidates()/dubious() + _sync_status 在 3 次验证前保留状态；_ExpAdapter.candidates()；decide() 候选低权重参考（只写理由+采纳追踪，不改参数）。评分只来自后续独立交易 → 无循环论证。
+- ✅ T0.3 DEF-3：_post_close_review 采集止损出场后反转（现价 vs 止损位）并传参 post_exit_reverse → 插针教训触发。
+- ✅ T0.4 DEF-8：DirectionalTrader.__init__ 加 db_path；_log_scan_decision 落库隔离；test_decision_loop/_make_trader 与 test_service_api 全隔离（journal/exp_bank/ledger/threshold/scan_decisions）；溯源结论：18:58:54 矛盾行与 thresholds 临时 key 均来自测试进程写共享库（test_decision_loop threshold_gate 曾 initial_threshold=85 + scan_signals）。
+- ✅ 新回归测试 tests/test_phase0_review.py 14 项全绿。
+
+### 套利引擎移除（用户决定"不需要"，T0.6/DEF-10）
+- 归档 legacy/：engines/{trading_main,trading_agent,funding_arb}.py、decision/{weight_learning,scoring}.py、tests/{test_r1_10_close_hedge,test_r1_2_threshold_feed,test_r2_1_rollback}.py。
+- service/worker.py 不再托管套利线程；app.py 下线 /arb/status；models.py 移除 ArbStatusOut 与 HealthOut 套利字段；config.py 删除 ENABLE_FUNDING_ARB/ARB_MIN_*；watchdog HEARTBEATS 移除 arb 项；main.py/worker.py 文档同步。
+- test_r1_3 重写为 SQLite 版（threshold 落库 + 库隔离，6 项全绿）；test_service_api 移除套利断言（24 项全绿）。
+- 活体重启（launchctl kickstart -k gui/$(id -u)/com.crypto.agent）：新 PID 起、/health ok（心跳 0.7s）、3 笔 ETH 持仓衔接、仓位快照续写、heartbeat_arb.txt/trading_main.pid 已清理。启动对账两条"无台账持仓"告警为重启前既存对冲仓（非回归）。
+
+### 既有发现（未改，防越界）
+- code_graph --check 报 1 处 pre-existing：directional_trader.pid 被 engines 与 service 两层写入（本次未引入，建议后续单独处理）。

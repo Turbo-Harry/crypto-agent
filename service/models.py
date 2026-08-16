@@ -7,13 +7,11 @@ from pydantic import BaseModel
 
 
 class HealthOut(BaseModel):
-    """服务健康状态（两引擎）。"""
+    """服务健康状态（方向性引擎）。"""
     status: str                 # "ok" | "degraded"
     adapter: str                # 交易所适配器名（okx）
     uptime_seconds: float       # 服务进程运行时长
     directional_heartbeat_age: float   # 方向性引擎心跳年龄（>30s 卡死）
-    arb_heartbeat_age: float           # 套利引擎心跳年龄（>300s 卡死）
-    arb_enabled: bool           # ENABLE_FUNDING_ARB 配置
     paused: bool                # 方向性开仓是否暂停
 
 
@@ -102,15 +100,6 @@ class ControlOut(BaseModel):
     action: str
     paused: bool
     message: str
-
-
-class ArbStatusOut(BaseModel):
-    """套利引擎状态。"""
-    enabled: bool               # 用户决定：ENABLE_FUNDING_ARB
-    positions_ledger: int       # 套利台账持仓数
-    risk_halted: bool
-    decision_threshold: float
-    last_events: List[str]      # 最近信号事件（内存快照）
 
 
 class RealtimeOut(BaseModel):

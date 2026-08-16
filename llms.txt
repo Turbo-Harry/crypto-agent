@@ -22,6 +22,11 @@
 - [docs/reports/optimization_notes.md](docs/reports/optimization_notes.md): 历史实施记录（R1/R2/OP/CR/RES）
 - [docs/reports/final_report.md](docs/reports/final_report.md): 系统交付终报
 
+## 计划与设计（当前活跃方案）
+
+- [docs/plans/2026-08-16_self_evolution_design.md](docs/plans/2026-08-16_self_evolution_design.md): 自进化系统设计方案 v0.2 —— 复盘驱动的系统与策略改进（DEF 缺陷清单/业界标准 S1-S5 验收/Phase 0-5/质疑轮/零回归约束/权责矩阵）
+- [docs/reports/2026-08-16_strategy_research.md](docs/reports/2026-08-16_strategy_research.md): 业界策略调研（订单流 CVD/聪明钱 SMC 批评/分场景策略套件/开源机器人，附来源 URL）
+
 ## 代码
 
 - [service/main.py](service/main.py): 服务端进程入口（FastAPI + 双引擎线程）

@@ -120,10 +120,24 @@ class _ExpAdapter:
             out = [l for l in out if l["category"] == category]
         return out
 
+    def candidates(self, symbol=None, category=None):
+        """待验证候选经验（Phase0 T0.2：平仓复盘一致性初筛通过、等待后续独立
+        交易验证）。决策层只做低权重参考（写入理由+采纳追踪），不改变任何参数——
+        这是打破 unverified 死锁的采纳通道（见设计文档 v0.2 §5.1 Q3）。"""
+        out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
+                "lesson": l["content"]}
+               for l in self.bank.candidates(symbol)]
+        if category:
+            out = [l for l in out if l["category"] == category]
+        return out
+
 
 class DirectionalTrader:
-    def __init__(self, exchange: ExchangeAdapter = None, rt=None):
+    def __init__(self, exchange: ExchangeAdapter = None, rt=None, db_path=None):
         self.exchange = exchange or connect()
+        # Phase0 T0.4：审计/日志表隔离。db_path=None → 生产共享库（默认）；
+        # 测试必须传隔离路径（防 scan_decisions 等污染生产表，见 pitfalls）。
+        self._db_path = db_path
         self.journal = TradeJournal()
         self.evolver = SelfEvolvingTrader()
         # 带评分的经验库（历史经验不一定对，用交易结果验证）
@@ -638,16 +652,44 @@ class DirectionalTrader:
                     self._post_close_review(closed, t)
 
     def _post_close_review(self, closed, t):
-        """平仓后复盘链（R1-1/B6/R2-3/R2-6）：deep_review → 报告落盘 → 经验库 → 采纳验证 → 阈值 → 风控净值。"""
+        """平仓后复盘链（R1-1/B6/R2-3/R2-6 + Phase0 T0.1/T0.2/T0.3）：
+        deep_review → 插针反转采集 → 报告落盘 → 教训一致性初筛（candidate/dubious）
+        → 经验库 → 采纳验证 → 阈值 → 风控净值。"""
         base = closed["symbol"]
+        # Phase0 T0.3：止损出场后采集"是否反转"（post_exit_reverse，原死参数）。
+        # 语义：long 止损后现价回到止损上方 / short 回到下方 = 被插针扫掉。
+        post_rev = None
+        try:
+            if closed.get("exit_reason") and "止损" in closed["exit_reason"]:
+                venue = t.get("venue") or "swap"
+                last = self._ticker_last(base, prefer_swap=(venue == "swap"))
+                stop = t.get("stop_loss")
+                if last and stop:
+                    direction = t.get("direction") or "long"
+                    post_rev = (last > stop) if direction == "long" else (last < stop)
+        except Exception:
+            post_rev = None
         report = deep_review(closed,
                              atr_value=t.get("atr_value"),
-                             signal_price=t.get("signal_price"))  # R2-6
+                             signal_price=t.get("signal_price"),
+                             post_exit_reverse=post_rev)   # Phase0 T0.3
         # 复盘报告落盘（写入 trade_journal.json 该笔记录的 review 字段，事后可查）
         self.journal.save_review(t["id"], report)
         lessons = report.get("lessons", [])
+        pnl = closed.get("pnl")
         for l in lessons:
-            self.exp_bank.add(base, l["category"], l["lesson"], t["id"])
+            # Phase0 T0.2 一级·一致性初筛：教训的归因方向（implies）与本笔结果一致
+            # → candidate（可被决策层低权重采纳）；不一致 → dubious（不进采纳池）。
+            # 注意：这只是初筛，不做评分——评分只来自后续独立交易（防循环论证，见
+            # 设计文档 v0.2 §5.1 Q3 与 experience_scoring.validate）。
+            implies = l.get("implies")
+            if implies:
+                consistent = (pnl > 0) if implies == "win" else (pnl < 0)
+                status = "candidate" if consistent else "dubious"
+            else:
+                status = "unverified"
+            self.exp_bank.add(base, l["category"], l["lesson"], t["id"],
+                              status=status)
         # R2-3：只 validate 本笔实际采纳的经验（替换全量 trusted validate 回声）
         for lid in t.get("adopted_lesson_ids") or []:
             self.exp_bank.validate(lid, closed["pnl"])
@@ -693,7 +735,11 @@ class DirectionalTrader:
                     if px is None:
                         print(f"强平失败 {base}: 无法获取价格")
                         continue
-                    self.journal.log_exit(t["id"], px, f"熔断强平: {reason}")
+                    closed = self.journal.log_exit(t["id"], px, f"熔断强平: {reason}")
+                    # Phase0 T0.1：熔断强平同样走复盘链（DEF-1——此前唯一平仓
+                    # 样本零复盘）。review 落盘 + 教训初筛 + 采纳验证 + 阈值。
+                    if closed:
+                        self._post_close_review(closed, t)
                 except Exception as e:
                     print(f"强平失败 {base}: {e}")
                 continue
@@ -731,7 +777,11 @@ class DirectionalTrader:
                 if px is None:
                     print(f"强平失败 {base}: 无法获取价格")
                     continue
-                self.journal.log_exit(t["id"], px, f"熔断强平: {reason}")
+                closed = self.journal.log_exit(t["id"], px, f"熔断强平: {reason}")
+                # Phase0 T0.1：熔断强平同样走复盘链（DEF-1）。review 落盘 +
+                # 教训初筛 + 采纳验证 + 阈值。
+                if closed:
+                    self._post_close_review(closed, t)
             except Exception as e:
                 print(f"强平失败 {base}: {e}")
 
@@ -809,14 +859,17 @@ class DirectionalTrader:
 
 
     def _log_scan_decision(self, base, has_signal, direction, decision, reason=""):
-        """信号决策过程落库（self-evolution 看账数据）：每币每轮扫都记一条。"""
+        """信号决策过程落库（self-evolution 看账数据）：每币每轮扫都记一条。
+        Phase0 T0.4：落库目标 = self._db_path（生产 None=共享库；测试传隔离路径，
+        防测试进程写生产表——DEF-8 溯源：test_decision_loop 曾把 阈值85 行写进生产库）。"""
         try:
             import storage.db as sdb
-            sdb.init_db()
+            sdb.init_db(self._db_path)
             sdb.x("INSERT INTO scan_decisions (ts, base, venue, has_signal, direction, "
                   "threshold, decision, reason) VALUES (?,?,?,?,?,?,?,?)",
                   [time.time(), base, self.exchange.venue_for(base), 1 if has_signal else 0,
-                   direction or "", self.threshold_learner.threshold, decision, reason])
+                   direction or "", self.threshold_learner.threshold, decision, reason],
+                  db_path=self._db_path)
         except Exception:
             pass
 

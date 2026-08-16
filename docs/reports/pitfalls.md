@@ -155,3 +155,15 @@
   事实源，无论交易所持仓是否存在都必须释放）；③ 清理污染 claim。
 - 预防：测试必须隔离所有带状态的对象（journal/ledger/exp_bank/threshold），清单核对；
   "清理"类操作不依赖"查询到才执行"，要无条件执行。
+
+### 2026-08-16 测试进程写生产库：scan_decisions 矛盾行 + thresholds 临时 key（DEF-8）
+- 现象：生产库 scan_decisions 出现同秒矛盾行（18:58:54 同币一条 open 一条 reject「阈值 85」），thresholds 表出现 /var/folders/... 临时路径 key。
+- 根因：test_decision_loop 的 test_threshold_gate 构造 DirectionalTrader 后调 scan_signals()，而 _log_scan_decision 无条件写共享生产库；thresholds 临时 key 同理来自测试 ThresholdLearner 未传 db_path。
+- 修复：DirectionalTrader.__init__ 加 db_path 参数，_log_scan_decision 落库走隔离路径；test_decision_loop/test_service_api/test_phase0_review 全对象隔离（journal/exp_bank/ledger/threshold/scan_decisions）。
+- 预防：任何"审计/日志落库"接口都必须支持 db_path 隔离；测试构造引擎时必须全对象隔离清单核对（见 test_phase0_review._make_trader 注释）。
+
+### 2026-08-16 套利引擎整线移除（用户决定"不需要"）
+- 现象：用户决定不再需要资金费率套利引擎。
+- 根因：策略方向调整（非 bug）。
+- 修复：engines/decision 套利模块 + 3 个套利测试 git mv 归档 legacy/；worker/app/models/config/watchdog 同步移除；活体 launchctl kickstart 重启后心跳/持仓衔接验证通过。
+- 预防：整线移除必须"代码归档 + 服务解挂 + 心跳/watchdog 适配 + 测试闭环 + 文档同步"五件套一次走完；方向性代码行级零改动以保零回归。

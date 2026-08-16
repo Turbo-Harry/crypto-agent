@@ -79,6 +79,12 @@ class SelfEvolvingTrader:
 
         if not decision["reason"]:
             decision["reason"].append("信号达标，无历史警示，正常交易")
+        # Phase0 T0.2：候选经验（一致性初筛通过、待独立验证）低权重参考——
+        # 只写入决策理由并纳入采纳追踪（供后续交易验证），不改变任何参数。
+        cands = getattr(self.bank, "candidates", lambda s: [])(symbol=symbol)
+        if cands:
+            decision["adopted_lesson_ids"] += [l["id"] for l in cands if l.get("id")]
+            decision["reason"].append(f"参考 {len(cands)} 条待验证候选经验（不影响参数）")
         return decision
 
     def execute_and_review(self, symbol, signal_name, signal_score, signal_price,

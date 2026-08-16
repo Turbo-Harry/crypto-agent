@@ -36,18 +36,13 @@ def check(name, cond):
 class _FakeWorker:
     """CI 安全的假 worker：只提供 app 层读取的属性，不连 OKX/WS。"""
 
-    def __init__(self, trader, arb):
+    def __init__(self, trader):
         self.trader = trader
-        self.arb = arb
         self.last_hb_dir = time.time()
-        self.last_hb_arb = time.time()
         self.started_at = time.time()
 
     def heartbeat_age(self):
         return time.time() - self.last_hb_dir
-
-    def arb_heartbeat_age(self):
-        return time.time() - self.last_hb_arb
 
     def uptime(self):
         return time.time() - self.started_at
@@ -70,9 +65,7 @@ def main():
                                    lock_path=os.path.join(tmp, "ledger.lock"))
     trader.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"))
     trader.exp_bank = ScoredExperience(path=os.path.join(tmp, "exp.json"))
-    # 套利引擎也用 fake（避免真连 OKX）
-    from engines.trading_main import TradingMain
-    worker = _FakeWorker(trader, TradingMain(exchange=fake, rt=None))
+    worker = _FakeWorker(trader)
     app.state.worker = worker
     trader._last_scan = 0
     trader._last_risk_update = 0
@@ -83,7 +76,7 @@ def main():
     print("== 聚合冒烟（全部只读端点一次遍历）==")
     smoke_ok, smoke_detail = True, []
     for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
-                 "/arb/status", "/error", "/analysis/latest", "/reconcile"):
+                 "/error", "/analysis/latest", "/reconcile"):
         r = client.get(path)
         try:
             r.json()
@@ -93,7 +86,7 @@ def main():
         if not ok:
             smoke_ok = False
             smoke_detail.append(f"{path}→{r.status_code}")
-    check("9 个只读端点全部 200+JSON 可解析", smoke_ok)
+    check("8 个只读端点全部 200+JSON 可解析", smoke_ok)
     if smoke_detail:
         print(f"    失败明细: {smoke_detail}")
 
@@ -106,8 +99,6 @@ def main():
           all(k in j for k in ("total_notional_usdt", "open_notional_usdt", "today_notional_usdt")))
     r = client.get("/realtime/FAKE")
     check("/realtime rt=None 时 fresh=false 不崩", r.json()["fresh"] is False)
-    r = client.get("/arb/status")
-    check("/arb/status enabled=false（套利停用）", r.json()["enabled"] is False)
     r = client.post("/analysis/daily")
     j = r.json()
     check("/analysis/daily 跑通（含 report/issues）",
