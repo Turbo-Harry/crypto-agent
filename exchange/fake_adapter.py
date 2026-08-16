@@ -86,12 +86,14 @@ class FakeAdapter(ExchangeAdapter):
 
     def place_market_order(self, inst_id: str, side: str, qty: float,
                            venue: str = "swap", pos_side: Optional[str] = None,
-                           reduce_only: bool = False) -> OrderResult:
+                           reduce_only: bool = False,
+                           cl_ord_id: Optional[str] = None) -> OrderResult:
         ord_id = f"f{next(self._ord_seq)}"
         px = self._fill_price(inst_id)
         self.orders.append({"ord_id": ord_id, "inst_id": inst_id, "side": side,
                             "qty": qty, "venue": venue, "pos_side": pos_side,
-                            "reduce_only": reduce_only, "price": px})
+                            "reduce_only": reduce_only, "cl_ord_id": cl_ord_id,
+                            "price": px})
         if venue == "spot":
             if side == "buy":
                 cost = qty * px
@@ -162,6 +164,14 @@ class FakeAdapter(ExchangeAdapter):
 
     def fetch_order_avg_px(self, inst_id: str, ord_id: str) -> Optional[float]:
         return self.last_prices.get(inst_id)
+
+    def fetch_order_state(self, inst_id: str, cl_ord_id: str) -> Optional[dict]:
+        # 内存替身:按 clOrdId 反查(测试可预置 orders 模拟"超时已成交")
+        for o in self.orders:
+            if o.get("cl_ord_id") == cl_ord_id and o.get("inst_id") == inst_id:
+                return {"state": "filled", "avg_px": o.get("price"),
+                        "ord_id": o.get("ord_id")}
+        return None
 
     def fetch_bills(self, ccy: str = "USDT", since_ms: int = 0,
                     bill_type: str = "") -> List[dict]:

@@ -77,6 +77,10 @@ class TraderWorker:
     def start(self):
         if self._threads:
             return
+        from engines.directional_trader import acquire_instance_lock
+        self._lock_handle = acquire_instance_lock()
+        if self._lock_handle is None:
+            raise RuntimeError("已有交易引擎实例在运行（engine.lock 被持有），拒绝启动第二个实例")
         self._stop.clear()
         self.started_at = time.time()
         # PID 文件沿用 watchdog 命名（两个都写，服务进程 PID 相同）

@@ -96,12 +96,35 @@ class PositionLedger:
             s_qty = rec["strategies"].get(strategy, 0.0)
             rec["strategies"][strategy] = max(0.0, s_qty - qty)
             if rec["qty"] <= 0:
+                # 审计 H2:归零必须物理 DELETE,否则重启后 _load 把幽灵持仓读回
                 self._data.pop(key, None)
+                import storage.db as sdb
+                sdb.x("DELETE FROM ownership WHERE key=?", [key], db_path=self.db_path)
             else:
                 rec["updated_at"] = time.time()
             self._save()
 
         self._locked(_do)
+
+    def force_release(self, key):
+        """物理删除一条 claim(对账用)。返回被释放的 key 或 None。"""
+        import storage.db as sdb
+        sdb.x("DELETE FROM ownership WHERE key=?", [key], db_path=self.db_path)
+        if key in self._data:
+            self._data.pop(key, None)
+            return key
+        return None
+
+    def reconcile(self, active_keys):
+        """对账(审计 C1):active_keys = 交易所持仓 ∪ 未平仓 journal,是唯一事实源。
+        账本中不在 active_keys 的 claim 视为幽灵 → 物理删除。返回被释放的 key 列表。"""
+        released = []
+        for key in list(self._data.keys()):
+            if key not in active_keys:
+                r = self.force_release(key)
+                if r:
+                    released.append(r)
+        return released
 
     def snapshot(self):
         return json.loads(json.dumps(self._data))

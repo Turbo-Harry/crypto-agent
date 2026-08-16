@@ -70,9 +70,11 @@ class ExchangeAdapter(ABC):
     @abstractmethod
     def place_market_order(self, inst_id: str, side: str, qty: float,
                            venue: str = "swap", pos_side: Optional[str] = None,
-                           reduce_only: bool = False) -> OrderResult:
+                           reduce_only: bool = False,
+                           cl_ord_id: Optional[str] = None) -> OrderResult:
         """市价单。qty 为基础币数量；swap 自动换算张数并对齐 lotSz/minSz。
-        venue="spot" 忽略 pos_side/reduce_only（现货无此概念）。"""
+        venue="spot" 忽略 pos_side/reduce_only（现货无此概念）。
+        cl_ord_id：客户端幂等键（审计 C1）；超时后用它反查订单真实状态。"""
 
     @abstractmethod
     def place_conditional_stop(self, inst_id: str, side: str, qty: float,
@@ -96,6 +98,11 @@ class ExchangeAdapter(ABC):
     @abstractmethod
     def fetch_order_avg_px(self, inst_id: str, ord_id: str) -> Optional[float]:
         """按订单号回填成交均价（市价单响应无 avgPx 时用）。"""
+
+    @abstractmethod
+    def fetch_order_state(self, inst_id: str, cl_ord_id: str) -> Optional[dict]:
+        """按客户端幂等键反查订单状态（审计 C1）。
+        返回 {"state": str, "avg_px": Optional[float], "ord_id": str}；查无此单 → None。"""
 
     @abstractmethod
     def fetch_bills(self, ccy: str = "USDT", since_ms: int = 0,

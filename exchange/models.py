@@ -69,6 +69,7 @@ class OrderResult:
     ok: bool
     ord_id: str = ""
     algo_id: str = ""
+    cl_ord_id: str = ""     # 客户端幂等键（审计 C1：超时后反查订单状态用）
     qty: float = 0.0        # 实际提交的数量（基础币单位，精度对齐后）
     message: str = ""
 

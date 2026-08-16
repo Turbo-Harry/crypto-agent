@@ -48,6 +48,13 @@ def main():
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
 
+    # 审计 B-H1:控制面无鉴权,禁止绑定非回环地址(除非显式环境变量放行)
+    if args.host not in ("127.0.0.1", "localhost") and \
+            os.environ.get("CRYPTO_AGENT_ALLOW_REMOTE") != "1":
+        print(f"❌ 拒绝绑定 {args.host}: 控制面无鉴权不暴露公网;"
+              f"如确需,设 CRYPTO_AGENT_ALLOW_REMOTE=1 后重试")
+        sys.exit(1)
+
     build_service()
     print(f"🚀 完整交易服务启动: http://{args.host}:{args.port}  (API 文档 /docs)")
     uvicorn.run(fastapi_app, host=args.host, port=args.port, log_level="warning")

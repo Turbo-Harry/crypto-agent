@@ -12,6 +12,7 @@ HTTP 只是观测窗口与最小控制面，不是交易入口 —— 宁可做�
 自动文档：GET /docs（Swagger UI，AI 可读 OpenAPI schema）。
 """
 import os
+import secrets
 import sys
 import time
 
@@ -19,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 
 from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             StatusOut, WatchItem, WatchlistOut, SignalOut,
@@ -35,6 +36,20 @@ app = FastAPI(
         "- 本接口只读观测 + 暂停/恢复开仓，不提供手动下单\n"
         "- 模拟盘（OKX sandbox），虚拟资金"),
     version="2.0.0")
+
+
+def require_control(request: Request):
+    """控制面最小防护(审计 B-H1):
+    1) Host 白名单:只允许回环(防 DNS rebinding / localhost CSRF);
+    2) 若配置 CRYPTO_AGENT_API_TOKEN,则必须携带 x-api-token 且相等。"""
+    host_hdr = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]")
+    if host_hdr not in ("127.0.0.1", "localhost", "::1"):
+        raise HTTPException(403, "控制端点仅限本机访问")
+    token = os.environ.get("CRYPTO_AGENT_API_TOKEN", "")
+    if token:
+        provided = request.headers.get("x-api-token", "")
+        if not secrets.compare_digest(provided, token):
+            raise HTTPException(401, "无效 API token")
 
 
 def _worker():
@@ -189,7 +204,8 @@ def arb_status():
         last_events=[f"{b}: {a.signal_state.get(b, {})}" for b in a.signal_state][-10:])
 
 
-@app.post("/scan/daily", response_model=ScanOut, tags=["运维"])
+@app.post("/scan/daily", response_model=ScanOut, tags=["运维"],
+           dependencies=[Depends(require_control)])
 def scan_daily():
     """手动触发一次全市场候选扫描（刷新 watchlist，覆盖 123 个标的）。
     耗时约 1-2 分钟；调用会阻塞等待完成。"""
@@ -211,7 +227,8 @@ def scan_daily():
                                 "price": c.get("price")} for c in w])
 
 
-@app.post("/pause", response_model=ControlOut, tags=["控制"])
+@app.post("/pause", response_model=ControlOut, tags=["控制"],
+           dependencies=[Depends(require_control)])
 def pause():
     """暂停方向性开仓（止损监控不暂停）。信号扫描循环内部跳过。"""
     _trader().pause()
@@ -219,7 +236,8 @@ def pause():
                       message="已暂停开仓信号扫描；止损止盈监控继续运行")
 
 
-@app.post("/resume", response_model=ControlOut, tags=["控制"])
+@app.post("/resume", response_model=ControlOut, tags=["控制"],
+           dependencies=[Depends(require_control)])
 def resume():
     """恢复方向性开仓信号扫描。"""
     _trader().resume()
@@ -294,7 +312,8 @@ def analysis_latest():
             "report": _json.loads(row["report"]), "issues": _json.loads(row["issues"])}
 
 
-@app.post("/analysis/daily", response_model=dict, tags=["运维"])
+@app.post("/analysis/daily", response_model=dict, tags=["运维"],
+           dependencies=[Depends(require_control)])
 def analysis_daily():
     """手动触发一次每日看账（分析 + 问题感知 + 教训入经验库 + 飞书反馈）。"""
     from decision.analyst import run_daily

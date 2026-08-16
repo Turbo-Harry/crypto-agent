@@ -14,6 +14,7 @@
   - /public/instruments 的 SWAP 才有 ctVal/lotSz/minSz。
 """
 import time
+import uuid
 from typing import Dict, List, Optional
 
 from exchange.base import ExchangeAdapter, ExchangeError
@@ -185,8 +186,11 @@ class OKXAdapter(ExchangeAdapter):
 
     def place_market_order(self, inst_id: str, side: str, qty: float,
                            venue: str = "swap", pos_side: Optional[str] = None,
-                           reduce_only: bool = False) -> OrderResult:
+                           reduce_only: bool = False,
+                           cl_ord_id: Optional[str] = None) -> OrderResult:
         inst = self.instrument(inst_id)
+        # 审计 C1:客户端幂等键(下单响应丢失/超时后按它反查真实状态)
+        cl_ord_id = cl_ord_id or f"ca-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
         if venue == "spot":
             sz = floor_to_lot(qty, inst.lot_sz)
             if inst.min_sz > 0 and sz < inst.min_sz:
@@ -201,11 +205,14 @@ class OKXAdapter(ExchangeAdapter):
                     "posSide": pos_side or "long"}
             if reduce_only:
                 body["reduceOnly"] = "true"
+        body["clOrdId"] = cl_ord_id
         resp = self.t.private_post("/api/v5/trade/order", body)
         row = (resp.get("data") or [{}])[0]
         if row.get("sCode") and row.get("sCode") != "0":
-            return OrderResult(ok=False, qty=qty, message=f"{row.get('sCode')} {row.get('sMsg')}")
-        return OrderResult(ok=True, ord_id=str(row.get("ordId") or ""), qty=qty)
+            return OrderResult(ok=False, qty=qty, cl_ord_id=cl_ord_id,
+                               message=f"{row.get('sCode')} {row.get('sMsg')}")
+        return OrderResult(ok=True, ord_id=str(row.get("ordId") or ""),
+                           cl_ord_id=cl_ord_id, qty=qty)
 
     def place_conditional_stop(self, inst_id: str, side: str, qty: float,
                                pos_side: str, trigger_px: float,
@@ -267,6 +274,19 @@ class OKXAdapter(ExchangeAdapter):
             return None
         px = data[0].get("avgPx") or data[0].get("fillPx")
         return float(px) if px else None
+
+    def fetch_order_state(self, inst_id: str, cl_ord_id: str) -> Optional[dict]:
+        """按 clOrdId 反查订单状态(审计 C1:超时后判断是否已成交)。"""
+        resp = self.t.private_get("/api/v5/trade/order",
+                                  {"instId": inst_id, "clOrdId": cl_ord_id})
+        data = resp.get("data") or []
+        if not data:
+            return None
+        r = data[0]
+        px = r.get("avgPx") or r.get("fillPx")
+        return {"state": str(r.get("state") or ""),
+                "avg_px": float(px) if px else None,
+                "ord_id": str(r.get("ordId") or "")}
 
     def fetch_bills(self, ccy: str = "USDT", since_ms: int = 0,
                     bill_type: str = "") -> List[dict]:

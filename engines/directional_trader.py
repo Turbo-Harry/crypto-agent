@@ -19,6 +19,7 @@ import sys
 import os
 import json
 import time
+import uuid
 import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,7 +33,7 @@ DEFAULT_TRADE_BUDGET = config.DEFAULT_TRADE_BUDGET
 from execution.trade_journal import TradeJournal
 from decision.review_engine import deep_review
 from exchange.base import ExchangeAdapter, ExchangeError
-from exchange.models import floor_to_lot
+from exchange.models import floor_to_lot, OrderResult
 
 LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
 FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
@@ -61,6 +62,36 @@ def connect() -> ExchangeAdapter:
     cfg = json.load(open("okx_config.json"))
     from exchange.okx_adapter import OKXAdapter
     return OKXAdapter(cfg["apiKey"], cfg["secret"], cfg["password"], sandbox=True)
+
+
+def acquire_instance_lock(timeout=300.0):
+    """单实例互斥(审计:双实例事故):对项目根 engine.lock 加 flock。
+    已被持有 → 等待持有者退出(热备用),超时仍未拿到 → 返回 None。
+    拿到 → 返回文件句柄(进程存续期间持锁,退出自动释放)。"""
+    lock_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "engine.lock")
+    try:
+        import fcntl
+    except ImportError:
+        return open(lock_path, "w")   # 平台无 flock:退化为普通文件
+    deadline = time.time() + timeout
+    while True:
+        try:
+            f = open(lock_path, "a+")
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            f.seek(0)
+            f.truncate()
+            f.write(str(os.getpid()))
+            f.flush()
+            return f
+        except OSError:
+            try:
+                f.close()
+            except Exception:
+                pass
+            if time.time() >= deadline:
+                return None
+            time.sleep(2)
 
 
 class _ExpAdapter:
@@ -127,6 +158,10 @@ class DirectionalTrader:
             eq = 0
         self.risk = RiskManager(initial_equity=eq if eq > 0 else 4190)
         self._halt_notified = False
+        # 审计 C1/H2:启动对账——交易所持仓 ∪ 未平仓 journal 为唯一事实源,
+        # 幽灵 claim 物理释放;无台账的交易所持仓仅告警(不自动下单)。
+        if getattr(self.exchange, "name", "") == "okx":
+            self._reconcile_startup()
         # WebSocket 实时价格（tick 级止损止盈监控，替代 6 小时轮询 — OP-1）
         # 服务模式下由 service 注入共享 rt（与套利引擎共用一条 WS 连接）
         self.rt = rt
@@ -137,6 +172,39 @@ class DirectionalTrader:
                 print("WebSocket 实时价格已接入（止损止盈 tick 级监控）")
             except Exception as e:
                 print(f"WebSocket 启动失败，止损监控退回 REST 轮询: {e}")
+
+    def _reconcile_startup(self):
+        """启动对账(审计 C1/H2):幽灵 claim 物理释放;无台账持仓告警。"""
+        try:
+            positions = self.exchange.fetch_positions()
+        except Exception as e:
+            print(f"启动对账:无法获取交易所持仓,跳过: {e}")
+            return
+        open_journal = [t for t in self.journal.trades if t.get("status") == "open"]
+        active = set()
+        for p in positions:
+            if p.base_qty <= 0:
+                continue
+            active.add(f"{p.base}/USDT:USDT:{p.side}")
+        for t in open_journal:
+            base = t["symbol"]
+            venue = t.get("venue") or "swap"
+            sym = f"{base}/USDT" if venue == "spot" else f"{base}/USDT:USDT"
+            active.add(f"{sym}:{t.get('direction') or 'long'}")
+        released = self.ledger.reconcile(active)
+        for k in released:
+            print(f"🧹 启动对账:释放幽灵 claim {k}")
+            notify(f"🧹 启动对账:释放幽灵 claim {k}")
+        for p in positions:
+            if p.base_qty <= 0:
+                continue
+            has_journal = any(
+                t["symbol"] == p.base and (t.get("direction") or "long") == p.side
+                for t in open_journal)
+            if not has_journal:
+                print(f"⚠️ 启动对账:交易所存在无台账持仓 {p.inst_id} {p.side} "
+                      f"qty={p.base_qty}(仅告警,人工处置)")
+                notify(f"⚠️ 启动对账:无台账持仓 {p.inst_id} {p.side} qty={p.base_qty}")
 
     # ---------- 场所/行情辅助（依赖 ExchangeAdapter 接口） ----------
     def _inst_id(self, base, venue="swap"):
@@ -295,7 +363,12 @@ class DirectionalTrader:
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
                 return None
-            res = self.exchange.place_market_order(inst_id, "buy", qty, venue="spot")
+            cl_ord_id = f"ca-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
+            try:
+                res = self.exchange.place_market_order(inst_id, "buy", qty, venue="spot",
+                                                       cl_ord_id=cl_ord_id)
+            except ExchangeError as e:
+                res = self._recover_order(inst_id, cl_ord_id, qty, e)
             if not res.ok:
                 try:
                     self.ledger.release(sym_ledger, "long", "dir", qty, qty * price)
@@ -358,8 +431,14 @@ class DirectionalTrader:
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
                 return None
-            res = self.exchange.place_market_order(inst_id, side, qty, venue="swap",
-                                                   pos_side=sig["dir"])
+            cl_ord_id = f"ca-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
+            try:
+                res = self.exchange.place_market_order(inst_id, side, qty, venue="swap",
+                                                       pos_side=sig["dir"],
+                                                       cl_ord_id=cl_ord_id)
+            except ExchangeError as e:
+                # 审计 C1:网络错误可能已成交 → 用 clOrdId 反查,已成交继续走止损/记账
+                res = self._recover_order(inst_id, cl_ord_id, qty, e)
             if not res.ok:
                 try:
                     self.ledger.release(sym_ledger, sig["dir"], "dir", qty, qty * price)
@@ -367,6 +446,14 @@ class DirectionalTrader:
                     pass
                 print(f"❌ 开仓失败 {base}: {res.message}")
                 return None
+            # 审计 M5:用真实成交均价记账(响应里没有时回填;失败退回信号价)
+            fill_px = None
+            try:
+                fill_px = self.exchange.fetch_order_avg_px(inst_id, res.ord_id) if res.ord_id else None
+            except Exception:
+                fill_px = None
+            if fill_px:
+                price = fill_px
             # 交易所侧停损单（本地进程崩溃也生效 — OP-1）
             stop_side = "sell" if sig["dir"] == "long" else "buy"
             try:
@@ -411,6 +498,20 @@ class DirectionalTrader:
                 pass
             print(f"❌ 开仓失败 {base}: {e}")
             return None
+
+    def _recover_order(self, inst_id, cl_ord_id, qty, error):
+        """审计 C1:下单抛 ExchangeError 后按 clOrdId 反查真实状态。
+        已成交(filled)→ ok=True(继续挂止损/记账);否则 fail-closed 返回 ok=False。"""
+        try:
+            state = self.exchange.fetch_order_state(inst_id, cl_ord_id)
+        except Exception:
+            state = None
+        if state and state.get("state") == "filled":
+            print(f"  ⚠️ 下单响应丢失但反查已成交,继续止损/记账: {error}")
+            return OrderResult(ok=True, ord_id=state.get("ord_id") or "",
+                               cl_ord_id=cl_ord_id, qty=qty)
+        return OrderResult(ok=False, qty=qty,
+                           message=f"下单异常且反查无法确认成交: {error}")
 
     # ---------- R2-5：止盈挂交易所侧（独立 TP 条件单） ----------
     def _place_tp(self, base, sig, qty):
@@ -508,7 +609,8 @@ class DirectionalTrader:
                 # 平仓（R1-12 最小止血：按本策略 journal 数量平 + reduceOnly，
                 # 不再按交易所合并持仓全额平——防止误平同 symbol 同 posSide 的套利腿）
                 pos = next((p for p in positions
-                            if p.inst_id == inst_id and p.base_qty > 0), None)
+                            if p.inst_id == inst_id and p.base_qty > 0
+                            and p.side == (t.get("direction") or "long")), None)
                 if pos:
                     try:
                         side = "sell" if pos.side == "long" else "buy"
@@ -581,10 +683,12 @@ class DirectionalTrader:
                     if held >= float(t["size"]) * 0.99:
                         res = self.exchange.place_market_order(
                             inst_id, "sell", abs(float(t["size"])), venue="spot")
-                        if res.ok:
-                            self.ledger.release(sym_ledger, "long", "dir",
-                                                float(t["size"]),
-                                                float(t["size"]) * float(t.get("entry_price") or 0))
+                        if not res.ok:
+                            print(f"现货强平失败 {base}: {res.message}（保持 open，下轮重试）")
+                            continue
+                        self.ledger.release(sym_ledger, "long", "dir",
+                                            float(t["size"]),
+                                            float(t["size"]) * float(t.get("entry_price") or 0))
                     px = self._ticker_last(base)
                     if px is None:
                         print(f"强平失败 {base}: 无法获取价格")
@@ -606,9 +710,15 @@ class DirectionalTrader:
                     res = self.exchange.place_market_order(
                         inst_id, side, close_qty, venue="swap",
                         pos_side=pos.side, reduce_only=True)
-                    if res.ok:
-                        # R1-1：强平后取消交易所侧条件停损单
-                        self._cancel_stop_orders(base, "熔断强平")
+                    if not res.ok:
+                        # 审计 H4:平仓失败不得落账"已平"——保持 open,下一轮重试
+                        print(f"强平失败 {base}: {res.message}（保持 open，下轮重试）")
+                        continue
+                    # R1-1：强平后取消交易所侧条件停损单
+                    self._cancel_stop_orders(base, "熔断强平")
+                else:
+                    # 交易所已无该持仓(可能被条件单平掉):闭环台账即可
+                    print(f"{base}: 交易所已无持仓(可能已由条件单平仓)，仅闭环台账")
                 # 账本释放：无论交易所持仓是否存在都必须执行（journal 是本策略事实源；
                 # 此前放在 if pos 分支内，持仓已归零时跳过 → 账本残留，见 pitfalls）
                 try:
@@ -743,7 +853,11 @@ class DirectionalTrader:
                     print(msg)
                     notify(msg)
                     self._log_risk_event("halt", self.risk.halt_reason, eq)
+                # 审计 H4:熔断期间止损监控绝不暂停;强平失败每 30s 重试
+                if now - getattr(self, "_last_liq_attempt", 0) >= 30:
+                    self._last_liq_attempt = now
                     self._liquidate_all(self.risk.halt_reason)
+                self.monitor()
                 time.sleep(2)
                 return
             elif self._halt_notified:
@@ -758,6 +872,10 @@ class DirectionalTrader:
             self.scan_signals()
 
     def run(self):
+        lock = acquire_instance_lock()
+        if lock is None:
+            print("❌ 已有交易引擎实例在运行（engine.lock 被持有），本进程退出")
+            sys.exit(1)
         notify("🎯 方向性交易 agent 启动（回踩确认 + 2:1盈亏比 + 2-3x杠杆 + tick级止损）")
         # R2-4: PID + 心跳文件（watchdog 用）
         with open("directional_trader.pid", "w") as f:

@@ -25,6 +25,7 @@ watchlist.json
 positions_snapshot.json
 position_ownership.json
 position_ownership.lock
+engine.lock
 threshold_state*.json
 experience_scored.json
 arb_positions.json

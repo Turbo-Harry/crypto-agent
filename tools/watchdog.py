@@ -16,6 +16,7 @@
 """
 import json
 import os
+import signal
 import sys
 import time
 
@@ -70,6 +71,20 @@ def _pid_alive(pid):
         return False
 
 
+def _pid_matches(name, pid):
+    """审计 C-H2:PID 身份校验,防 PID 复用误杀无辜进程。
+    服务模式命令行是 service/main.py;standalone 是 *_trader.py/trading_main.py。"""
+    try:
+        import subprocess
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "args="],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return False
+    if not out.strip():
+        return False
+    return (HEARTBEATS[name]["proc"] in out) or ("service/main.py" in out)
+
+
 def check():
     state = _load_state()
     now = time.time()
@@ -87,10 +102,21 @@ def check():
             state[name] = state.get(name, 0) + 1   # 缺失计数
         missing = state.get(name, 0)
         if stale or missing >= MISSING_TOLERANCE:
+            if not _pid_matches(name, pid):
+                notify(f"⚠️ {cfg['proc']} 心跳异常，但 PID={pid} 进程身份不匹配"
+                       f"（防误杀），跳过 kill，请人工检查")
+                state.pop(name, None)
+                continue
             notify(f"⚠️ {cfg['proc']} 心跳异常（stale={stale}, 缺失{missing}次），"
                    f"按 PID={pid} kill，launchd 将自动重启")
             try:
-                os.kill(pid, 9)                     # 精确 kill（不 pkill -f）
+                os.kill(pid, signal.SIGTERM)        # 先优雅退出
+                for _ in range(8):                  # 最多等 8s
+                    time.sleep(1)
+                    if not _pid_alive(pid):
+                        break
+                if _pid_alive(pid):
+                    os.kill(pid, 9)                 # 超时仍存活才 SIGKILL
             except Exception as e:
                 print(f"kill 失败 {name} pid={pid}: {e}")
             state.pop(name, None)
