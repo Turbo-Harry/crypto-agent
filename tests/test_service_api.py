@@ -97,6 +97,14 @@ def main():
     check("/arb/status 200 且 enabled=false", r.status_code == 200 and r.json()["enabled"] is False)
     r = client.get("/error")
     check("/error 200", r.status_code == 200)
+    r = client.get("/analysis/latest")
+    check("/analysis/latest 200（空态或报告）", r.status_code == 200)
+    r = client.post("/analysis/daily")
+    j = r.json()
+    check("/analysis/daily 跑通（含 report/issues）",
+          r.status_code == 200 and "report" in j and "issues" in j)
+    r = client.get("/analysis/latest")
+    check("/analysis/latest 触发后有报告", r.status_code == 200 and r.json()["report"] is not None)
     # /signals/{base}：FakeAdapter 灌 K 线出信号（复用 test_exchange_layers 的构造）
     from test_exchange_layers import make_candles
     fake.candles["BTC-USDT-SWAP"] = make_candles()

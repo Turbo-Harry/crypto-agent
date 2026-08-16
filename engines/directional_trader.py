@@ -648,9 +648,12 @@ class DirectionalTrader:
             budget = self._trade_budget(base)
             if len(opened_base) >= budget:
                 print(f"⏸️ {base}: 今日已开 {len(opened_base)} 笔 ≥ 额度 {budget}（评分给额），跳过")
+                self._log_scan_decision(base, False, "", "budget",
+                                        f"今日已开 {len(opened_base)} 笔 ≥ 额度 {budget}")
                 continue
             # 1. 同币信号冷却（3 小时，1h 线 3 根K线）
             if time.time() - self.signal_cool.get(base, 0) < SIGNAL_COOLDOWN_MINUTES * 60:
+                self._log_scan_decision(base, False, "", "cooldown", "信号冷却中")
                 continue
             sig = self.scan_signal(base)
             if sig:
@@ -659,23 +662,42 @@ class DirectionalTrader:
                 if SIGNAL_SCORE < self.threshold_learner.threshold:
                     print(f"{base}: 信号分 {SIGNAL_SCORE} < 自适应阈值 "
                           f"{self.threshold_learner.threshold}，观望")
+                    self._log_scan_decision(base, True, sig["dir"], "reject",
+                                            f"信号分 {SIGNAL_SCORE} < 阈值 {self.threshold_learner.threshold}")
                     continue
                 # 决策（经验库，统一 ScoredExperience — B6）
                 dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0)
                 if dec["trade"]:
+                    self._log_scan_decision(base, True, sig["dir"], "open",
+                                            "; ".join(dec.get("reason") or ["信号达标"]))
                     self.open_position(base, sig, score=SIGNAL_SCORE,
                                        stop_adj=dec.get("stop_adj", 0.0),
                                        size_factor=dec.get("size_factor", 1.0),
                                        adopted_ids=dec.get("adopted_lesson_ids", []))
                 else:
                     print(f"{base}: 有信号但拒绝 - {'; '.join(dec['reason'])}")
+                    self._log_scan_decision(base, True, sig["dir"], "reject",
+                                            "; ".join(dec["reason"]))
             else:
                 print(f"{base}: 无回踩确认信号")
+                self._log_scan_decision(base, False, "", "no_signal", "")
 
     def run_once(self):
         self.scan_signals()
         self.monitor()
 
+
+    def _log_scan_decision(self, base, has_signal, direction, decision, reason=""):
+        """信号决策过程落库（self-evolution 看账数据）：每币每轮扫都记一条。"""
+        try:
+            import storage.db as sdb
+            sdb.init_db()
+            sdb.x("INSERT INTO scan_decisions (ts, base, venue, has_signal, direction, "
+                  "threshold, decision, reason) VALUES (?,?,?,?,?,?,?,?)",
+                  [time.time(), base, self.exchange.venue_for(base), 1 if has_signal else 0,
+                   direction or "", self.threshold_learner.threshold, decision, reason])
+        except Exception:
+            pass
 
     def _log_risk_event(self, kind, reason, eq):
         """风控事件落库（复盘用）：halt/recovery 各记一条，含净值快照。"""

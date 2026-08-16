@@ -89,6 +89,30 @@ CREATE TABLE IF NOT EXISTS risk_events (
 );
 CREATE INDEX IF NOT EXISTS idx_risk_ts ON risk_events(ts);
 
+CREATE TABLE IF NOT EXISTS scan_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, base TEXT, venue TEXT,
+    has_signal INTEGER DEFAULT 0,      -- 是否出回踩确认信号
+    direction TEXT,                    -- long/short/None
+    threshold REAL, decision TEXT,     -- open / hold / cooldown / budget / reject
+    reason TEXT                        -- 拒绝/放行原因
+);
+CREATE INDEX IF NOT EXISTS idx_scan_ts ON scan_decisions(ts);
+
+CREATE TABLE IF NOT EXISTS engine_errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, engine TEXT, error TEXT, traceback TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_errors_ts ON engine_errors(ts);
+
+CREATE TABLE IF NOT EXISTS analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, kind TEXT,                -- daily / manual
+    report TEXT,                       -- JSON 报告
+    issues TEXT                        -- JSON 感知到的问题列表
+);
+CREATE INDEX IF NOT EXISTS idx_analyses_ts ON analyses(ts);
+
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY, value TEXT, updated_at REAL
 );

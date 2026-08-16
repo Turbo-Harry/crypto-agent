@@ -117,6 +117,7 @@ class TraderWorker:
         t._last_risk_update = 0
         t.signal_cool = {}
         self._last_snapshot = 0
+        self._last_analysis = 0
         while not self._stop.is_set():
             try:
                 t.tick()                       # 心跳在 tick 内写
@@ -125,9 +126,25 @@ class TraderWorker:
                 if time.time() - self._last_snapshot >= 60:
                     self._last_snapshot = time.time()
                     self._save_positions_snapshot()
+                # 每日看账（自我进化：定期分析问题并反馈，≥24h 跑一次）
+                if time.time() - self._last_analysis >= 24 * 3600:
+                    self._last_analysis = time.time()
+                    try:
+                        from decision.analyst import run_daily
+                        run_daily()
+                    except Exception as e:
+                        print(f"每日分析失败: {e}")
             except Exception as e:
-                t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{traceback.format_exc(limit=3)}"
+                tb = traceback.format_exc(limit=3)
+                t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{tb}"
                 print(f"方向性引擎异常: {e}")
+                try:
+                    import storage.db as sdb
+                    sdb.init_db()
+                    sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
+                          [time.time(), "directional", str(e), tb])
+                except Exception:
+                    pass
             time.sleep(2)
 
     def _arb_loop(self):
@@ -142,6 +159,13 @@ class TraderWorker:
                 self.last_hb_arb = time.time()
             except Exception as e:
                 print(f"套利引擎异常: {e}")
+                try:
+                    import storage.db as sdb
+                    sdb.init_db()
+                    sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
+                          [time.time(), "arb", str(e), traceback.format_exc(limit=3)])
+                except Exception:
+                    pass
             time.sleep(60)
 
     # ---------- 只读状态快照（供 HTTP 层） ----------

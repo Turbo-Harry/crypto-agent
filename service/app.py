@@ -281,6 +281,26 @@ def reconcile():
                         per_symbol=per_symbol, balanced=balanced, notes=notes)
 
 
+@app.get("/analysis/latest", response_model=dict, tags=["观测"])
+def analysis_latest():
+    """最近一次看账报告（报告 + 感知到的问题 + 生成的教训 id）。"""
+    import storage.db as sdb
+    sdb.init_db()
+    row = sdb.q1("SELECT * FROM analyses ORDER BY id DESC LIMIT 1")
+    if not row:
+        return {"report": None, "issues": [], "message": "尚无分析记录"}
+    import json as _json
+    return {"ts": row["ts"], "kind": row["kind"],
+            "report": _json.loads(row["report"]), "issues": _json.loads(row["issues"])}
+
+
+@app.post("/analysis/daily", response_model=dict, tags=["运维"])
+def analysis_daily():
+    """手动触发一次每日看账（分析 + 问题感知 + 教训入经验库 + 飞书反馈）。"""
+    from decision.analyst import run_daily
+    return run_daily()
+
+
 @app.get("/risk/events", response_model=List[RiskEventOut], tags=["观测"])
 def risk_events(limit: int = 20):
     """风控事件复盘记录：熔断/恢复，含触发时净值与持仓数快照。"""
