@@ -124,15 +124,22 @@ def run_daily():
           [time.time(), "daily", json.dumps(report, ensure_ascii=False),
            json.dumps(issues, ensure_ascii=False)])
     # 结构化教训 → lessons 表（unverified，走既有验证闸门）
+    # 去重：同类别同内容已存在则跳过（避免每次看账重复堆积同一条教训）
     lesson_ids = []
     for it in issues:
-        if it.get("lesson"):
-            lid = sdb.x("INSERT INTO lessons (symbol, category, content, score, "
-                        "adoptions, status, source_trade, ts, last_update) "
-                        "VALUES (?,?,?,?,?,?,?,?,?)",
-                        ["*", it["category"], it["lesson"], 50, 0, "unverified",
-                         f"analyst:{time.strftime('%Y-%m-%d')}", time.time(), time.time()])
-            lesson_ids.append(lid)
+        if not it.get("lesson"):
+            continue
+        dup = sdb.q1("SELECT id FROM lessons WHERE category=? AND content=?",
+                     [it["category"], it["lesson"]])
+        if dup:
+            lesson_ids.append(dup["id"])
+            continue
+        lid = sdb.x("INSERT INTO lessons (symbol, category, content, score, "
+                    "adoptions, status, source_trade, ts, last_update) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    ["*", it["category"], it["lesson"], 50, 0, "unverified",
+                     f"analyst:{time.strftime('%Y-%m-%d')}", time.time(), time.time()])
+        lesson_ids.append(lid)
     # 飞书反馈
     lines = [f"📊 系统每日看账 [{time.strftime('%m-%d %H:%M')}]",
              f"交易 {report['closed']}/{report['trades_total']} 笔 | 胜率 "
