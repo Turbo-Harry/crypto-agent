@@ -9,6 +9,7 @@ import os
 import random
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 from execution.trade_journal import TradeJournal
 from decision.review_engine import deep_review, ExperienceBank
 
@@ -29,10 +30,11 @@ class SelfEvolvingTrader:
         decision = {"trade": True, "reason": [], "stop_adj": 0, "size_factor": 1.0,
                     "adopted_lesson_ids": []}   # R2-3：恒初始化，无采纳也返回空列表
 
-        # 1. 信号门槛
-        if signal_score < 75:
+        # 1. 信号门槛（统一维护于 config.DECIDE_MIN_SCORE,与引擎 SIGNAL_SCORE 联动）
+        if signal_score < config.DECIDE_MIN_SCORE:
             decision["trade"] = False
-            decision["reason"].append(f"信号分 {signal_score} < 75")
+            decision["reason"].append(
+                f"信号分 {signal_score} < {config.DECIDE_MIN_SCORE}")
             return decision
 
         # 2. 查经验库：该币种历史教训

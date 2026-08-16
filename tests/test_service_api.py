@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # tests 目录（import test_exchange_layers）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
+import config
+
 from fastapi.testclient import TestClient
 from service.app import app
 from service.worker import ServiceTrader
@@ -66,7 +68,8 @@ def main():
     trader.journal = TradeJournal(path=os.path.join(tmp, "journal.json"))
     trader.ledger = PositionLedger(path=os.path.join(tmp, "ledger.json"),
                                    lock_path=os.path.join(tmp, "ledger.lock"))
-    trader.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"))
+    trader.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"),
+                                                initial_threshold=config.THRESHOLD_INITIAL)
     trader.exp_bank = ScoredExperience(path=os.path.join(tmp, "exp.json"))
     worker = _FakeWorker(trader)
     app.state.worker = worker

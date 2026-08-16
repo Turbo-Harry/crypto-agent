@@ -43,9 +43,11 @@ LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3}
 # 2026-08-16 采集加速（用户指示）: 回退池扩到 10 个主流,扫描池 = watchlist ∪ 回退池
 SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
            "LINK", "ADA", "AVAX", "BNB", "LTC"]
-RISK_PER_TRADE = 0.01  # 单笔风险 1%
-RR_RATIO = 2.0         # 2:1 盈亏比
-SIGNAL_SCORE = 75      # 回踩确认信号的基础分（采集加速:80→75;风险红线不变）
+# 策略参数统一维护于 config.py（2026-08-16 用户指示: 数值不再分散）——
+# 本模块只引用、不私藏副本。
+SIGNAL_SCORE = config.SIGNAL_SCORE          # 回踩确认信号基础分
+RISK_PER_TRADE = config.RISK_PER_TRADE      # 单笔风险 1%
+RR_RATIO = config.TP_ATR_MULT / config.STOP_ATR_MULT  # 2:1 盈亏比
 # R2-5：止盈挂交易所侧（默认关闭——需沙盘验证通过后由用户/协调者开启）
 FLAG_ENABLE_EXCHANGE_TP = False
 # Phase 3 T3.1：影子连续分门控开关。默认 False——影子分未通过假设 A3 检验
@@ -174,10 +176,10 @@ class DirectionalTrader:
             print(f"  {b}: 当日评分 {self.watch_scores.get(b)} → 允许笔数 {self._trade_budget(b)}")
         # 阈值自适应（决策阈值用分数→盈亏分布校准）
         from decision.threshold_learning import ThresholdLearner
-        # R1-3: 方向侧独立阈值文件。方向信号分恒 SIGNAL_SCORE=80（单点），
-        # calibrate() 只在 80 单桶求均值、永远无法跨桶找盈亏平衡 → 校准恒 no-op，
-        # 故方向阈值保持初始 70 固定；自适应由套利侧 threshold_state_arb.json 负责。
-        self.threshold_learner = ThresholdLearner(path="threshold_state_dir.json")  # 阈值恒 70
+        # 2026-08-16 用户指示采集加速: 信号分门槛降到 50,阈值初始 70→45
+        # (若保持 70,50<70 会让全部信号被拒)。影子分喂入后满 30 样本仍可校准。
+        self.threshold_learner = ThresholdLearner(path="threshold_state_dir.json",
+                                                  initial_threshold=config.THRESHOLD_INITIAL)
         # 账户级风控（审计 CR-2：RiskManager 必须真正接线）
         from risk.risk_manager import RiskManager
         try:
@@ -350,26 +352,26 @@ class DirectionalTrader:
 
         # 做多信号：多头趋势 + 回踩 EMA20 不破 + 拒绝K线（下影线）
         if ema20[-1] > ema50[-1] and last["low"] <= ema20[-1] and last["close"] > ema20[-1]:
-            if lower_wick >= body * 1.5:  # 拒绝K线（下影线）
+            if lower_wick >= body * config.REJECT_WICK_RATIO:  # 拒绝K线（下影线）
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != 1:
                     return None
                 score, regime = _shadow(last["low"], lower_wick)
                 return {"dir": "long", "entry": entry_ref,
-                        "stop": entry_ref - atr_val,
-                        "tp": entry_ref + 2 * atr_val,
+                        "stop": entry_ref - config.STOP_ATR_MULT * atr_val,
+                        "tp": entry_ref + config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
                         "shadow_score": score, "regime": regime}  # Phase1 影子
         # 做空信号：空头趋势 + 反弹 EMA20 不破 + 拒绝K线（上影线）
         if ema20[-1] < ema50[-1] and last["high"] >= ema20[-1] and last["close"] < ema20[-1]:
-            if upper_wick >= body * 1.5:
+            if upper_wick >= body * config.REJECT_WICK_RATIO:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != -1:
                     return None
                 score, regime = _shadow(last["high"], upper_wick)
                 return {"dir": "short", "entry": entry_ref,
-                        "stop": entry_ref + atr_val,
-                        "tp": entry_ref - 2 * atr_val,
+                        "stop": entry_ref + config.STOP_ATR_MULT * atr_val,
+                        "tp": entry_ref - config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
                         "shadow_score": score, "regime": regime}  # Phase1 影子
         return None
@@ -425,7 +427,7 @@ class DirectionalTrader:
         # ===== 现货路径（仅现货的美股代币，仅做多，无杠杆，止损由本地监控执行） =====
         if venue == "spot":
             inst = self.exchange.instrument(inst_id)
-            qty = floor_to_lot(150 / price, inst.lot_sz)
+            qty = floor_to_lot(config.MAX_NOTIONAL_PER_TRADE / price, inst.lot_sz)
             if qty <= 0 or (inst.min_sz > 0 and qty < inst.min_sz):
                 print(f"⛔ 拒绝开仓 {base}: 数量 {qty} 无效（最小 {inst.min_sz}）")
                 return None
@@ -484,7 +486,7 @@ class DirectionalTrader:
         # 仓位：单笔风险 1%，名义金额上限 150 USDT（小仓位慢跑）
         stop_dist = abs(price - sig["stop"]) / price
         qty = (self.exchange.fetch_balance().usdt_total * RISK_PER_TRADE) / (price * stop_dist)
-        qty = min(qty, 150 / price)  # 小仓位：名义上限150USDT
+        qty = min(qty, config.MAX_NOTIONAL_PER_TRADE / price)  # 小仓位：名义上限(config)
         qty *= size_factor          # 连亏半仓等经验决策真正生效（B6）
         # 市场最大下单量限制（市价单，张→币）
         if inst.max_mkt_sz > 0:
@@ -495,7 +497,7 @@ class DirectionalTrader:
         # 最小张数（放大会击穿 150 USDT 小仓位上限，例如 BTC 0.01张=630 USDT）
         min_qty = inst.min_sz * inst.ct_val
         if qty < min_qty:
-            print(f"⛔ 拒绝开仓 {base}: 名义 150 USDT 只够 {qty} 币 < 最小 {min_qty} 币"
+            print(f"⛔ 拒绝开仓 {base}: 名义 {config.MAX_NOTIONAL_PER_TRADE} USDT 只够 {qty} 币 < 最小 {min_qty} 币"
                   f"（宁可错过，不放大仓位）")
             return None
         # 余额检查（曾发生 USDT 耗尽事故）

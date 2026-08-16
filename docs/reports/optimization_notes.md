@@ -332,3 +332,9 @@
 - watchdog 误杀慢启动（加速后首轮 17 币扫描数分钟,心跳停更>30s → SIGTERM 崩溃循环）: 超时 30→120s + screen_daily 前/扫描循环每币刷新心跳。验证: uptime 139.7s 稳定、首轮扫描完成、心跳 1.4s。
 - 哨兵签名演进: 加速后 BTC 进生产扫描池,H3"测试专用标的"签名误报——scan_decisions 标的检查退役（由 test_phase0_review T0.4 每次运行的隔离断言接管）;保留 thresholds 临时 key + lessons 测试 source_trade 模式(^[a-z]\d+$|^fake_)两类无歧义签名;变异自证与 H3 同步更新。
 - 采集加速实际生效: 每日扫描候选 2→8 个(MIN_VOL 500万→200万),扫描池 = 8 候选 + 9 回退 = 17 币。
+
+## 2026-08-16 深夜 门槛降到 50 + 策略参数统一维护（用户指示）
+- 门槛三件套联动调整: SIGNAL_SCORE 50 / DECIDE_MIN_SCORE 50 / THRESHOLD_INITIAL 45（不联动会"全部信号被拒"——已在 config 注释写明约束关系）。
+- 参数统一维护落地: config.py 新增「策略参数统一维护」区块，9 个参数收拢（信号分/决策门槛/阈值初始/拒绝K线比/止损止盈ATR倍数/单笔风险/单笔名义/总敞口）；engines/decision/execution 各模块改为只引用 config、删除私藏副本；PositionLedger 总敞口默认值也从 config 读。
+- 测试对齐: 各测试改用 config 常量（门槛用例 49/50、阈值用例 85/45）。
+- 验证: 全量回归 12 文件 130 项全绿。

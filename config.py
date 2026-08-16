@@ -89,6 +89,20 @@ DEFAULT_TRADE_BUDGET = 4      # 无评分（回退池）时的默认笔数
 SIGNAL_COOLDOWN_MINUTES = 60  # 同币信号冷却 1 小时（采集加速;原 180）
 MTF_ENABLED = False           # 多周期共振过滤临时关闭（采集加速;tf4h_spread 特征已记录,可事后检验;可回滚 True）
 
+# ============ 策略参数统一维护（2026-08-16 用户指示:数值不再分散在各模块） ============
+# 改交易门槛只改这里;各模块一律 import config 引用,禁止私藏副本。
+# 注意三件套联动关系（不满足会导致"全部信号被拒"或"门槛失效"）:
+#   THRESHOLD_INITIAL < DECIDE_MIN_SCORE <= SIGNAL_SCORE
+SIGNAL_SCORE = 50            # 回踩确认信号基础分（引擎门控 + journal 记录;采集加速 80→50）
+DECIDE_MIN_SCORE = 50        # 决策层最低信号分（self_evolving_trader.decide 门槛）
+THRESHOLD_INITIAL = 45       # 阈值学习层初始阈值（directional_trader 构造时）
+REJECT_WICK_RATIO = 1.5      # 拒绝K线: 影线/实体 最小比（回踩确认信号定义）
+STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR
+TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比）
+RISK_PER_TRADE = 0.01        # 单笔风险 1%（红线,改动需用户明确拍板）
+MAX_NOTIONAL_PER_TRADE = 150 # 单笔名义上限 USDT（红线）
+MAX_TOTAL_NOTIONAL = 600     # 组合总敞口上限 USDT（红线,PositionLedger 共用）
+
 # ============ 套利失效防护（OP-3） ============
 ARB_BASIS_EXIT = 0.005       # 基差(perp/spot-1)向不利方向超过 0.5% → 平对冲仓
 ARB_FLIP_HOURS = 16          # 费率向不利方向翻转持续 16 小时（2 个结算周期）→ 平对冲仓

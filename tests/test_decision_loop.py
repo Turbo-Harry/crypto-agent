@@ -74,11 +74,14 @@ def test_decision_rules(tmp):
     t.journal = TradeJournal(path=os.path.join(tmp, "j2.json"))
     t.bank = _ExpAdapter(ScoredExperience(path=os.path.join(tmp, "e2.json")))
 
-    # 1. 信号分门槛
-    dec = t.decide("BTC", 74, "回踩确认", 0, 0, 0.02, 0.05, 0)
-    check("信号分 74 < 75 → 拒绝", dec["trade"] is False)
-    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0)
-    check("信号分 80 ≥ 75 → 放行", dec["trade"] is True)
+    # 1. 信号分门槛（统一维护于 config.DECIDE_MIN_SCORE）
+    import config
+    dec = t.decide("BTC", config.DECIDE_MIN_SCORE - 1, "回踩确认", 0, 0, 0.02, 0.05, 0)
+    check(f"信号分 {config.DECIDE_MIN_SCORE-1} < {config.DECIDE_MIN_SCORE} → 拒绝",
+          dec["trade"] is False)
+    dec = t.decide("BTC", config.DECIDE_MIN_SCORE + 10, "回踩确认", 0, 0, 0.02, 0.05, 0)
+    check(f"信号分 {config.DECIDE_MIN_SCORE+10} ≥ {config.DECIDE_MIN_SCORE} → 放行",
+          dec["trade"] is True)
 
     # 2. 连亏 3 笔 → 冷却拒绝
     _closed_trades(t.journal, [-0.03, -0.04, -0.02])
@@ -154,14 +157,15 @@ def test_stop_adj_effect(tmp):
 
 
 def test_threshold_gate(tmp):
-    print("== 信号阈值卡（80 vs 自适应阈值）==")
+    print("== 信号阈值卡（SIGNAL_SCORE vs 自适应阈值）==")
     tmp = os.path.join(tmp, "thr")
     os.makedirs(tmp, exist_ok=True)
     dt, fake = _make_trader(tmp)
+    import config
     from decision.threshold_learning import ThresholdLearner
     dt.threshold_learner = ThresholdLearner(path="test",
                                             db_path=os.path.join(tmp, "th.db"),
-                                            initial_threshold=85)   # 阈值 > 80
+                                            initial_threshold=85)   # 阈值 > 信号分
     fake.candles["BTC-USDT-SWAP"] = _make_candles()
     fake.last_prices["BTC-USDT-SWAP"] = 110.0
     fake.last_prices["BTC-USDT"] = 110.0
@@ -172,12 +176,13 @@ def test_threshold_gate(tmp):
     dt._last_scan = 0
     dt.signal_cool = {}
     dt.scan_signals()
-    check("阈值 85 > 信号分 80 → 不开仓", len(fake.orders) == 0)
-    # 阈值放低到 70 → 应开仓
-    dt.threshold_learner.threshold = 70
+    check(f"阈值 85 > 信号分 {config.SIGNAL_SCORE} → 不开仓", len(fake.orders) == 0)
+    # 阈值放低到初始值(45) → 应开仓
+    dt.threshold_learner.threshold = config.THRESHOLD_INITIAL
     dt.signal_cool = {}
     dt.scan_signals()
-    check("阈值 70 < 80 → 开仓", len(fake.orders) >= 1)
+    check(f"阈值 {config.THRESHOLD_INITIAL} < {config.SIGNAL_SCORE} → 开仓",
+          len(fake.orders) >= 1)
 
 
 def _make_candles(n=100, base=100.0, drift=0.1):

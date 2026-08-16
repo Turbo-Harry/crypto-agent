@@ -15,6 +15,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
+import config
+
 from exchange.fake_adapter import FakeAdapter
 from exchange.models import PositionInfo
 from engines.directional_trader import DirectionalTrader, _ExpAdapter
@@ -48,7 +50,8 @@ def _make_trader(tmp):
     dt.exp_bank = ScoredExperience(path=os.path.join(tmp, "e.json"))
     dt.ledger = PositionLedger(path=os.path.join(tmp, "ledger.json"))
     dt.threshold_learner = ThresholdLearner(path="test_dir",
-                                            db_path=os.path.join(tmp, "th.db"))
+                                            db_path=os.path.join(tmp, "th.db"),
+                                            initial_threshold=config.THRESHOLD_INITIAL)
     dt.evolver.bank = _ExpAdapter(dt.exp_bank)
     return dt, fake
 
