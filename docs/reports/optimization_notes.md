@@ -356,3 +356,9 @@
 - 实现: engines/strategy_b.py(放量突破前 N 高/低点+阳/阴线,1×/2×ATR 风险框架,影子分 0-100) + storage shadow_signals 表 + 扫描循环接入(只记录/绝不下单/kline_ts 去重) + config 参数 STRATEGY_B_SHADOW_ENABLED/BREAKOUT_LOOKBACK/BREAKOUT_VOL_RATIO。
 - 测试: test_strategy_b.py 10 项全绿(触发/不触发/去重/引擎级零下单)。
 - 验证: 全量回归 141 项全绿(见套件);影子政策红线: 验证门+人工批准前永不转正。
+
+## 2026-08-16 深夜 XRP 空头信号→沙盘拒单事件（用户问"现在没有开空信号吗"）
+- 事实: 23:16:56 XRP 触发真实空头信号(空头趋势+反弹拒绝,决策 open)→ 下单被 OKX 沙盘拒(code=1 All operations failed,反查未确认成交)→ 系统 fail-closed 放弃,无仓位无飞书。
+- 排查: XRP-USDT-SWAP 规格正常(ct_val=100, lot 0.01 张, min 0.01 张)、余额正常、仓位计算 1 张≈100 USDT 在 150 红线内 → 疑沙盘环境对该合约的特定拒单/瞬时故障。
+- 观察项: 若后续其他币也出现同错→系统性;仅 XRP→合约特定。scan_decisions+日志+账本三重记录完整(信号→决策→执行失败全链路可追溯)。
+- 行情佐证: 7/8 空头币现价高点距 EMA20 仅 0.06%-0.30%,空头反弹拒绝形态随时可能再触发;策略 B 影子同时盯跌破前低的空头突破。
