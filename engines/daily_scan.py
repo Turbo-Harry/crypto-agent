@@ -25,7 +25,8 @@ from data.fetch_okx import build_observe_pool, fetch_klines
 WATCHLIST_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "watchlist.json")
 
 # 筛选参数（非拟合：区间取经验保守值）
-MIN_VOL = 5_000_000           # 24h 成交额 500 万 USDT（150 USDT 小单足够流动）
+# 2026-08-16 采集加速（用户指示）：流动性门槛 500万→200万,扩大候选池
+MIN_VOL = 2_000_000           # 24h 成交额 200 万 USDT（150 USDT 小单足够流动）
 MIN_PRICE = 0.01              # 最低价格
 MIN_TREND_DEV = 0.005         # EMA20 偏离 EMA50 ≥ 0.5% 才算有趋势
 ATR_SWEET_LOW = 0.005         # 1h ATR% 下限 0.5%

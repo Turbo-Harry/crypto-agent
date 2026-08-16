@@ -40,10 +40,12 @@ FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
 LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3}
 # 用户授权 3-10x；取区间下沿 3x——仓位由 1% 风险公式决定（与杠杆无关），
 # 更高杠杆只缩短爆仓距离、不提高胜率；方向性策略历史回测未证明正期望，保守为上
-SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE"]
+# 2026-08-16 采集加速（用户指示）: 回退池扩到 10 个主流,扫描池 = watchlist ∪ 回退池
+SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
+           "LINK", "ADA", "AVAX", "BNB", "LTC"]
 RISK_PER_TRADE = 0.01  # 单笔风险 1%
 RR_RATIO = 2.0         # 2:1 盈亏比
-SIGNAL_SCORE = 80      # 回踩确认信号的基础分（用于阈值决策与记录）
+SIGNAL_SCORE = 75      # 回踩确认信号的基础分（采集加速:80→75;风险红线不变）
 # R2-5：止盈挂交易所侧（默认关闭——需沙盘验证通过后由用户/协调者开启）
 FLAG_ENABLE_EXCHANGE_TP = False
 # Phase 3 T3.1：影子连续分门控开关。默认 False——影子分未通过假设 A3 检验
@@ -901,9 +903,14 @@ class DirectionalTrader:
                     self._notify(f"🔍 每日候选池刷新: {self.watchlist}")
             except Exception as e:
                 print(f"候选池刷新失败，沿用旧池: {e}")
-        print(f"\n=== 方向性信号扫描 [{time.strftime('%H:%M:%S')}] 候选池 {len(self.watchlist)} 个 ===")
+        # 2026-08-16 采集加速（用户指示）：扫描池 = 当日候选池 ∪ 回退主流池
+        # （10 个主流币始终参与信号扫描,额度/冷却约束照常适用）
+        scan_pool = list(dict.fromkeys(
+            self.watchlist + [s for s in SYMBOLS if s not in self.watchlist]))
+        print(f"\n=== 方向性信号扫描 [{time.strftime('%H:%M:%S')}] "
+              f"候选池 {len(self.watchlist)} 个 + 回退池 {len(scan_pool) - len(self.watchlist)} 个 ===")
         today = time.strftime("%Y-%m-%d")
-        for base in self.watchlist:
+        for base in scan_pool:
             # 0. 动态笔数：该币今天已开几笔？按当日评分给额度（看币动态调整）
             opened_base = [t for t in self.journal.trades
                            if t.get("symbol") == base and t.get("entry_time")
