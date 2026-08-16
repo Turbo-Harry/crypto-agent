@@ -1,0 +1,116 @@
+# 踩坑记录（pitfalls）
+
+> 本文件是仓库的"事故档案"：写代码前先读这里，同类坑不再踩第二遍。
+> 记录模板（每修一个 bug / 每踩一个坑，**当场追加**，不留到事后补）：
+>
+> ```markdown
+> ### YYYY-MM-DD 一句话标题
+> - 现象：……
+> - 根因：……
+> - 修复：……
+> - 预防：……
+> ```
+
+---
+
+## 交易所 API 类
+
+### 2026-08-16 OKX 条件单挂单报 50015（triggerPx 参数错）
+- 现象：挂交易所侧止损用 `triggerPx` 字段，返回 `50015 Either parameter tpTriggerPx or slTriggerPx is required`。
+- 根因：OKX 原生 `order-algo` 接口的条件单要求用 `slTriggerPx`/`slTriggerPxType`/`slOrdPx`（止损）或 `tpTriggerPx` 系列（止盈），不接受通用 `triggerPx`。
+- 修复：exchange 适配层 `place_conditional_stop` 用 slTriggerPx 系列、`is_tp=True` 用 tpTriggerPx 系列。
+- 预防：条件单字段只在 exchange 适配层出现一处；新增字段前先查 OKX 文档。
+
+### 2026-08-16 orders-algo-pending 查询必须带 ordType（51000）
+- 现象：查 pending 条件单不带 `ordType` 参数返回 51000。
+- 根因：OKX 该端点强制要求 ordType。
+- 修复：`pending_algo_ids` 按 6 种 ordType（conditional/oco/trigger/move_order_stop/iceberg/twap）枚举查询后合并。
+- 预防：查询类接口缺参报错时，先核对 OKX 必填参数表。
+
+### 2026-08-16 幽灵条件单残留误平新仓
+- 现象：平仓后条件止损单未撤销，下次开仓时旧止损单触发把新仓平掉。
+- 根因：平仓路径只平仓不撤条件单；进程崩溃后残留无人清理。
+- 修复：开仓前 `_cancel_stop_orders` 清理该 instId 全部 pending algo 单；平仓/强平成功后也撤销。
+- 预防：任何"平仓"代码路径必须配对"撤条件单"。
+
+### 2026-08-16 Cloudflare 403 error 1010（缺 User-Agent）
+- 现象：原生 urllib 请求 OKX 返回 `HTTP 403: error code: 1010`。
+- 根因：请求头没有 User-Agent，被 Cloudflare 拦。
+- 修复：exchange 传输层统一带 `User-Agent: Mozilla/5.0 …` 头。
+- 预防：所有直连外部 API 的请求统一走 transport 层，不在业务层裸发 urllib。
+
+### 2026-08-16 history-candles 返回倒序
+- 现象：K 线序列看起来时间乱序，指标计算错位。
+- 根因：OKX `history-candles` 返回新→旧（倒序），需反转为升序。
+- 修复：适配层 fetch_candles 用 `reversed(rows)` 统一成升序。
+- 预防：K 线进入策略前在适配层做归一（升序 + Candle 模型），策略层不再碰原始顺序。
+
+### 2026-08-16 资金费率账单金额字段不是 amount 而是 balChg
+- 现象：统计资金费收入拿到 0。
+- 根因：OKX `/account/bills` type=8（funding）的金额在 `balChg` 字段，不是 `amount`/`fee`。
+- 修复：`fetch_bills(bill_type="8")` 后按 `balChg` 求和。
+- 预防：接入新账单字段前先拉一条真实账单看结构，别凭直觉写字段名。
+
+## 数量与风控类
+
+### 2026-08-16 floor_to_lot 用 round 导致 0.5555 进位错误
+- 现象：`floor_to_lot(0.5555, 0.001)` 期望 0.555 却得到 0.556。
+- 根因：`round(0.5555*1000)` 用的是银行家舍入，半值进位不稳定。
+- 修复：改为 `int()` 截断（只向下，不四舍五入）。
+- 预防：所有"向下对齐"一律用 int 截断；单测覆盖边界值（.5 半值）。
+
+### 2026-08-16 名义不足最小下单量时放大到 1 张（击穿 150 USDT 上限）
+- 现象：150 USDT 名义买不起 0.01 BTC（最小 1 张）时，旧代码 `qty = ct_val` 兜底 → 实际下单 630 USDT，超小仓位上限 4 倍。
+- 根因：把"数量为 0"兜底成"最小张数"，未考虑名义上限。
+- 修复：最小下单量不足时**直接拒绝开仓**（宁可错过，不放大仓位）；单测覆盖。
+- 预防：兜底值必须过风控闸门审查——凡是"补数量"的逻辑都视为红旗。
+
+### 2026-08-16 round(x, float) TypeError（ccxt 精度是 float）
+- 现象：`round(amount, mkt["precision"]["amount"])` 抛 TypeError。
+- 根因：ccxt 的 precision 是 float，round 第二个参数必须是 int。
+- 修复：自研 exchange 层用 `floor_to_lot` + Instrument.amount_precision 统一换算。
+- 预防：数量换算只在 execution 层一处；禁止业务层直接 round 精度。
+
+## 工程/流程类
+
+### 2026-08-16 单测污染活体状态文件
+- 现象：单测跑完，活体 journal/账本出现测试交易。
+- 根因：单测复用真实 TradeJournal/PositionLedger 默认路径。
+- 修复：单测注入临时目录路径（tempfile.mkdtemp），断言后自动丢弃。
+- 预防：任何测试不得读写活体状态文件（trade_journal.json/watchlist.json/position_ownership.json）。
+
+### 2026-08-16 引擎 tick 状态未在 __init__ 初始化导致接口报错
+- 现象：/arb/status 访问 `signal_state` 报 AttributeError。
+- 根因：运行时状态字典只在 `run()` 里初始化，服务模式直接调 `tick()` 未先走 run()。
+- 修复：把 price_history/alert_cool/signal_state/decision_cool 初始化移到 __init__。
+- 预防：引擎公共状态统一在 __init__ 初始化，run() 只负责循环。
+
+### 2026-08-16 暂停后恢复 tick 不立即扫描（15min 计时）
+- 现象：单测 pause→resume→tick 不触发开仓，误判为 bug。
+- 根因：tick 内 15 分钟扫描计时 `_last_scan` 在暂停 tick 时已置位，恢复后需等下一周期。
+- 修复：测试显式重置 `_last_scan`（生产语义不变——暂停后不追单是正确行为）。
+- 预防：读 tick 类代码先理解计时语义；测试断言与真实节奏区分开。
+
+### 2026-08-16 沙盘市场清单与生产不一致（XIAOMI-USDT-SWAP）
+- 现象：公开接口显示 XIAOMI-USDT-SWAP live，但沙盘（ccxt 市场清单）查不到。
+- 根因：沙盘（demo trading）市场清单是独立快照，与生产不同步。
+- 修复：以实际下单环境为准探测场所；文档标注此边界（docs/architecture/exchange_layers.md）。
+- 预防：新标的先在生产与沙盘各自探测，两边一致才纳入候选池。
+
+### 2026-08-16 周末流动性骤降导致候选池空
+- 现象：周末 volCcy24h 大跌，MIN_VOL=1000 万过滤后 0 候选。
+- 根因：美股代币/小币周末成交量萎缩。
+- 修复：MIN_VOL 降到 500 万 + 空结果回退主流池（BTC/ETH/SOL/XRP/DOGE）。
+- 预防：流动性门槛是市场环境函数，保留回退路径而不是硬撑高门槛。
+
+### 2026-08-16 美股代币不是"只有现货"（ANTHROPIC 有永续）
+- 现象：假设美股代币仅现货可交易，漏掉 ANTHROPIC-USDT-SWAP。
+- 根因：凭"X 前缀=现货"经验外推，未实测每个标的。
+- 修复：场所探测改为逐币实测（venue_for 先合约后现货），ANTHROPIC 走合约路径。
+- 预防：范围类结论必须实测验证，不靠命名规律外推（用户指正过一次）。
+
+### 2026-08-16 迁移 ccxt 时 XIAOMI 缺失被误判为"ccxt bug"
+- 现象：ccxt 沙盘查不到 XIAOMI，一度怀疑 ccxt 有缺陷。
+- 根因：真实原因是沙盘市场快照缺失（见上一条），与 ccxt 无关。
+- 修复：原生 OKX 适配层 + 逐币实测，彻底移除 ccxt。
+- 预防：先定位根因再归责；"工具不行"是最容易的假结论。

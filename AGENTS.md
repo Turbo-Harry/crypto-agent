@@ -112,7 +112,39 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 6. 条件单字段：止损 `slTriggerPx`、止盈 `tpTriggerPx`（triggerPx 会 50015）；`orders-algo-pending` 必须带 `ordType`。
 7. HTTP 层只读观测 + 暂停/恢复；**不允许暴露下单接口**。
 
-## 6. 代码最佳实践（本仓库约定）
+## 6. 文档路径约束（写文档必守）
+
+所有新文档一律进 `docs/`，按功能选目录，文件名带日期前缀：
+
+| 文档类型 | 目录 | 示例 |
+|---|---|---|
+| 架构/设计 | `docs/architecture/` | exchange_layers.md |
+| 计划/简报 | `docs/plans/` | optimization_plan_agentB_R2_FINAL.md |
+| 报告/日志/踩坑 | `docs/reports/` | pitfalls.md |
+| 运维/验证手册 | `docs/ops/` | tp_sandbox_verify.md |
+| AI 提示词 | `docs/prompts/` | evolution_loop_prompt.md |
+
+- 文件名：`YYYY-MM-DD_功能名.md`；同一方案保留草稿+`_FINAL` 终审稿，终审稿标注"权威实施稿"。
+- 例外（活文档，追加式更新，不加日期前缀）：`docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md`。
+- 新增/移动文档后：同步更新 `docs/README.md`（功能表+时间线表）与全部交叉引用。
+- 根目录只留 `README.md`、`AGENTS.md` 两个入口，禁止在根目录新增散装 md。
+- 禁止把文档塞进代码目录（backtest/ data/ 等已清空归位）。
+
+## 7. 写代码前：先借鉴已有经验（必做）
+
+动手前按顺序读：
+1. `docs/reports/pitfalls.md` —— 踩坑档案（先看有没有同类坑）
+2. `docs/reports/optimization_notes.md` —— 历史实施记录（R1/R2/OP/CR/RES，别重复造轮子）
+3. 相关架构文档（`docs/architecture/`）与当前模块代码
+
+同类问题已踩过的坑不得重踩；若旧方案被推翻，先在优化记录里写明原因再动手。
+
+## 8. 写代码时：同步记踩坑（必做）
+
+每修一个 bug / 每踩一个新坑，**当场**按模板追加到 `docs/reports/pitfalls.md`：
+现象 → 根因 → 修复 → 预防。不留到事后补；与代码提交同步走。
+
+## 9. 代码最佳实践（本仓库约定）
 
 - 单写者：同一文件同一时刻只有一个协作者写；并行任务只做只读验证。
 - 失败语义两级：网络/签名→抛 `ExchangeError`（fail-closed）；业务拒绝→返回 `OrderResult(ok=False, message)`。
@@ -122,7 +154,7 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 - 改活体进程前：先 `py_compile` → 单测 → 沙盘实测 → 重启 → 验证心跳/持仓衔接。
 - 引擎代码不 import 任何 web 框架；HTTP 只是外壳。
 
-## 7. 不允许的行为（红线）
+## 10. 不允许的行为（红线）
 
 1. ❌ 连接真实资金账户或修改 `sandbox` 开关。
 2. ❌ 在 HTTP 层添加下单/撤单接口。
@@ -135,7 +167,7 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 9. ❌ 在活体进程运行中直接改它读写的状态文件（trade_journal.json / watchlist.json / 心跳）。
 10. ❌ 重启进程后不验证心跳与持仓衔接就宣称"已恢复"。
 
-## 8. 已知边界（诚实声明）
+## 11. 已知边界（诚实声明）
 
 - 方向性策略历史回测未证明正期望；系统只承诺"亏损有界"（止损+小仓位），不承诺收益。
 - 美股代币仅现货者（XNVDA 等）只做多、无杠杆、本地止损；ANTHROPIC-USDT-SWAP 有合约走合约路径。
