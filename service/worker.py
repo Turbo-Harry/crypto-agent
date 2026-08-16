@@ -59,7 +59,8 @@ class TraderWorker:
         self.exchange = connect_dir()
         try:
             from data.realtime_okx import OKXRealtime
-            self.rt = OKXRealtime(["BTC", "ETH", "SOL", "XRP", "DOGE"]).start()
+            # 2026-08-17: WS 覆盖全回退池(此前硬编码 5 币,池外下单无秒级行情)
+            self.rt = OKXRealtime(config.SYMBOLS).start()
             print("共享 WebSocket 实时行情已接入")
         except Exception as e:
             print(f"WebSocket 启动失败，REST 兜底: {e}")
@@ -163,7 +164,7 @@ class TraderWorker:
                               [time.time(), "directional", str(e), tb])
                     except Exception:
                         pass
-                time.sleep(2)
+                time.sleep(1)   # 2026-08-17 提速: 1s 节拍止损监控(持仓快照仍 2s 节流)
         finally:
             stop_hb.set()
 

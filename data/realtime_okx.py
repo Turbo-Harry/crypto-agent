@@ -35,6 +35,7 @@ class OKXRealtime:
     def __init__(self, symbols=None):
         # symbols: 如 ["BTC", "ETH", "SOL"]
         self.symbols = symbols or ["BTC", "ETH", "SOL"]
+        self.subscribed = set(self.symbols)   # 动态订阅去重(2026-08-17)
         self.ws = None
         self.latest = {}  # {base: {"price":..., "funding":..., "taker_buy":...}}
         self._running = False
@@ -139,6 +140,29 @@ class OKXRealtime:
             sub = {"op": "subscribe", "args": args}
             ws.send(json.dumps(sub))
         print(f"已订阅 {len(self.symbols)} 个标的（现货/合约价格/费率/成交；波动率走价格流滚动窗口）")
+
+    def subscribe(self, base):
+        """下单后动态订阅(2026-08-17): 秒级价格推送覆盖交易标的。
+        幂等(重复订阅去重);连接未就绪时记入清单,重连时一并订阅;线程安全。"""
+        try:
+            if base in self.subscribed:
+                return
+            self.subscribed.add(base)
+            self.symbols.append(base)
+            ws = self.ws
+            if ws is None or not self._running:
+                return
+            args = [
+                {"channel": "tickers", "instId": f"{base}-USDT"},
+                {"channel": "tickers", "instId": f"{base}-USDT-SWAP"},
+                {"channel": "funding-rate", "instId": f"{base}-USDT-SWAP"},
+                {"channel": "trades", "instId": f"{base}-USDT"},
+            ]
+            with self._restart_lock:
+                ws.send(json.dumps({"op": "subscribe", "args": args}))
+            print(f"🔔 动态订阅 {base}（下单后秒级行情）")
+        except Exception:
+            pass
 
     # ---------- 断线重连：监督线程 ----------
     def _supervisor(self):

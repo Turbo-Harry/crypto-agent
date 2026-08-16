@@ -231,6 +231,49 @@ def test_startup_reclaims_journal(tmp):
         _restore_notify()
 
 
+def test_ws_subscribe_dedup():
+    print("== 2026-08-17 动态订阅(去重/离线安全) ==")
+    from data.realtime_okx import OKXRealtime
+    rt = OKXRealtime(["BTC"])
+    rt.subscribe("ETH")
+    check("新币入订阅清单", "ETH" in rt.symbols)
+    rt.subscribe("ETH")
+    check("重复订阅去重", rt.symbols.count("ETH") == 1,
+          f"实际 {rt.symbols}")
+    rt.subscribe("BTC")
+    check("已订阅币幂等跳过", rt.symbols.count("BTC") == 1)
+
+
+def test_monitor_pos_throttle(tmp):
+    print("== 2026-08-17 持仓快照 2s 节流(不误平/不误报) ==")
+    tmp = os.path.join(tmp, "thr2")
+    os.makedirs(tmp, exist_ok=True)
+    _silence_notify()
+    try:
+        dt, fake = _make_trader(tmp)
+        dt.journal.log_entry(
+            symbol="BTC", signal="回踩确认", reason="测试",
+            entry_price=100.0, stop_loss=98.0, take_profit=104.0,
+            size=0.01, direction="long", score=80,
+            adopted_lesson_ids=[], atr_value=2.0, signal_price=99.5,
+            venue="swap")
+        fake.last_prices["BTC-USDT-SWAP"] = 97.0   # 已破止损
+        dt.rt = None   # 测试隔离: 引擎默认会接真实 WS(真实 BTC 价 63k 会盖过假价)
+        dt._last_pos_fetch = time.time()           # 本拍不刷持仓快照
+        dt.monitor()
+        t = dt.journal.trades[-1]
+        check("持仓快照未刷新拍: 不执行平仓(等下一拍)", t["status"] == "open")
+        check("无订单发出", len(fake.orders) == 0)
+        dt._last_pos_fetch = 0                     # 下一拍刷新持仓
+        from exchange.models import PositionInfo
+        fake.positions = [PositionInfo(inst_id="BTC-USDT-SWAP", base="BTC",
+                                       side="long", base_qty=0.01, avg_px=100.0)]
+        dt.monitor()
+        check("持仓就绪拍: 止损平仓执行", t["status"] == "closed",
+              f"实际 {t['status']}")
+    finally:
+        _restore_notify()
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_p0_review_")
     test_liquidate_runs_review(tmp)
@@ -238,5 +281,8 @@ if __name__ == "__main__":
     test_post_exit_reverse(tmp)
     test_scan_decision_isolation(tmp)
     test_startup_reclaims_journal(tmp)
+    test_ws_subscribe_dedup()
+    test_monitor_pos_throttle(os.path.join(tmp, "thr2"))
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
+

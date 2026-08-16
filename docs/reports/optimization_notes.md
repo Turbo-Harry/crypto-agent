@@ -381,3 +381,9 @@
 - 实现: storage signal_profiles 表; strategy_b.profile_from_klines(复用策略 A 同款条件,零额外 API——用策略 B 已取的 kl_b);扫描循环 no_signal 时落库; tools/no_signal_report.py 聚合(瓶颈分布/近失/分币画像/结论建议);看板闭环健康页新增面板。
 - 测试: test_strategy_b 增 3 项(横盘→trend/下跌未触线→touch/落库隔离),20 项全绿;全量回归见套件。
 - 设计意义: 瓶颈分布是策略改进的直接证据(如"80% 卡趋势"→补突破策略;"近失>20%"→门槛微调即可提频,经 experiments 留痕)。
+
+## 2026-08-17 凌晨 止损监控提速（用户建议:"下单后秒级感知价格,提高止损速度"）
+- 原状: WS 仅订阅 5 币(worker 硬编码,池外 15 币下单后监控走 REST 查价);监控节拍 2s。
+- 提速三件套: ① OKXRealtime.subscribe() 动态订阅——open_position 成功后立即把该币接入 WS 秒级推送(幂等/重连自愈/线程安全);② worker WS 覆盖全回退池(config.SYMBOLS 10 币);③ 监控节拍 2s→1s,交易所持仓 REST 快照 2s 节流(避免 REST 频率翻倍),快照未刷新拍只做价格判定、平仓执行等下一拍(≤1s)。
+- 延迟链现状: 价格变动 → WS 秒级推送 → 1s 节拍内判定 → 市价平仓(REST ~百毫秒) + 交易所侧 slTriggerPx 原生止损兜底(进程崩溃也生效)。
+- 测试: test_phase0_review 增 2 项(订阅去重/持仓节流不误平),23 项全绿;全量回归见套件。

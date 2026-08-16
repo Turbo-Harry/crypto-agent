@@ -464,6 +464,12 @@ class DirectionalTrader:
                                        self.exchange.name, db_path=self._db_path)
             except Exception:
                 pass
+            # 2026-08-17: 下单后动态订阅 WS(秒级价格感知,提速止损监控)
+            if self.rt is not None:
+                try:
+                    self.rt.subscribe(base)
+                except Exception:
+                    pass
             msg = (f"🎯 现货开仓 {base} long\n入场 {price:.2f} | 止损 {sig['stop']:.2f} | "
                    f"止盈 {sig['tp']:.2f}\n数量 {qty}（现货无杠杆，止损由本地监控执行）")
             print(msg)
@@ -570,6 +576,12 @@ class DirectionalTrader:
                                        self.exchange.name, db_path=self._db_path)
             except Exception:
                 pass
+            # 2026-08-17: 下单后动态订阅 WS(秒级价格感知,提速止损监控)
+            if self.rt is not None:
+                try:
+                    self.rt.subscribe(base)
+                except Exception:
+                    pass
             # R2-5: TP 挂失败 → 台账打标 tp_missing（本地 monitor 止盈兜底）
             if FLAG_ENABLE_EXCHANGE_TP and not tp_ok:
                 for t in self.journal.trades:
@@ -647,11 +659,19 @@ class DirectionalTrader:
 
     # ---------- 监控：止损止盈（tick 级，WebSocket 价格 + REST 兜底） ----------
     def monitor(self):
-        """检查持仓，触发止损/止盈则平仓 + 复盘。每 2 秒调用一次。"""
-        try:
-            positions = self.exchange.fetch_positions()
-        except Exception:
-            return
+        """检查持仓，触发止损/止盈则平仓 + 复盘。每 1 秒调用一次。
+        2026-08-17 提速: WS 价格检查每拍执行(秒级);交易所持仓 REST 快照
+        每 2 秒刷新一次(避免 1s 节拍的 REST 频率过高);快照未刷新的拍次
+        只做价格判定,平仓执行等下一拍持仓就绪(≤1s 延迟)。"""
+        now = time.time()
+        if now - getattr(self, "_last_pos_fetch", 0) >= 2.0:
+            self._last_pos_fetch = now
+            try:
+                positions = self.exchange.fetch_positions()
+            except Exception:
+                positions = None
+        else:
+            positions = None
         open_trades = [t for t in self.journal.trades if t["status"] == "open"]
         if not open_trades:
             return
@@ -708,6 +728,8 @@ class DirectionalTrader:
                 # ===== 合约路径（原有） =====
                 # 平仓（R1-12 最小止血：按本策略 journal 数量平 + reduceOnly，
                 # 不再按交易所合并持仓全额平——防止误平同 symbol 同 posSide 的套利腿）
+                if positions is None:
+                    continue   # 持仓快照未刷新拍: 下一拍(≤1s)执行平仓
                 pos = next((p for p in positions
                             if p.inst_id == inst_id and p.base_qty > 0
                             and p.side == (t.get("direction") or "long")), None)
@@ -1108,7 +1130,7 @@ class DirectionalTrader:
                 self.tick()
             except Exception as e:
                 print(f"异常: {e}")
-            time.sleep(2)
+            time.sleep(1)   # 2026-08-17 提速: 与 worker 一致的 1s 止损节拍
 
 
 if __name__ == "__main__":
