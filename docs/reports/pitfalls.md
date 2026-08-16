@@ -120,3 +120,9 @@
 - 根因：旧版 journal 的 size 存的是合约【张数】（0.53 张 = 0.053 ETH），回填按"币"算放大了 10 倍；且当时"有没有记录当前仓位"全凭记账，无交易所持仓快照可对。
 - 修复：① 旧记录回填改按 张 × ctVal × entry 计算并标 size_unit="contracts(legacy)"；② 新记录显式 size_unit="base"；③ 新增本地仓位快照 positions_snapshot.json（每 60s 落盘）；④ 新增 /reconcile 对账端点：journal 记账 vs 交易所持仓，差异如实报告。
 - 预防：任何"金额统计"先与交易所持仓对账再报数；单位语义必须显式落盘，不允许靠约定。
+
+### 2026-08-16 JSON 切 SQLite 时把 JSON 文件当 SQLite 打开（file is not a database）
+- 现象：测试对同一路径先写 JSON 再初始化 TradeJournal，报 sqlite3.DatabaseError: file is not a database。
+- 根因：先跑 init_db（建表 executescript）再检测 JSON 头，JSON 文件已被 SQLite 建表写入破坏。
+- 修复：顺序反转——先读文件头判断是否旧 JSON（首字符 `{`），是则读入内存、删除原文件、再 init_db 转库。
+- 预防：任何"格式迁移"必须先嗅探再建库；建库动作必须放在读取之后。

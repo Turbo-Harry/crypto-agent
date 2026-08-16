@@ -30,6 +30,9 @@ experience_scored.json
 arb_positions.json
 paper_state.json
 factor_top.json
+crypto_agent.db
+crypto_agent.db-wal
+crypto_agent.db-shm
 
 # ============ 数据缓存/本地库 ============
 data/cache*/

@@ -13,6 +13,7 @@
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import numpy as np
@@ -36,21 +37,25 @@ class ThresholdLearner:
         self._load()
 
     def _load(self):
-        if os.path.exists(self.path):
-            with open(self.path) as f:
-                d = json.load(f)
-                self.threshold = d.get("threshold", self.threshold)
-                self.decisions = d.get("decisions", [])
-                if len(self.decisions) > self.max_history:
-                    self.decisions = self.decisions[-self.max_history:]
+        # SQLite 后端（storage 层）：key=path（dir/arb 各自独立状态）
+        import storage.db as sdb
+        sdb.init_db()
+        row = sdb.q1("SELECT threshold, records FROM thresholds WHERE key=?", [self.path])
+        if row:
+            self.threshold = row["threshold"]
+            try:
+                self.decisions = json.loads(row["records"] or "[]")
+            except Exception:
+                self.decisions = []
+            if len(self.decisions) > self.max_history:
+                self.decisions = self.decisions[-self.max_history:]
 
     def _save(self):
-        # R1-3: 原子写（先写 .tmp 再 os.replace，崩溃不留半截 JSON）
-        tmp = self.path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"threshold": self.threshold, "decisions": self.decisions},
-                      f, ensure_ascii=False, indent=2)
-        os.replace(tmp, self.path)
+        # SQLite 事务写（原子），替代 .tmp + os.replace
+        import storage.db as sdb
+        sdb.x("INSERT OR REPLACE INTO thresholds (key, threshold, records, updated_at) "
+              "VALUES (?,?,?,?)",
+              [self.path, self.threshold, json.dumps(self.decisions), time.time()])
 
     # ---------- 记录决策结果 ----------
     def record(self, score, pnl, pnl_estimated=False):

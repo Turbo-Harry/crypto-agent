@@ -18,24 +18,73 @@ import json
 import os
 import time
 
+from storage.db import _TRADE_COLS
+
 # 旧记录单位回填用的合约面值表（legacy size 是"张"时换算币数；新代码不再依赖此表）
 LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0}
 
 
 class TradeJournal:
-    def __init__(self, path="trade_journal.json"):
+    def __init__(self, path="trade_journal.json", db_path=None):
+        # path 兼容保留：默认值走共享库 crypto_agent.db；显式传路径（测试隔离）时
+        # 该路径即 SQLite 文件。旧 JSON 由 storage.init_db 一次性迁移。
         self.path = path
+        self.db_path = db_path or (None if path == "trade_journal.json" else path)
         self.trades = []
         self.lessons = []
         self._load()
 
     def _load(self):
-        if os.path.exists(self.path):
-            with open(self.path) as f:
-                d = json.load(f)
-                self.trades = d.get("trades", [])
-                self.lessons = d.get("lessons", [])
-                self._backfill_notional()
+        import storage.db as sdb
+        # 兼容：显式路径下若存在旧 JSON 文件（非 SQLite），先当 JSON 读入，
+        # 转库后移除原 JSON（迁移语义：JSON 被消费进 DB）。
+        legacy_json = None
+        if self.db_path and os.path.exists(self.db_path):
+            try:
+                with open(self.db_path) as f:
+                    head = f.read(1)
+                if head == "{":
+                    with open(self.db_path) as f:
+                        legacy_json = json.load(f)
+            except Exception:
+                pass
+        if legacy_json is not None:
+            self.trades = legacy_json.get("trades", [])
+            self.lessons = legacy_json.get("lessons", [])
+            os.remove(self.db_path)          # 清掉 JSON，避免被当成 SQLite 打开
+            sdb.init_db(self.db_path)
+            self._backfill_notional()
+            self._save()
+            return
+        sdb.init_db(self.db_path)
+        rows = sdb.q("SELECT * FROM trades ORDER BY entry_time", db_path=self.db_path)
+        self.trades = [self._row_to_trade(r) for r in rows]
+        kv = sdb.q1("SELECT value FROM kv WHERE key='legacy_journal_lessons'",
+                    db_path=self.db_path)
+        self.lessons = json.loads(kv["value"]) if kv else []
+        self._backfill_notional()
+
+    @staticmethod
+    def _row_to_trade(r):
+        t = dict(r)
+        for k in ("adopted_lesson_ids", "review"):
+            v = t.get(k)
+            if isinstance(v, str):
+                try:
+                    t[k] = json.loads(v)
+                except Exception:
+                    pass
+        return t
+
+    def _save(self):
+        """全量快照写库（事务）。单笔更新在 log_exit/save_review 里做增量 UPDATE。"""
+        import storage.db as sdb
+        for t in self.trades:
+            cols = [k for k in t if k in _TRADE_COLS]
+            sdb.x(f"INSERT OR REPLACE INTO trades ({','.join(cols)}) "
+                  f"VALUES ({','.join('?' * len(cols))})",
+                  [json.dumps(t[k]) if isinstance(t[k], (list, dict)) else t[k]
+                   for k in cols], db_path=self.db_path)
 
     def _backfill_notional(self):
         """旧记录缺 size_unit/notional 时回填（只补一次，落盘）。
@@ -63,11 +112,6 @@ class TradeJournal:
                 dirty = True
         if dirty:
             self._save()
-
-    def _save(self):
-        with open(self.path, "w") as f:
-            json.dump({"trades": self.trades, "lessons": self.lessons},
-                      f, ensure_ascii=False, indent=2)
 
     # ---------- 开仓记录 ----------
     def log_entry(self, symbol, signal, reason, entry_price, stop_loss,

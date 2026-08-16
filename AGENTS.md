@@ -40,8 +40,14 @@ decision/          决策与进化层
 
 execution/         执行与台账层
   ├─ quantity.py              名义→数量换算（lotSz 对齐）
-  ├─ trade_journal.py         交易台账（原子写）
-  └─ position_ownership.py    持仓所有权账本（flock + 总敞口≤600）
+  ├─ trade_journal.py         交易台账 + 复盘报告
+  └─ position_ownership.py    持仓所有权账本（总敞口≤600）
+
+storage/           数据持久化层（SQLite，全仓数据唯一落点）
+  └─ db.py         crypto_agent.db：trades/lessons/thresholds/watchlist/
+                   position_snapshots/arb_positions/ownership/kv 八张表，
+                   WAL + busy_timeout，每操作独立短连接（线程安全）；
+                   首启自动迁移旧 JSON（幂等）
 
 exchange/          交易所访问四层（见 docs/architecture/exchange_layers.md）
   transport.py     OKX 原生 REST：HMAC 签名/模拟盘/限速/错误归一

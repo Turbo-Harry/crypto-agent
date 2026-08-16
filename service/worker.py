@@ -99,16 +99,15 @@ class TraderWorker:
 
     # ---------- 引擎循环 ----------
     def _save_positions_snapshot(self):
-        """本地仓位快照：把交易所持仓（唯一事实源）定期落盘。
-        进程崩溃/重启后可对账：journal 记账 vs 交易所真实持仓。原子写。"""
+        """本地仓位快照：把交易所持仓（唯一事实源）定期落库（storage 层）。"""
         try:
-            pos = [{"inst_id": p.inst_id, "side": p.side, "contracts": p.contracts,
-                    "base_qty": round(p.base_qty, 8), "avg_px": p.avg_px}
-                   for p in self.exchange.fetch_positions()]
-            tmp = "positions_snapshot.json.tmp"
-            with open(tmp, "w") as f:
-                json.dump({"ts": time.time(), "positions": pos}, f, ensure_ascii=False)
-            os.replace(tmp, "positions_snapshot.json")
+            import storage.db as sdb
+            sdb.init_db()
+            for p in self.exchange.fetch_positions():
+                sdb.x("INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
+                      "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
+                      [time.time(), p.inst_id, p.side, p.contracts,
+                       round(p.base_qty, 8), p.avg_px])
         except Exception as e:
             print(f"仓位快照失败: {e}")
 

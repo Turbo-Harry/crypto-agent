@@ -107,16 +107,22 @@ class TradingMain:
               f"样本 {len(self.weight_learner.records)} 条）")
 
     def _load_arb_positions(self):
+        import storage.db as sdb
         try:
-            with open(ARB_STATE_FILE) as f:
-                return json.load(f)
+            sdb.init_db()
+            rows = sdb.q("SELECT rec FROM arb_positions")
+            return [json.loads(r["rec"]) for r in rows]
         except Exception:
             return []
 
     def _save_arb_positions(self):
+        import storage.db as sdb
         try:
-            with open(ARB_STATE_FILE, "w") as f:
-                json.dump(self.arb_positions, f, ensure_ascii=False, indent=2)
+            for rec in self.arb_positions:
+                if isinstance(rec, dict) and rec.get("base"):
+                    sdb.x("INSERT OR REPLACE INTO arb_positions (base,rec,updated_at) "
+                          "VALUES (?,?,?)",
+                          [rec["base"], json.dumps(rec, ensure_ascii=False), time.time()])
         except Exception:
             pass
 

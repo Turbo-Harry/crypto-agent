@@ -24,10 +24,12 @@ REVIVE_DAYS = 60           # discarded 经验 N 天后复活为 unverified
 
 
 class ScoredExperience:
-    """带评分的经验库（v2：对称评分、40/60 分离、时间衰减、discarded 复活）。"""
+    """带评分的经验库（v2：对称评分、40/60 分离、时间衰减、discarded 复活）。
+    存储：SQLite（storage 层 lessons 表）；path 仅兼容保留（测试隔离用）。"""
 
     def __init__(self, path="experience_scored.json"):
         self.path = path
+        self.db_path = None if path == "experience_scored.json" else path
         self.lessons = []
         self._load()
 
@@ -39,22 +41,23 @@ class ScoredExperience:
         return 50 + (score - 50) * k
 
     def _load(self):
-        if os.path.exists(self.path):
-            with open(self.path) as f:
-                self.lessons = json.load(f)
-            now = time.time()
-            for l in self.lessons:
-                l.setdefault("ts", now)
-                l.setdefault("last_update", l["ts"])
-                # 时间衰减
-                l["score"] = round(self._decay(l.get("score", 50), l.get("last_update", now), now), 2)
-                # discarded 复活：冷却期满回到 unverified，重新检验
-                if l.get("status") == "discarded" and \
-                        now - l.get("last_update", now) > REVIVE_DAYS * 86400:
-                    l["status"] = "unverified"
-                    l["score"] = 50
-                # 状态与分数一致性（40/60 分离）
-                self._sync_status(l)
+        import storage.db as sdb
+        sdb.init_db(self.db_path)
+        rows = sdb.q("SELECT * FROM lessons ORDER BY id", db_path=self.db_path)
+        self.lessons = [dict(r) for r in rows]
+        now = time.time()
+        for l in self.lessons:
+            l.setdefault("ts", now)
+            l.setdefault("last_update", l["ts"])
+            # 时间衰减
+            l["score"] = round(self._decay(l.get("score", 50), l.get("last_update", now), now), 2)
+            # discarded 复活：冷却期满回到 unverified，重新检验
+            if l.get("status") == "discarded" and \
+                    now - l.get("last_update", now) > REVIVE_DAYS * 86400:
+                l["status"] = "unverified"
+                l["score"] = 50
+            # 状态与分数一致性（40/60 分离）
+            self._sync_status(l)
 
     def _sync_status(self, l):
         """状态只由 分数+验证次数 决定：≥3次且≥60=trusted；≥3次且<40=discarded；其余 unverified。"""
@@ -67,8 +70,15 @@ class ScoredExperience:
                 l["status"] = "unverified"   # 40-60 保持未验证（v1 曾强行 discarded）
 
     def _save(self):
-        with open(self.path, "w") as f:
-            json.dump(self.lessons, f, ensure_ascii=False, indent=2)
+        import storage.db as sdb
+        for l in self.lessons:
+            sdb.x("INSERT OR REPLACE INTO lessons (id,symbol,category,content,score,"
+                  "adoptions,good,bad,status,source_trade,ts,last_update) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                  [l.get("id"), l.get("symbol"), l.get("category"), l.get("content"),
+                   l.get("score", 50), l.get("adoptions", 0), l.get("good", 0),
+                   l.get("bad", 0), l.get("status", "unverified"), l.get("source_trade"),
+                   l.get("ts"), l.get("last_update")], db_path=self.db_path)
 
     # ---------- 经验生命周期 ----------
     def add(self, symbol, category, content, source_trade):

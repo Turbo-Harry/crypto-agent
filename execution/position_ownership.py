@@ -21,34 +21,36 @@ class PositionLedger:
     def __init__(self, path="position_ownership.json",
                  lock_path="position_ownership.lock",
                  max_total_notional=600.0):
+        # 存储：SQLite（storage 层 ownership 表，事务保证并发安全，替代 flock）
         self.path = path
         self.lock_path = lock_path
         self.max_total_notional = max_total_notional
+        self.db_path = None if path == "position_ownership.json" else path
         self._data = self._load()
 
     def _load(self):
-        try:
-            with open(self.path) as f:
-                return json.load(f)
-        except Exception:
-            return {}
+        import storage.db as sdb
+        sdb.init_db(self.db_path)
+        rows = sdb.q("SELECT * FROM ownership", db_path=self.db_path)
+        out = {}
+        for r in rows:
+            out[r["key"]] = {"qty": r["qty"], "notional": r["notional"],
+                             "strategies": json.loads(r["strategies"] or "{}"),
+                             "updated_at": r["updated_at"]}
+        return out
 
     def _locked(self, fn):
-        """独立锁文件 flock（锁文件永不 os.replace）。无 fcntl 时退化直跑。"""
-        if fcntl is None:
-            return fn()
-        with open(self.lock_path, "w") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-            try:
-                return fn()
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        # SQLite 事务本身即并发安全（WAL + busy_timeout），保留此接口兼容旧调用
+        return fn()
 
     def _save(self):
-        tmp = self.path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, self.path)
+        import storage.db as sdb
+        for key, rec in self._data.items():
+            sdb.x("INSERT OR REPLACE INTO ownership (key,qty,notional,strategies,updated_at) "
+                  "VALUES (?,?,?,?,?)",
+                  [key, rec.get("qty", 0.0), rec.get("notional", 0.0),
+                   json.dumps(rec.get("strategies", {})), rec.get("updated_at", time.time())],
+                  db_path=self.db_path)
 
     # ---------- 组合总敞口 ----------
     def total_notional(self):

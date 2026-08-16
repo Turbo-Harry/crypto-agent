@@ -15,6 +15,7 @@
 """
 import json
 import os
+import time
 
 
 def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None):
@@ -112,21 +113,27 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
 
 
 class ExperienceBank:
-    """经验库：按错误类别分类的教训，支持统计和决策参考。"""
+    """经验库：按错误类别分类的教训，支持统计和决策参考。
+    存储：SQLite kv 表（key=experience_bank）；path 仅兼容保留。"""
 
     def __init__(self, path="experience_bank.json"):
         self.path = path
+        self.db_path = None if path == "experience_bank.json" else path
         self.lessons = []
         self._load()
 
     def _load(self):
-        if os.path.exists(self.path):
-            with open(self.path) as f:
-                self.lessons = json.load(f)
+        import storage.db as sdb
+        sdb.init_db(self.db_path)
+        row = sdb.q1("SELECT value FROM kv WHERE key='experience_bank'",
+                     db_path=self.db_path)
+        self.lessons = json.loads(row["value"]) if row else []
 
     def _save(self):
-        with open(self.path, "w") as f:
-            json.dump(self.lessons, f, ensure_ascii=False, indent=2)
+        import storage.db as sdb
+        sdb.x("INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?,?,?)",
+              ["experience_bank", json.dumps(self.lessons, ensure_ascii=False),
+               time.time()], db_path=self.db_path)
 
     def add(self, symbol, lesson_dict):
         """加一条教训（含类别）。"""

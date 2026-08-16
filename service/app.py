@@ -231,11 +231,13 @@ def reconcile():
     import json as _json
     from collections import defaultdict
     t = _trader()
-    # 快照（最近一次本地落盘）
+    # 快照（最近一次本地落库）
+    import storage.db as sdb
     snap = None
     try:
-        with open("positions_snapshot.json") as f:
-            snap = _json.load(f)
+        row = sdb.q1("SELECT MAX(ts) ts FROM position_snapshots")
+        if row and row["ts"]:
+            snap = {"ts": row["ts"]}
     except Exception:
         pass
     # journal 未平仓 → 折算币数

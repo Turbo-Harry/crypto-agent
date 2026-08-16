@@ -165,9 +165,16 @@ def screen_daily(pool_top=60, watch_n=None):
                                            "trend_dev", "atr_pct", "price", "is_stock")}
                        for c in watch],
     }
-    with open(WATCHLIST_FILE, "w") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
-    print(f"  结果: 选出 {len(watch)} 个候选 → {WATCHLIST_FILE}")
+    # 落库（storage 层 watchlist 表；同日重扫覆盖旧候选）
+    import storage.db as sdb
+    sdb.init_db()
+    for c in watch:
+        sdb.x("INSERT OR REPLACE INTO watchlist (date,base,inst_id,dir,score,"
+              "trend_dev,atr_pct,price,is_stock) VALUES (?,?,?,?,?,?,?,?,?)",
+              [result["date"], c["base"], c.get("instId"), c.get("dir", 0),
+               c.get("score", 0.0), c.get("trend_dev", 0.0), c.get("atr_pct", 0.0),
+               c.get("price", 0.0), 1 if c.get("is_stock") else 0])
+    print(f"  结果: 选出 {len(watch)} 个候选 → crypto_agent.db:watchlist")
     for c in watch:
         print(f"    {c['base']:<10} {'多' if c['dir']>0 else '空'}  趋势{c['trend_dev']*100:+.1f}%  "
               f"ATR{c['atr_pct']*100:.1f}%  评分{c['score']:.2f}")
@@ -186,16 +193,16 @@ def trades_budget(score):
 
 
 def load_watchlist(fallback=None):
-    """读当日 watchlist，返回 {base: score}（评分用于动态笔数）。
+    """读当日 watchlist（SQLite），返回 {base: score}（评分用于动态笔数）。
     过期/缺失回退固定池（无评分 → 默认笔数）。"""
     fallback = fallback or ["BTC", "ETH", "SOL", "XRP", "DOGE"]
     try:
-        with open(WATCHLIST_FILE) as f:
-            d = json.load(f)
-        if d.get("date") == time.strftime("%Y-%m-%d"):
-            cands = d.get("candidates", [])
-            if cands:
-                return {c["base"]: c.get("score", 0.0) for c in cands}
+        import storage.db as sdb
+        sdb.init_db()
+        rows = sdb.q("SELECT base, score FROM watchlist WHERE date=?",
+                     [time.strftime("%Y-%m-%d")])
+        if rows:
+            return {r["base"]: r["score"] for r in rows}
     except Exception:
         pass
     return {b: None for b in fallback}
