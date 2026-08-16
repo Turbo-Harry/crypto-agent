@@ -146,6 +146,15 @@ def main():
           abs(leg.get("notional_usdt") - 0.5 * 0.1 * 1885.0) < 0.01)
     check("legacy 标 size_unit", leg.get("size_unit") == "contracts(legacy)")
 
+    # 复盘报告落盘：save_review 写入 journal + API /journal 返回 review 字段
+    report = {"pnl": 0.02, "rr": 2.0,
+              "lessons": [{"category": "入场时机", "lesson": "测试教训"}]}
+    check("save_review 返回 True", trader.journal.save_review("txn_001", report) is True)
+    check("journal 落盘 review", trader.journal.trades[0].get("review") == report)
+    r = client.get("/journal")
+    jr = r.json()
+    check("/journal 交易项含 review 复盘报告", jr["trades"][0].get("review") is not None)
+
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 

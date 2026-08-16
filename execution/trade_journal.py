@@ -122,6 +122,18 @@ class TradeJournal:
                 return t
         return None
 
+    # ---------- 复盘报告落盘 ----------
+    def save_review(self, trade_id, report):
+        """把 deep_review 的结构化复盘报告存进该笔交易记录（review 字段）。
+        复盘报告与平仓结果同处一文件——事后可查"这笔交易当时复盘说了什么"。"""
+        t = next((x for x in self.trades if x["id"] == trade_id), None)
+        if not t:
+            return False
+        t["review"] = report
+        t["review_ts"] = time.time()
+        self._save()
+        return True
+
     # ---------- 自动复盘 ----------
     def review(self, trade_id):
         """复盘一笔已平仓的交易，生成教训。"""

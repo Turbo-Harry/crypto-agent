@@ -526,11 +526,13 @@ class DirectionalTrader:
                     self._post_close_review(closed, t)
 
     def _post_close_review(self, closed, t):
-        """平仓后复盘链（R1-1/B6/R2-3/R2-6）：deep_review → 经验库 → 采纳验证 → 阈值 → 风控净值。"""
+        """平仓后复盘链（R1-1/B6/R2-3/R2-6）：deep_review → 报告落盘 → 经验库 → 采纳验证 → 阈值 → 风控净值。"""
         base = closed["symbol"]
         report = deep_review(closed,
                              atr_value=t.get("atr_value"),
                              signal_price=t.get("signal_price"))  # R2-6
+        # 复盘报告落盘（写入 trade_journal.json 该笔记录的 review 字段，事后可查）
+        self.journal.save_review(t["id"], report)
         lessons = report.get("lessons", [])
         for l in lessons:
             self.exp_bank.add(base, l["category"], l["lesson"], t["id"])

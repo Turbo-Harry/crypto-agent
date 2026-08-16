@@ -153,7 +153,8 @@ def journal(limit: int = 20):
                           entry_time=x.get("entry_time"),
                           exit_time=x.get("exit_time"),
                           venue=x.get("venue") or "swap",
-                          notional_usdt=x.get("notional_usdt")) for x in trades])
+                          notional_usdt=x.get("notional_usdt"),
+                          review=x.get("review")) for x in trades])
 
 
 @app.get("/realtime/{base}", response_model=RealtimeOut, tags=["观测"])

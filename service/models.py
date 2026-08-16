@@ -88,6 +88,7 @@ class TradeItem(BaseModel):
     exit_time: Optional[float]
     venue: str
     notional_usdt: Optional[float]    # 投注额（名义 USDT）
+    review: Optional[dict] = None     # 复盘报告（deep_review 输出，平仓后落盘）
 
 
 class JournalOut(BaseModel):
