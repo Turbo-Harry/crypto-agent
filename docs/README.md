@@ -11,11 +11,11 @@
 | [plans/](plans/) | 优化/实施计划与简报 | Agent B R1/R2 方案及终审稿、D 批次实施简报（brief_template / launch_brief_draft / batch2_brief / r2_brief）、**自进化系统设计方案**（2026-08-16_self_evolution_design，复盘驱动改进 + 业界标准验收） |
 | [reports/](reports/) | 研究报告与收敛报告 | research_report_round2/3、optimization_report、convergence_report、final_report、evolution_loop_report、optimization_notes（实施日志）、backtest_report、**pitfalls（踩坑档案，写代码前必读）** |
 | [ops/](ops/) | 运维与验证手册 | watchdog_launchd（进程守护）、tp_sandbox_verify（止盈沙盘验证清单）、subaccount_test_plan（子账户测试计划）、data_collection_schedule（数据采集调度） |
-| [prompts/](prompts/) | AI 提示词 | evolution_loop_prompt（进化循环提示词） |
+| [prompts/](prompts/) | AI 提示词 | evolution_loop_prompt（进化循环提示词）、factor_mining_goal_prompt（因子挖掘完善，验证门标准） |
 
 根目录保留三个入口文档（不在 docs/ 内）：`README.md`（项目总览）、`AGENTS.md`（AI 协作模型）、`docs/README.md`（本索引）。
 
-## 二、按时间线（全部 27 篇）
+## 二、按时间线（全部 28 篇）
 
 | 时间 | 文档 | 一句话 |
 |---|---|---|
@@ -46,6 +46,7 @@
 | 08-16 17:05 | [architecture/ai_friendly_repo.md](architecture/ai_friendly_repo.md) | AI 友好仓库调研与落地对照 |
 | 08-16 19:10 | [plans/2026-08-16_self_evolution_design.md](plans/2026-08-16_self_evolution_design.md) | 自进化系统设计方案 v0.2（现状/DEF 缺陷/业界标准验收/Phase 路线图/质疑轮） |
 | 08-16 19:40 | [reports/2026-08-16_strategy_research.md](reports/2026-08-16_strategy_research.md) | 业界策略调研：订单流/聪明钱/分场景选策略（Agent A 格式，附来源） |
+| 08-16 21:20 | [prompts/2026-08-16_factor_mining_goal_prompt.md](prompts/2026-08-16_factor_mining_goal_prompt.md) | 因子挖掘完善目标 prompt（验证门/试验日志/影子政策） |
 
 ## 三、命名约定
 
