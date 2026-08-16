@@ -283,3 +283,9 @@
 - 修复：① ServiceTrader.__init__ 增加 db_path 透传（worker.py，生产默认 None 行为不变）；② test_service_api 传隔离路径；③ 清理生产表 33 条 BTC 测试行（DELETE WHERE base='BTC'，理由与证据如上）。
 - 验证：test_service_api 24/24 绿；重跑前后生产 scan_decisions 计数不变（24）；py_compile OK。活体进程无需重启（db_path 默认 None 与现运行行为一致，下次自然重启生效）。
 - 预防：任何构造 DirectionalTrader/ServiceTrader 的测试必须全对象隔离清单核对（journal/ledger/threshold/exp_bank/scan_decisions 五项）；改动测试文件时重跑该文件并核对生产库行数不变。
+
+### 2026-08-16 晚 收敛性核查 + 生产库污染哨兵（用户追问"问题是否在收敛"）
+- 核查发现：thresholds 表仍残留 3 条测试临时路径 key（T0.4 清理任务只清了 scan_decisions，漏了 thresholds——执行遗漏，非新缺陷）。
+- 修复：DELETE 临时 key；新增 tests/test_production_guard.py 哨兵——把 DEF-8 类污染的探测器固化为测试（thresholds 临时 key / scan_decisions 测试标的 / lessons 测试符号，3 项签名断言），此后任何测试漏隔离会在全量套件中被当场抓住。
+- 收敛性数据（重启后 19:26 起）：engine_errors 0 条；scan_decisions 生产写入只剩 AEON/LINK（真实候选池）；全量 95 项绿。
+- 结论：系统级缺陷到达率已归零，但"收敛"未到可宣布标准——详见设计文档与下方缺陷到达分类表。
