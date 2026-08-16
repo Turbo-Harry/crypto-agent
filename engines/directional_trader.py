@@ -142,6 +142,11 @@ class _ExpAdapter:
 class DirectionalTrader:
     def __init__(self, exchange: ExchangeAdapter = None, rt=None, db_path=None):
         self.exchange = exchange or connect()
+        # 2026-08-16 结构性修复: 测试/fake 适配器必须静音飞书通知——
+        # 此前 test_decision_loop 等跑套件时把假开仓单真的发到了用户飞书
+        # (与 DEF-8 生产库污染同类的泄漏,这次是通知通道)。
+        self._notify = notify if getattr(self.exchange, "name", "") == "okx" \
+            else (lambda msg: None)
         # Phase0 T0.4：审计/日志表隔离。db_path=None → 生产共享库（默认）；
         # 测试必须传隔离路径（防 scan_decisions 等污染生产表，见 pitfalls）。
         self._db_path = db_path
@@ -215,7 +220,7 @@ class DirectionalTrader:
         released = self.ledger.reconcile(active)
         for k in released:
             print(f"🧹 启动对账:释放幽灵 claim {k}")
-            notify(f"🧹 启动对账:释放幽灵 claim {k}")
+            self._notify(f"🧹 启动对账:释放幽灵 claim {k}")
         # DEF-11:账本缺失/不完整的未平仓 journal 交易补账——journal 是本策略
         # 事实源(pitfalls),重启后账本若丢 claim,组合敞口闸门会漏计既有持仓。
         # restore() 不走 600 闸门(恢复既有事实而非授予新敞口),语义=以聚合值
@@ -248,7 +253,7 @@ class DirectionalTrader:
             if not has_journal:
                 print(f"⚠️ 启动对账:交易所存在无台账持仓 {p.inst_id} {p.side} "
                       f"qty={p.base_qty}(仅告警,人工处置)")
-                notify(f"⚠️ 启动对账:无台账持仓 {p.inst_id} {p.side} qty={p.base_qty}")
+                self._notify(f"⚠️ 启动对账:无台账持仓 {p.inst_id} {p.side} qty={p.base_qty}")
 
     # ---------- 场所/行情辅助（依赖 ExchangeAdapter 接口） ----------
     def _inst_id(self, base, venue="swap"):
@@ -463,7 +468,7 @@ class DirectionalTrader:
             msg = (f"🎯 现货开仓 {base} long\n入场 {price:.2f} | 止损 {sig['stop']:.2f} | "
                    f"止盈 {sig['tp']:.2f}\n数量 {qty}（现货无杠杆，止损由本地监控执行）")
             print(msg)
-            notify(msg)
+            self._notify(msg)
             return tid
 
         # ===== 合约路径（原有） =====
@@ -567,12 +572,12 @@ class DirectionalTrader:
                     if t["id"] == tid:
                         t["tp_missing"] = True
                 self.journal._save()
-                notify(f"⚠️ {base} TP 条件单挂失败（本地 monitor 止盈兜底）")
+                self._notify(f"⚠️ {base} TP 条件单挂失败（本地 monitor 止盈兜底）")
             msg = (f"🎯 方向性开仓 {base} {sig['dir']}\n"
                    f"入场 {price:.2f} | 止损 {sig['stop']:.2f} | 止盈 {sig['tp']:.2f}\n"
                    f"盈亏比 2:1 | 杠杆 {lev}x | 数量 {qty}")
             print(msg)
-            notify(msg)
+            self._notify(msg)
             return tid
         except Exception as e:
             # R1-12: 下单失败回滚 claim，防账本残留
@@ -623,14 +628,14 @@ class DirectionalTrader:
         try:
             algo_ids = self.exchange.pending_algo_ids(inst_id)
         except Exception as e:
-            notify(f"⚠️ 取消失败(查询) {base} {reason}: {e}")   # fail-closed，不中断
+            self._notify(f"⚠️ 取消失败(查询) {base} {reason}: {e}")   # fail-closed，不中断
             return False
         if not algo_ids:
             return True
         try:
             return self.exchange.cancel_algos(inst_id, algo_ids)
         except Exception as e:
-            notify(f"⚠️ 取消失败 {base} {reason} algoIds={algo_ids}: {e}")
+            self._notify(f"⚠️ 取消失败 {base} {reason} algoIds={algo_ids}: {e}")
             return False
 
     # ---------- 监控：止损止盈（tick 级，WebSocket 价格 + REST 兜底） ----------
@@ -795,7 +800,7 @@ class DirectionalTrader:
                f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条本笔采纳经验\n"
                f"当前自适应阈值: {self.threshold_learner.threshold}")
         print(msg)
-        notify(msg)
+        self._notify(msg)
 
     # ---------- 熔断强平（只平本策略的 journal 持仓，不动套利对冲仓） ----------
     def _liquidate_all(self, reason):
@@ -893,7 +898,7 @@ class DirectionalTrader:
                     self.watch_scores = {c["base"]: c["score"] for c in w}
                     self._watch_date = time.strftime("%Y-%m-%d")
                     self._last_watch_refresh = time.time()
-                    notify(f"🔍 每日候选池刷新: {self.watchlist}")
+                    self._notify(f"🔍 每日候选池刷新: {self.watchlist}")
             except Exception as e:
                 print(f"候选池刷新失败，沿用旧池: {e}")
         print(f"\n=== 方向性信号扫描 [{time.strftime('%H:%M:%S')}] 候选池 {len(self.watchlist)} 个 ===")
@@ -1001,7 +1006,7 @@ class DirectionalTrader:
                     msg = (f"⛔ 风控熔断: {self.risk.halt_reason}\n"
                            f"正在强制平掉本策略全部持仓…")
                     print(msg)
-                    notify(msg)
+                    self._notify(msg)
                     self._log_risk_event("halt", self.risk.halt_reason, eq)
                 # 审计 H4:熔断期间止损监控绝不暂停;强平失败每 30s 重试
                 if now - getattr(self, "_last_liq_attempt", 0) >= 30:
@@ -1013,7 +1018,7 @@ class DirectionalTrader:
             elif self._halt_notified:
                 self._halt_notified = False
                 self._log_risk_event("recovery", "风控解除", eq)
-                notify("✅ 风控解除，恢复信号扫描")
+                self._notify("✅ 风控解除，恢复信号扫描")
         # 1. tick 级止损止盈监控（每 2 秒 — OP-1，替代 6 小时轮询）
         self.monitor()
         # 2. 信号扫描（每 15 分钟 — 真日内短线）
@@ -1026,7 +1031,7 @@ class DirectionalTrader:
         if lock is None:
             print("❌ 已有交易引擎实例在运行（engine.lock 被持有），本进程退出")
             sys.exit(1)
-        notify("🎯 方向性交易 agent 启动（回踩确认 + 2:1盈亏比 + 2-3x杠杆 + tick级止损）")
+        self._notify("🎯 方向性交易 agent 启动（回踩确认 + 2:1盈亏比 + 2-3x杠杆 + tick级止损）")
         # R2-4: PID + 心跳文件（watchdog 用）；写入点统一走 execution/pidfile
         from execution.pidfile import write_pid
         write_pid("directional")

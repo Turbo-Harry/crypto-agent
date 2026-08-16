@@ -173,3 +173,9 @@
 - 根因：① collect_daemon.main() 循环体无整体 try/except——任何未捕获异常让常驻进程永久退出；② 用户自建的 com.okx.collect.plist 从未加载，且其参数 `--bar 1m` 是无效参数（会 argparse 崩溃循环）；③ 首次挂起疑为网络请求超时路径，进程无外部监管无人拉起。
 - 修复：① 循环体整体兜底（失败丢一轮不丢进程 + flush 日志）；② 修正 plist（移除无效 --bar 参数、全量采集）并加载进 launchd（KeepAlive=true 崩溃自动拉起，日志落 data/collect.log）；③ H5 体检持续盯防。
 - 预防：**常驻进程必须同时具备三件套**：循环体兜底 + 外部监管（launchd KeepAlive）+ 健康检查（H5）。三者缺一就是"等下一次停更"。
+
+### 2026-08-16 测试进程把假开仓单发到用户飞书（通知通道泄漏）
+- 现象：用户反馈"飞书有 BTC 的单子，但看板没有"——test_decision_loop 等跑全量套件时，open_position 的 notify() 把假 BTC 开仓消息真的发到了飞书。
+- 根因：notify() 是模块级函数、无条件发送；8 个测试文件中只有 2 个静音了它（与 DEF-8 生产库污染同类——"测试不得触碰外部通道"只靠人记）。
+- 修复：结构性修复——DirectionalTrader.__init__ 注入 `self._notify`（exchange.name=='okx' 才指向真实 notify，fake 一律静音 lambda），类体内 12 处调用全部改走 self._notify；生产 okx 行为零变化。
+- 预防：外部通道（飞书/库/文件）的写入必须挂在对象上而非模块级函数，测试注入 fake 即自动隔离——不用依赖每个测试"自觉静音"。
