@@ -962,6 +962,23 @@ class DirectionalTrader:
             else:
                 print(f"{base}: 无回踩确认信号")
                 self._log_scan_decision(base, False, "", "no_signal", "")
+            # Phase 4 T3.3 策略 B 影子（突破/动量确认）: 只记录假设性交易、
+            # 绝不下单/不发飞书/不占额度——与策略 A 真实样本分表对照。
+            if config.STRATEGY_B_SHADOW_ENABLED:
+                try:
+                    from engines.strategy_b import breakout_signal, record_shadow
+                    kl_b = self._fetch_klines_any(base, "1H", 130)
+                    if kl_b:
+                        sig_b = breakout_signal(kl_b)
+                        if sig_b:
+                            if record_shadow(base, "B_breakout", sig_b,
+                                             db_path=self._db_path,
+                                             klines_1h=kl_b):
+                                print(f"  👻 影子信号 B_breakout {base} "
+                                      f"{sig_b['dir']} @ {sig_b['entry']:.4f} "
+                                      f"(score {sig_b['shadow_score']})")
+                except Exception:
+                    pass
 
     def run_once(self):
         self.scan_signals()

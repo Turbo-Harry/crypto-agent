@@ -158,6 +158,17 @@ CREATE TABLE IF NOT EXISTS experiments (
                                 -- insufficient_data
     decided_by TEXT, notes TEXT
 );
+
+-- Phase 4 策略 B 影子信号（突破/动量确认;只记录假设性交易,绝不下单——
+-- 影子政策: 与策略 A 的真实样本分表对照,验证通过前不进决策）
+CREATE TABLE IF NOT EXISTS shadow_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, base TEXT, strategy TEXT, dir TEXT,
+    entry REAL, stop REAL, tp REAL, atr REAL,
+    signal_score REAL, regime_tag TEXT,
+    kline_ts INTEGER, status TEXT DEFAULT 'hypothetical'
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_ts ON shadow_signals(ts);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）

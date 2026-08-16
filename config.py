@@ -139,3 +139,8 @@ MIN_SAMPLES = 30              # Tharp 最低样本门槛（S2）
 LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0,
                  "LINK": 1.0, "ADA": 1.0, "AVAX": 1.0, "BNB": 0.01, "LTC": 1.0}
     # 旧台账回填用合约面值表（legacy size 单位换算,见 trade_journal）
+
+# ---- 策略 B（突破/动量确认,影子模式 Phase 4 T3.3）----
+STRATEGY_B_SHADOW_ENABLED = True   # 只记录假设性交易,绝不下单
+BREAKOUT_LOOKBACK = 20             # 突破前 N 根 1H K 线的高低点
+BREAKOUT_VOL_RATIO = 1.2           # 突破 K 线量能 ≥ 均量 × 1.2 才确认
