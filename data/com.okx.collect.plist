@@ -9,10 +9,6 @@
     <array>
         <string>/usr/bin/python3</string>
         <string>/Users/wuhai/Desktop/untitled folder/crypto-agent/data/collect_daemon.py</string>
-        <string>--bar</string>
-        <string>1m</string>
-        <string>--top</string>
-        <string>20</string>
     </array>
 
     <key>WorkingDirectory</key>

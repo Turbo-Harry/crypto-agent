@@ -167,3 +167,9 @@
 - 根因：策略方向调整（非 bug）。
 - 修复：engines/decision 套利模块 + 3 个套利测试 git mv 归档 legacy/；worker/app/models/config/watchdog 同步移除；活体 launchctl kickstart 重启后心跳/持仓衔接验证通过。
 - 预防：整线移除必须"代码归档 + 服务解挂 + 心跳/watchdog 适配 + 测试闭环 + 文档同步"五件套一次走完；方向性代码行级零改动以保零回归。
+
+### 2026-08-16 采集守护两次整夜停更（进程死亡/挂起 + 无监管）
+- 现象：market.db 1m 行情停更 2 小时以上（H5 体检两次告警）；第一次进程存活但挂起，第二次进程直接消失，日志停在 COS 上传失败处。
+- 根因：① collect_daemon.main() 循环体无整体 try/except——任何未捕获异常让常驻进程永久退出；② 用户自建的 com.okx.collect.plist 从未加载，且其参数 `--bar 1m` 是无效参数（会 argparse 崩溃循环）；③ 首次挂起疑为网络请求超时路径，进程无外部监管无人拉起。
+- 修复：① 循环体整体兜底（失败丢一轮不丢进程 + flush 日志）；② 修正 plist（移除无效 --bar 参数、全量采集）并加载进 launchd（KeepAlive=true 崩溃自动拉起，日志落 data/collect.log）；③ H5 体检持续盯防。
+- 预防：**常驻进程必须同时具备三件套**：循环体兜底 + 外部监管（launchd KeepAlive）+ 健康检查（H5）。三者缺一就是"等下一次停更"。
