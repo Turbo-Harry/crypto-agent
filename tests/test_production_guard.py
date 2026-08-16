@@ -24,7 +24,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROD = os.path.join(REPO, "crypto_agent.db")
 
 # 测试专用签名（生产合法值见注释）
-TEST_BASES = ("BTC", "ANTHROPIC")
+# 2026-08-16 签名演进: 采集加速后 BTC 进生产扫描池,"测试专用标的"签名退役——
+# scan_decisions 隔离由 test_phase0_review T0.4(每次运行断言生产行数不变)接管。
 TMP_KEY_MARKERS = ("/var/folders", "/tmp/", "tempfile")
 LEGIT_KEYS = ("threshold_state_dir.json",)   # 方向侧生产 key（平仓复盘后出现）
 
@@ -43,7 +44,10 @@ def check(name, cond, detail=""):
 
 def run_checks(db_path):
     """对任意库执行污染签名检查，返回违反清单 [(检查名, 违例值列表)]。
-    生产哨兵与变异注入自证（M6）共用此函数。"""
+    生产哨兵与变异注入自证（M6）共用此函数。
+
+    保留两类无歧义签名: ① thresholds 临时路径 key;② lessons 的测试
+    source_trade 模式(单字母+数字 t1/s2 或 fake_ 前缀;生产为 txn_* 或 analyst:*)。"""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     violations = []
     try:
@@ -52,15 +56,14 @@ def run_checks(db_path):
                or r[0] not in LEGIT_KEYS]
         if bad:
             violations.append(("thresholds 临时路径/非法 key", bad))
-        rows = conn.execute("SELECT DISTINCT base FROM scan_decisions").fetchall()
-        bad = [r[0] for r in rows if r[0] in TEST_BASES]
-        if bad:
-            violations.append(("scan_decisions 测试专用标的", bad))
+        import re
+        test_src = re.compile(r"^(fake_.*|[a-z]\d+)$")
         rows = conn.execute(
-            "SELECT DISTINCT symbol FROM lessons WHERE symbol IS NOT NULL").fetchall()
-        bad = [r[0] for r in rows if r[0] in TEST_BASES]
+            "SELECT source_trade FROM lessons WHERE source_trade IS NOT NULL"
+        ).fetchall()
+        bad = [r[0] for r in rows if test_src.match(r[0] or "")]
         if bad:
-            violations.append(("lessons 测试专用标的", bad))
+            violations.append(("lessons 测试 source_trade 模式", bad))
         return violations
     finally:
         conn.close()
@@ -74,10 +77,7 @@ def main():
     check("thresholds 无临时路径/非法 key",
           not any(v[0].startswith("thresholds") for v in violations),
           f"发现 {[v for v in violations if v[0].startswith('thresholds')]}")
-    check("scan_decisions 无测试专用标的",
-          not any(v[0].startswith("scan") for v in violations),
-          f"发现 {[v for v in violations if v[0].startswith('scan')]}")
-    check("lessons 无测试专用标的",
+    check("lessons 无测试 source_trade 模式",
           not any(v[0].startswith("lessons") for v in violations),
           f"发现 {[v for v in violations if v[0].startswith('lessons')]}")
     print(f"\n结果: {passed} 通过, {failed} 失败")

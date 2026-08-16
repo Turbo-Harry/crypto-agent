@@ -24,7 +24,7 @@ NOTIFY_STATE = "/tmp/crypto-healthcheck.notified"
 
 # Phase 0 断点修复上线的时刻（此后平仓必须带复盘报告）
 FIX_DEPLOY_TS = 1786879580
-TEST_BASES = ("BTC", "ANTHROPIC")
+# 2026-08-16 签名演进: "测试专用标的"签名随采集加速退役(BTC 进生产扫描池)
 TMP_KEY_MARKERS = ("/var/folders", "/tmp/", "tempfile")
 
 passed, failed = [], []
@@ -61,15 +61,16 @@ ok_h2 = j <= 0 or (o > 0 and abs(o - j) / j < 0.15)
 check("H2 组合敞口对账（账本≈journal 未平仓名义）", ok_h2,
       f"账本 {o:.0f} vs journal {j:.0f}")
 
-# ---------- H3 生产库零测试污染（DEF-8 签名） ----------
+# ---------- H3 生产库零测试污染（DEF-8 签名；2026-08-16 签名演进:
+# 采集加速后 BTC 进生产扫描池,"测试专用标的"签名退役,见 test_production_guard） ----------
+import re as _re
 bad = [r["key"] for r in q(DB, "SELECT key FROM thresholds")
        if any(m in r["key"] for m in TMP_KEY_MARKERS)
        or r["key"] not in ("threshold_state_dir.json",)]
-bad += [r["base"] for r in q(DB, "SELECT DISTINCT base FROM scan_decisions")
-        if r["base"] in TEST_BASES]
-bad += [r["symbol"] for r in
-        q(DB, "SELECT DISTINCT symbol FROM lessons WHERE symbol IS NOT NULL")
-        if r["symbol"] in TEST_BASES]
+_test_src = _re.compile(r"^(fake_.*|[a-z]\d+)$")
+bad += [r["source_trade"] for r in
+        q(DB, "SELECT source_trade FROM lessons WHERE source_trade IS NOT NULL")
+        if _test_src.match(r["source_trade"] or "")]
 check("H3 生产库零测试污染签名", not bad, f"发现 {bad}" if bad else "")
 
 # ---------- H4 引擎心跳新鲜 ----------
