@@ -993,6 +993,16 @@ class DirectionalTrader:
                                 print(f"  👻 影子信号 B_breakout {base} "
                                       f"{sig_b['dir']} @ {sig_b['entry']:.4f} "
                                       f"(score {sig_b['shadow_score']})")
+                        # 2026-08-17 用户建议: 未触发信号也要复盘"为什么没触发"。
+                        # 复用本轮已取的 kl_b 算四环节画像(趋势/触线/影线/量能),
+                        # 零额外 API 调用;瓶颈与近失证据进 signal_profiles。
+                        if sig is None:
+                            from engines.strategy_b import profile_from_klines, \
+                                record_profile
+                            prof = profile_from_klines(kl_b)
+                            if prof:
+                                record_profile(base, prof,
+                                               db_path=self._db_path)
                 except Exception:
                     pass
 

@@ -185,6 +185,38 @@ def test_order_failure_logged(tmp):
     check("失败下单入 order_failures", n >= 1 and row and row[0] == "open",
           f"实际 n={n} row={row}")
 
+def test_profile_and_record(tmp):
+    print("== 未触发信号复盘（画像 + 瓶颈 + 落库）==")
+    from engines.strategy_b import profile_from_klines, record_profile
+    tmp = os.path.join(tmp, "prof")
+    os.makedirs(tmp, exist_ok=True)
+    # 纯横盘段(60 根同价): 无趋势 → 瓶颈 trend
+    n = 60
+    t0 = int(time.time() * 1000) - (n + 1) * 3600_000
+    flat = [[t0 + i * 3600_000, 100.0, 100.1, 99.9, 100.0, 1000]
+            for i in range(n)]
+    prof = profile_from_klines(flat)
+    check("横盘画像: 无趋势", prof is not None and not prof["trend_up"]
+          and not prof["trend_down"], f"实际 {prof}")
+    check("横盘瓶颈 = trend", prof and prof["bottleneck"] == "trend")
+    # 纯下跌段(未反弹触线): 趋势空头成立、未触线 → 瓶颈 touch
+    n = 60
+    t0 = int(time.time() * 1000) - (n + 1) * 3600_000
+    kl = [[t0 + i * 3600_000, 100 - i * 0.2, 100 - i * 0.2 + 0.1,
+           100 - i * 0.2 - 0.1, 100 - i * 0.2, 1000] for i in range(n)]
+    prof2 = profile_from_klines(kl)
+    check("下跌趋势画像: trend_down=1", prof2 is not None
+          and prof2["trend_down"] == 1, f"实际 {prof2}")
+    check("未触线瓶颈 = touch",
+          prof2 is not None and prof2["bottleneck"] == "touch",
+          f"实际 {prof2 and prof2['bottleneck']}")
+    db = os.path.join(tmp, "sp.db")
+    ok = record_profile("BTC", prof2, db_path=db)
+    conn = sqlite3.connect(db)
+    n = conn.execute("SELECT COUNT(*) FROM signal_profiles").fetchone()[0]
+    conn.close()
+    check("画像落库(隔离)", ok is True and n == 1, f"实际 n={n}")
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_sb_")
     test_breakout_signal()
@@ -192,6 +224,7 @@ if __name__ == "__main__":
     test_engine_shadow_no_orders(tmp)
     test_scan_signal_short()
     test_order_failure_logged(os.path.join(tmp, "of"))
+    test_profile_and_record(os.path.join(tmp, "prof"))
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 

@@ -375,3 +375,9 @@
 - 调试踩坑: sessions.sessionOf(ctx) 吃 context 非 id,正确 API sessions.binding(id).session;客户端 bundle 热更新、host 改动需重启;首次事件未达是浏览器未刷新加载新 bundle。
 - crypto-agent 侧: alert_diag.diagnose_and_alert 失败时同时 POST 注入(飞书之外第二通道)。
 - 遗留(可接受): 插件内调试埋点保留(beacon+probe,probe 仅显式触发,生产无害)。
+
+## 2026-08-17 凌晨 未触发信号复盘落地（用户建议:"没触发也要复盘为什么没触发"）
+- 价值: 复盘维度补齐"机会成本/未触发归因"缺口——每轮 no_signal 记录四环节画像(趋势/触线/影线/量能)+瓶颈识别+近失标记,回答"信号断在哪一环"。
+- 实现: storage signal_profiles 表; strategy_b.profile_from_klines(复用策略 A 同款条件,零额外 API——用策略 B 已取的 kl_b);扫描循环 no_signal 时落库; tools/no_signal_report.py 聚合(瓶颈分布/近失/分币画像/结论建议);看板闭环健康页新增面板。
+- 测试: test_strategy_b 增 3 项(横盘→trend/下跌未触线→touch/落库隔离),20 项全绿;全量回归见套件。
+- 设计意义: 瓶颈分布是策略改进的直接证据(如"80% 卡趋势"→补突破策略;"近失>20%"→门槛微调即可提频,经 experiments 留痕)。

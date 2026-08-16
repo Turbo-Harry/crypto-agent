@@ -188,6 +188,20 @@ CREATE TABLE IF NOT EXISTS alerts (
     resolved_ts REAL, note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+
+-- 未触发信号复盘(2026-08-17 用户建议): 每轮 no_signal 记录四环节条件画像,
+-- 回答"为什么没触发"——瓶颈在趋势/触线/影线/量能哪一环,近失(差一点)多少
+CREATE TABLE IF NOT EXISTS signal_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, base TEXT,
+    trend_up INTEGER, trend_down INTEGER,
+    touch_long INTEGER, touch_short INTEGER,
+    wick_long INTEGER, wick_short INTEGER,
+    vol_ratio REAL,                 -- 当前量/近20均量
+    bottleneck TEXT,                -- trend / touch / wick / vol / none
+    near_miss INTEGER               -- 仅影线差一点(>=0.8×门槛)等近失标记
+);
+CREATE INDEX IF NOT EXISTS idx_sp_ts ON signal_profiles(ts);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）

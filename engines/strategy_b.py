@@ -86,3 +86,80 @@ def record_shadow(base, strategy, sig, db_path=None, klines_1h=None):
         return True
     except Exception:
         return False
+
+
+def profile_from_klines(klines):
+    """未触发信号复盘(2026-08-17): 从 1H K 线计算四环节条件画像。
+    复用策略 A 的同款条件(趋势/触线/影线),量能环节为突破确认的均量比。
+    返回 dict; 任何异常返回 None。"""
+    import config
+    try:
+        kd = [{"open": k[1], "high": k[2], "low": k[3], "close": k[4],
+               "volume": k[5]} for k in klines]
+        closes = [k["close"] for k in kd]
+        if len(closes) < 55:
+            return None
+        from strategy.indicators import ema, atr as atr_fn
+        e20, e50 = ema(closes, 20), ema(closes, 50)
+        atr_val = atr_fn(kd, 14) or 0
+        last = kd[-1]
+        body = abs(last["close"] - last["open"])
+        lower_wick = min(last["open"], last["close"]) - last["low"]
+        upper_wick = last["high"] - max(last["open"], last["close"])
+        ratio = config.REJECT_WICK_RATIO
+        trend_up = e20[-1] > e50[-1]
+        trend_down = e20[-1] < e50[-1]
+        touch_long = last["low"] <= e20[-1] and last["close"] > e20[-1]
+        touch_short = last["high"] >= e20[-1] and last["close"] < e20[-1]
+        wick_long = lower_wick >= body * ratio
+        wick_short = upper_wick >= body * ratio
+        prev_vol = [k["volume"] for k in kd[-21:-1]]
+        avg_vol = sum(prev_vol) / len(prev_vol) if prev_vol else 0
+        vol_ratio = (last["volume"] / avg_vol) if avg_vol > 0 else 0
+        # 瓶颈识别(按信号成立顺序): 趋势 → 触线 → 影线 → 量能
+        bottleneck = "none"
+        if not trend_up and not trend_down:
+            bottleneck = "trend"
+        elif not (touch_long or touch_short):
+            bottleneck = "touch"
+        elif not (wick_long or wick_short):
+            bottleneck = "wick"
+        elif vol_ratio < config.BREAKOUT_VOL_RATIO:
+            bottleneck = "vol"
+        # 近失: 影线差一点(≥0.8×门槛)或触线贴边(0.5×ATR 内)
+        near_miss = 0
+        if not wick_long and not wick_short and atr_val > 0:
+            if body > 0:
+                wl = lower_wick / body
+                ws = upper_wick / body
+                if max(wl, ws) >= ratio * 0.8:
+                    near_miss = 1
+        return {"trend_up": 1 if trend_up else 0,
+                "trend_down": 1 if trend_down else 0,
+                "touch_long": 1 if touch_long else 0,
+                "touch_short": 1 if touch_short else 0,
+                "wick_long": 1 if wick_long else 0,
+                "wick_short": 1 if wick_short else 0,
+                "vol_ratio": round(vol_ratio, 3),
+                "bottleneck": bottleneck,
+                "near_miss": near_miss}
+    except Exception:
+        return None
+
+
+def record_profile(base, profile, db_path=None):
+    """未触发画像落库(信号未触发的复盘证据)。"""
+    try:
+        import storage.db as sdb
+        sdb.init_db(db_path)
+        sdb.x("INSERT INTO signal_profiles (ts, base, trend_up, trend_down, "
+              "touch_long, touch_short, wick_long, wick_short, vol_ratio, "
+              "bottleneck, near_miss) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+              [time.time(), base, profile["trend_up"], profile["trend_down"],
+               profile["touch_long"], profile["touch_short"],
+               profile["wick_long"], profile["wick_short"],
+               profile["vol_ratio"], profile["bottleneck"],
+               profile["near_miss"]], db_path=db_path)
+        return True
+    except Exception:
+        return False
