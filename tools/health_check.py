@@ -135,16 +135,13 @@ check("H11 近 24h 下单失败 ≤ 5", of[0]["c"] <= 5, f"{of[0]['c']} 次")
 
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
 if failed:
-    # 飞书告警（30 分钟内只发一次，防轰炸）
+    # 飞书告警 + AI 诊断桥（2026-08-16 用户方案;30 分钟去重;AI 失败自动退回纯文本）
     try:
         if not os.path.exists(NOTIFY_STATE) or \
                 time.time() - os.path.getmtime(NOTIFY_STATE) > 1800:
-            import subprocess
-            msg = "🚨 系统体检异常:\n" + "\n".join(f"- {x}" for x in failed)
-            subprocess.run([os.path.join(ROOT, ".lark"), "im", "+messages-send",
-                            "--as", "bot",
-                            "--user-id", "ou_3c597d18937078f2587b56adb8b960d2",
-                            "--text", msg], capture_output=True, timeout=20)
+            sys.path.insert(0, ROOT)
+            from tools import alert_diag
+            alert_diag.diagnose_and_alert(failed)
             open(NOTIFY_STATE, "w").write(str(time.time()))
     except Exception:
         pass

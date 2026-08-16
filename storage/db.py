@@ -179,6 +179,15 @@ CREATE TABLE IF NOT EXISTS order_failures (
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_of_ts ON order_failures(ts);
+
+-- 告警信箱(2026-08-16 会话值守循环用): 体检失败入箱,值守轮处理并标记 resolved
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, source TEXT, items TEXT,
+    status TEXT DEFAULT 'new',        -- new / resolved
+    resolved_ts REAL, note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）
