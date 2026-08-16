@@ -51,21 +51,69 @@ def _flat_then_breakout(n_flat=30, base=100.0, vol=1000.0, big_vol=2000.0,
 
 
 def test_breakout_signal():
-    print("== breakout_signal 纯函数 ==")
+    print("== breakout_signal 纯函数（多空双向）==")
     kl = _flat_then_breakout()
     sig = breakout_signal(kl)
     check("放量突破阳线 → 多头信号", sig is not None and sig["dir"] == "long",
           f"实际 {sig}")
     if sig:
         check("影子分 ∈ [0,100]", 0 <= sig["shadow_score"] <= 100)
-        check("止损止盈按 1×/2×ATR", abs(sig["stop"] - (sig["entry"] - sig["atr"])) < 1e-9
+        check("多头止损止盈按 1×/2×ATR", abs(sig["stop"] - (sig["entry"] - sig["atr"])) < 1e-9
               and abs(sig["tp"] - (sig["entry"] + 2 * sig["atr"])) < 1e-9)
+    sig_s = breakout_signal(_flat_then_breakout(direction="down"))
+    check("放量跌破阴线 → 空头信号",
+          sig_s is not None and sig_s["dir"] == "short", f"实际 {sig_s}")
+    if sig_s:
+        check("空头止损止盈按 1×/2×ATR（止损在上/止盈在下）",
+              abs(sig_s["stop"] - (sig_s["entry"] + sig_s["atr"])) < 1e-9
+              and abs(sig_s["tp"] - (sig_s["entry"] - 2 * sig_s["atr"])) < 1e-9)
     sig2 = breakout_signal(_flat_then_breakout(big_vol=1000.0))  # 量不达标
     check("缩量突破 → None", sig2 is None)
     # 最后一根在区间内 → None
     kl3 = _flat_then_breakout()
     kl3[-1] = kl3[-2][:]
     check("无突破 → None", breakout_signal(kl3) is None)
+
+
+def _downtrend_rejection(n=95, base=100.0, vol=1000.0):
+    """下跌趋势 + 最后一根反弹 EMA20 上影线拒绝（策略 A 空头信号形态）。"""
+    from strategy.indicators import ema
+    out = []
+    t0 = int(time.time() * 1000) - (n + 5) * 3600_000
+    closes = []
+    for i in range(n):
+        c = base - i * 0.15
+        closes.append(c)
+        out.append([t0 + i * 3600_000, c + 0.05, c + 0.3, c - 0.3, c, vol])
+    e = ema(closes, 20)[-1]
+    # 反弹段: 4 根小阳回到 EMA20 附近
+    for i in range(4):
+        c = closes[-1] + (i + 1) * 0.1
+        out.append([t0 + (n + i) * 3600_000, c - 0.05, c + 0.2, c - 0.2, c, vol])
+    # 最后一根: 上影线拒绝（high 破 EMA20,收盘回落其下,上影 ≥ 实体）
+    o = e - 0.2
+    out.append([t0 + (n + 4) * 3600_000, o, e + 1.0, e - 0.6, e - 0.45, vol])
+    return out
+
+
+def test_scan_signal_short():
+    print("== 策略 A 空头分支（空头趋势+反弹拒绝K线）==")
+    import tempfile as _tf
+    tmp = _tf.mkdtemp(prefix="tst_ashort_")
+    dt, fake = _make_trader(tmp)
+    from exchange.models import Candle
+    kl = _downtrend_rejection()
+    fake.candles["BTC-USDT-SWAP"] = [
+        Candle(ts=k[0], open=k[1], high=k[2], low=k[3], close=k[4],
+               volume=k[5]) for k in kl]
+    fake.last_prices["BTC-USDT-SWAP"] = kl[-1][4]
+    fake.last_prices["BTC-USDT"] = kl[-1][4]
+    sig = dt.scan_signal("BTC")
+    check("空头信号触发", sig is not None and sig["dir"] == "short",
+          f"实际 {sig}")
+    if sig:
+        check("止损在上/止盈在下",
+              sig["stop"] > sig["entry"] > sig["tp"])
 
 
 def test_record_shadow_dedup(tmp):
@@ -121,5 +169,6 @@ if __name__ == "__main__":
     test_breakout_signal()
     test_record_shadow_dedup(os.path.join(tmp, "d1"))
     test_engine_shadow_no_orders(tmp)
+    test_scan_signal_short()
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
