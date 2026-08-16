@@ -1,0 +1,42 @@
+# ============ 密钥（严禁入库） ============
+okx_config.json
+*.pem
+*.key
+
+# ============ 依赖目录（体积大，requirements.txt 现场安装） ============
+lib/
+node_modules/
+
+# ============ Python ============
+__pycache__/
+*.pyc
+*.pyo
+.pycache_tmp/
+*.egg-info/
+.venv/
+venv/
+
+# ============ 运行时状态（活体进程生成，不入库） ============
+*.pid
+heartbeat_*.txt
+watchdog_state.json
+trade_journal.json
+watchlist.json
+position_ownership.json
+position_ownership.lock
+threshold_state*.json
+experience_scored.json
+arb_positions.json
+paper_state.json
+factor_top.json
+
+# ============ 数据缓存/本地库 ============
+data/cache*/
+data/cache_*/
+data/market.db
+*.db
+*.sqlite3
+
+# ============ 系统 ============
+.DS_Store
+*.log

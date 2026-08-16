@@ -1,0 +1,166 @@
+"""
+阈值自适应 — 决策阈值也不是真理，用历史决策结果动态校准。
+
+机制：
+  1. 记录每次决策：综合分 + 实际结果（盈亏）
+  2. 按分数分桶，统计每桶的平均盈亏
+  3. 找到"盈亏平衡分数"（期望从负转正的转折点）
+  4. 阈值 = 转折点 + 安全边际（动态更新）
+
+这样阈值不是拍脑袋的 70，而是数据校准出来的。
+样本越多，阈值越准；市场变了，阈值跟着变。
+"""
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
+import numpy as np
+
+
+class ThresholdLearner:
+    def __init__(self, path="threshold_state.json", initial_threshold=70,
+                 min_samples=30, bucket_width=5, safety_margin=5,
+                 min_bucket_samples=8, min_threshold=60, max_threshold=90,
+                 max_history=500):
+        self.path = path
+        self.threshold = initial_threshold
+        self.min_samples = min_samples
+        self.bucket_width = bucket_width
+        self.safety_margin = safety_margin
+        self.min_bucket_samples = min_bucket_samples  # 每桶最少样本数（防噪声桶带偏）
+        self.min_threshold = min_threshold            # 阈值下限夹逼（防全局放行）
+        self.max_threshold = max_threshold            # 阈值上限夹逼
+        self.max_history = max_history                # 只保留最近 N 条（旧 regime 衰减）
+        self.decisions = []  # {score, pnl}
+        self._load()
+
+    def _load(self):
+        if os.path.exists(self.path):
+            with open(self.path) as f:
+                d = json.load(f)
+                self.threshold = d.get("threshold", self.threshold)
+                self.decisions = d.get("decisions", [])
+                if len(self.decisions) > self.max_history:
+                    self.decisions = self.decisions[-self.max_history:]
+
+    def _save(self):
+        # R1-3: 原子写（先写 .tmp 再 os.replace，崩溃不留半截 JSON）
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"threshold": self.threshold, "decisions": self.decisions},
+                      f, ensure_ascii=False, indent=2)
+        os.replace(tmp, self.path)
+
+    # ---------- 记录决策结果 ----------
+    def record(self, score, pnl, pnl_estimated=False):
+        """记录一次决策（综合分 + 实际盈亏）。
+        pnl_estimated=True 的估算样本不参与校准（防噪声标签污染阈值）。"""
+        self.decisions.append({"score": score, "pnl": pnl,
+                               "pnl_estimated": bool(pnl_estimated)})
+        if len(self.decisions) > self.max_history:
+            self.decisions = self.decisions[-self.max_history:]
+        # 样本够了就自动校准
+        if len([d for d in self.decisions if not d.get("pnl_estimated")]) >= self.min_samples:
+            self.calibrate()
+        else:
+            self._save()
+
+    # ---------- 校准阈值 ----------
+    def calibrate(self):
+        """用历史决策的分数→盈亏分布，找到盈亏平衡分数，动态设阈值。
+        统计防护：桶样本数不足不参与、要求连续多桶非负（防噪声桶）、阈值夹逼。"""
+        if len(self.decisions) < self.min_samples:
+            return {"unchanged": self.threshold, "samples": len(self.decisions)}
+
+        scores = np.array([d["score"] for d in self.decisions
+                           if not d.get("pnl_estimated")])
+        pnls = np.array([d["pnl"] for d in self.decisions
+                         if not d.get("pnl_estimated")])
+        if len(scores) < self.min_samples:
+            return {"unchanged": self.threshold,
+                    "samples": len(self.decisions),
+                    "reason": "有效样本不足（估算样本不参与校准）"}
+
+        # 分桶：每 bucket_width 分一桶，算平均盈亏
+        buckets = {}
+        for s, p in zip(scores, pnls):
+            b = int(s // self.bucket_width) * self.bucket_width
+            buckets.setdefault(b, []).append(p)
+
+        # 只有样本数达标的桶才参与校准
+        qual = {b: float(np.mean(v)) for b, v in buckets.items()
+                if len(v) >= self.min_bucket_samples}
+        if len(qual) < 2:
+            return {"unchanged": self.threshold, "samples": len(self.decisions),
+                    "reason": f"样本达标桶不足（<2，需每桶≥{self.min_bucket_samples}样本）"}
+
+        # 找"盈亏平衡分数"：本桶及更高分至少 2 个连续桶都非负
+        sorted_b = sorted(qual)
+        break_even = None
+        for b in sorted_b:
+            higher = [bb for bb in sorted_b if bb >= b]
+            if len(higher) >= 2 and all(qual[bb] >= 0 for bb in higher[:2]):
+                break_even = b
+                break
+
+        if break_even is not None:
+            new_threshold = min(self.max_threshold,
+                                max(self.min_threshold, break_even + self.safety_margin))
+            # 元优化方向闸：放松阈值（new < old）时，新放行的分数段必须正期望
+            # （防噪声桶把阈值越拉越低=全局放行；收紧方向无此风险，直接允许）
+            if new_threshold < self.threshold:
+                band = [p for s, p in zip(scores, pnls)
+                        if new_threshold <= s < self.threshold]
+                if len(band) >= self.min_bucket_samples and float(np.mean(band)) <= 0:
+                    self._save()
+                    return {"unchanged": self.threshold,
+                            "samples": len(self.decisions),
+                            "reason": (f"放松阈值被方向闸拒绝：新放行段"
+                                       f"[{new_threshold},{self.threshold})"
+                                       f"平均盈亏 {np.mean(band):+.4f} ≤ 0")}
+            old = self.threshold
+            self.threshold = new_threshold
+            self._save()
+            return {"old": old, "new": new_threshold,
+                    "break_even": break_even, "samples": len(self.decisions)}
+        return {"unchanged": self.threshold, "samples": len(self.decisions),
+                "reason": "未找到稳定的盈亏平衡点（分数→盈亏非单调）"}
+
+    # ---------- 诊断 ----------
+    def profile(self):
+        """当前分数→盈亏分布画像。"""
+        if not self.decisions:
+            return {}
+        buckets = {}
+        for d in self.decisions:
+            b = int(d["score"] // self.bucket_width) * self.bucket_width
+            buckets.setdefault(b, []).append(d["pnl"])
+        return {f"{b}-{b+self.bucket_width}分": {
+            "样本": len(v), "平均盈亏": float(np.mean(v))} for b, v in sorted(buckets.items())}
+
+    def decide(self, score):
+        """用当前阈值决策。"""
+        return score >= self.threshold
+
+
+if __name__ == "__main__":
+    import random
+    random.seed(42)
+    # 模拟：30 次决策，分数和结果（假设真实盈亏平衡在 65 分附近）
+    tl = ThresholdLearner("threshold_demo.json", initial_threshold=70)
+    print("模拟 30 次决策（真实盈亏平衡约在 65 分）:")
+    for i in range(30):
+        score = random.uniform(50, 90)
+        # 模拟：分数 > 65 的决策大概率盈利
+        if score > 65:
+            pnl = random.uniform(0, 0.03)
+        else:
+            pnl = random.uniform(-0.03, 0)
+        tl.record(score, pnl)
+
+    print(f"\n初始阈值 70 → 校准后阈值: {tl.threshold}")
+    print("\n分数→盈亏画像:")
+    for k, v in tl.profile().items():
+        print(f"  {k}: 样本{v['样本']} 平均盈亏{v['平均盈亏']*100:+.2f}%")
+    os.remove("threshold_demo.json")

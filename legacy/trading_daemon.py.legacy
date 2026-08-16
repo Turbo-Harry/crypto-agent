@@ -1,0 +1,225 @@
+"""
+常驻交易进程 — 资金费率套利自动执行 + 飞书通知。
+7×24 独立运行（部署在服务器），不依赖 agent 在线。
+
+工作循环：
+  1. 定期轮询资金费率（每 30 分钟，费率 8 小时才变）
+  2. 年化 > 阈值 → 判断套利机会 → 自动下单（现货+合约对冲）
+  3. 监控持仓：费率翻转/净值变化 → 平仓或告警
+  4. 所有事件 → 飞书通知
+
+用法：
+  python3 trading_daemon.py          # 常驻运行
+  python3 trading_daemon.py --once   # 跑一轮（测试）
+"""
+import sys
+import os
+import json
+import time
+import subprocess
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import ccxt
+
+LARK = "/Users/wuhai/Desktop/untitled folder/lark"
+FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
+ANNUAL_THRESHOLD = 0.08  # 年化 8% 门槛
+LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 2, "XRP": 2, "DOGE": 2}
+
+
+def notify_fei(message):
+    """推送消息到飞书（bot 身份发给用户）。"""
+    try:
+        subprocess.run(
+            [LARK, "im", "+messages-send", "--as", "bot",
+             "--user-id", FEISHU_USER_ID, "--text", message],
+            capture_output=True, timeout=20)
+    except Exception:
+        pass
+
+
+def connect():
+    cfg = json.load(open("okx_config.json"))
+    ex = ccxt.okx({"apiKey": cfg["apiKey"], "secret": cfg["secret"],
+                   "password": cfg["password"], "enableRateLimit": True,
+                   "options": {"defaultType": "swap"}})
+    ex.set_sandbox_mode(True)
+    return ex
+
+
+def scan_funding(exchange):
+    """轮询资金费率，返回年化超过阈值的套利机会。"""
+    opps = []
+    for sym in ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
+                "XRP/USDT:USDT", "DOGE/USDT:USDT"]:
+        try:
+            fr = exchange.fetch_funding_rate(sym)
+            rate = fr.get("fundingRate") or 0
+            annual = rate * 3 * 365
+            if abs(annual) >= ANNUAL_THRESHOLD:
+                opps.append({"symbol": sym, "base": sym.split("/")[0],
+                             "rate": rate, "annual": annual})
+        except Exception:
+            pass
+    return opps
+
+
+def open_hedge(exchange, opp):
+    """对冲开仓：现货多 + 合约空（或反向）。
+    开仓前做幂等检查 + 余额检查 + 净年化闸门——重复信号不得无限堆积仓位。"""
+    base = opp["base"]
+    sym = opp["symbol"]
+    rate = opp["rate"]
+    NOTIONAL = 700  # 名义 USDT（满足 BTC 最小 0.01）
+
+    # 0. 净年化闸门：毛年化扣往返手续费后仍为正期望才开（审计 CR-4）
+    from scoring import net_funding_annual
+    net_annual = net_funding_annual(opp["annual"])
+    if net_annual < 0.02:
+        msg = (f"⛔ 套利拒绝 {base}: 毛年化 {opp['annual']*100:.1f}% → "
+               f"净年化 {net_annual*100:.1f}%（扣往返费+按14天摊销）< 2%，负期望不开")
+        print(msg)
+        notify_fei(msg)
+        return False
+
+    # 1. 幂等检查：该币已有合约持仓 → 跳过（不重复开）
+    try:
+        positions = exchange.fetch_positions()
+        existing = [p for p in positions if p.get("symbol") == sym
+                    and p.get("contracts", 0) != 0]
+        if existing:
+            print(f"⏭️ {base} 已有持仓 {len(existing)} 个，跳过（幂等）")
+            return False
+    except Exception:
+        pass
+
+    # 2. 余额检查：USDT 可用不足则拒绝（曾发生 USDT 耗尽事故）
+    try:
+        bal = exchange.fetch_balance()
+        usdt_free = (bal.get("USDT") or {}).get("free", 0) or 0
+        if usdt_free < NOTIONAL * 2:
+            msg = f"⛔ 开仓拒绝 {base}: USDT 可用 {usdt_free:.0f} < {NOTIONAL*2}"
+            print(msg)
+            notify_fei(msg)
+            return False
+    except Exception:
+        pass
+
+    # 3. 数量换算（统一 execution 工具，修复 round(x, float) TypeError）
+    from execution import qty_for_notional
+    amount, qty_reason = qty_for_notional(exchange, sym, NOTIONAL)
+    if amount is None:
+        msg = f"⛔ 开仓拒绝 {base}: {qty_reason}"
+        print(msg)
+        notify_fei(msg)
+        return False
+    if qty_reason:
+        print(f"  {base} 数量调整: {qty_reason}")
+
+    mkt = exchange.market(sym)
+    lev = LEVERAGE_MAP.get(base, 2)
+    for side in ["long", "short"]:
+        try:
+            exchange.private_post_account_set_leverage({
+                "instId": mkt["id"], "lever": str(lev),
+                "mgnMode": "isolated", "posSide": side})
+        except Exception:
+            pass
+
+    # 4. 按费率方向分叉（负费率：现货空腿需保证金账户，只开合约多腿并告警）
+    if rate >= 0:
+        try:
+            exchange.create_market_buy_order(f"{base}/USDT", amount)
+            exchange.create_market_sell_order(sym, amount, params={"posSide": "short"})
+            direction = "现货多+合约空"
+            msg = (f"✅ 套利开仓 {base}\n方向: {direction}\n"
+                   f"年化: {opp['annual']*100:.1f}%（净 {net_annual*100:.1f}%）\n"
+                   f"数量: {amount} {base}")
+            print(msg)
+            notify_fei(msg)
+            return True
+        except Exception as e:
+            msg = f"❌ 开仓失败 {base}: {e}"
+            print(msg)
+            notify_fei(msg)
+            return False
+    else:
+        try:
+            exchange.create_market_buy_order(sym, amount, params={"posSide": "long"})
+            msg = (f"⚠️ 负费率 {base}: 现货空腿需保证金账户，本次仅开合约多腿（单腿风险）\n"
+                   f"年化 {opp['annual']*100:.1f}%（净 {net_annual*100:.1f}%）\n"
+                   f"数量 {amount} {base}")
+            print(msg)
+            notify_fei(msg)
+            return True
+        except Exception as e:
+            msg = f"❌ 开仓失败 {base}: {e}"
+            print(msg)
+            notify_fei(msg)
+            return False
+
+
+def check_positions(exchange):
+    """监控持仓：费率翻转告警。"""
+    try:
+        positions = exchange.fetch_positions()
+        for p in positions:
+            if p.get("contracts", 0) == 0:
+                continue
+            sym = p["symbol"]
+            base = sym.split("/")[0]
+            fr = exchange.fetch_funding_rate(sym)
+            rate = fr.get("fundingRate") or 0
+            if p["side"] == "short" and rate < 0:
+                msg = f"⚠️ {base} 费率翻转为负 {rate*100:.4f}%，空头套利转亏，建议平仓"
+                print(msg)
+                notify_fei(msg)
+    except Exception:
+        pass
+
+
+def run(once=False):
+    exchange = connect()
+    # 账户级风控（审计 CR-2）
+    from risk.risk_manager import RiskManager
+    try:
+        bal = exchange.fetch_balance()
+        eq = float((bal.get("USDT") or {}).get("total", 0) or 0)
+    except Exception:
+        eq = 0
+    risk = RiskManager(initial_equity=eq if eq > 0 else 4190)
+    halt_notified = False
+    notify_fei("🚀 交易系统启动（资金费率套利 + 自进化 + 风控熔断 + 飞书通知）")
+    print("常驻交易进程启动，Ctrl+C 停止")
+    while True:
+        try:
+            # 0. 净值喂入 + 熔断检查
+            bal = exchange.fetch_balance()
+            eq = float((bal.get("USDT") or {}).get("total", 0) or 0)
+            if eq > 0:
+                risk.update_equity(eq, time.strftime("%Y-%m-%d"))
+            if not risk.can_trade():
+                if not halt_notified:
+                    halt_notified = True
+                    notify_fei(f"⛔ 风控熔断: {risk.halt_reason}——停止开仓")
+                if once:
+                    break
+                time.sleep(600)
+                continue
+            elif halt_notified:
+                halt_notified = False
+                notify_fei("✅ 风控解除，恢复轮询")
+            opps = scan_funding(exchange)
+            for opp in opps:
+                open_hedge(exchange, opp)
+            check_positions(exchange)
+        except Exception as e:
+            print(f"轮询异常: {e}")
+        if once:
+            break
+        time.sleep(1800)  # 每 30 分钟一轮
+
+
+if __name__ == "__main__":
+    run(once=("--once" in sys.argv))

@@ -1,0 +1,5 @@
+{
+  "apiKey": "在此填入 OKX 模拟盘 API Key",
+  "secret": "在此填入 OKX Secret Key",
+  "password": "在此填入 OKX API 密码短语"
+}
