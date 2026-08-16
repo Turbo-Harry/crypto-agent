@@ -217,6 +217,25 @@ def test_profile_and_record(tmp):
     conn.close()
     check("画像落库(隔离)", ok is True and n == 1, f"实际 n={n}")
 
+def test_anomalies_registry(tmp):
+    print("== 统一异常中心(登记/去重/列表) ==")
+    from tools.anomalies import register, list_new, resolve
+    tmp = os.path.join(tmp, "anom" + str(int(time.time() * 1000) % 100000))
+    os.makedirs(tmp, exist_ok=True)
+    db = os.path.join(tmp, "a.db")
+    ok1 = register("order_failure", "BTC sell 下单失败", "测试1",
+                   severity="error", db_path=db)
+    ok2 = register("order_failure", "BTC sell 下单失败", "测试2",
+                   severity="error", db_path=db)
+    ok3 = register("engine_error", "引擎异常X", "测试3",
+                   severity="error", db_path=db)
+    rows = list_new(db_path=db)
+    check("首条登记成功", ok1 is True)
+    check("同源同题 30min 去重", ok2 is False)
+    check("不同源可登记", ok3 is True and len(rows) == 2, f"实际 {len(rows)}")
+    resolve("engine_error", "引擎异常X", db_path=db)
+    check("resolve 后列表只剩 1 条", len(list_new(db_path=db)) == 1)
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_sb_")
     test_breakout_signal()
@@ -225,6 +244,7 @@ if __name__ == "__main__":
     test_scan_signal_short()
     test_order_failure_logged(os.path.join(tmp, "of"))
     test_profile_and_record(os.path.join(tmp, "prof"))
+    test_anomalies_registry(os.path.join(tmp, "anom"))
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 

@@ -162,6 +162,12 @@ class TraderWorker:
                         sdb.init_db()
                         sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
                               [time.time(), "directional", str(e), tb])
+                        try:
+                            from tools.anomalies import register as _reg
+                            _reg("engine_error", f"方向性引擎异常: {e}",
+                                 str(e)[:200], severity="error")
+                        except Exception:
+                            pass
                     except Exception:
                         pass
                 time.sleep(1)   # 2026-08-17 提速: 1s 节拍止损监控(持仓快照仍 2s 节流)

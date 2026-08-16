@@ -145,6 +145,16 @@ try:
                      "WHERE id > ? ORDER BY id", [prev])
         new_fails = [f"下单失败 {r['base']} {r['side']} [{r['stage']}]: "
                      f"{r['error'][:60]}" for r in rows]
+        # 2026-08-17 统一异常中心: 逐笔登记(报警链统一消费)
+        try:
+            sys.path.insert(0, ROOT)
+            from tools.anomalies import register as _reg
+            for r in rows:
+                _reg("order_failure",
+                     f"{r['base']} {r['side']} [{r['stage']}] 下单失败",
+                     r["error"][:200], severity="error")
+        except Exception:
+            pass
         open(OF_STATE, "w").write(str(max_id))
     check("H11 无新增下单失败", not new_fails,
           ("; ".join(new_fails[:3]) + ("…" if len(new_fails) > 3 else ""))

@@ -184,6 +184,16 @@ def realtime(base: str):
                        fresh=fresh)
 
 
+@app.get("/anomalies", tags=["观测"])
+def anomalies():
+    """统一异常中心(2026-08-17 用户要求:所有异常统一输出到一个接口)。
+    消费端只读此端点/表,不接触各业务表。"""
+    import storage.db as sdb
+    sdb.init_db()
+    return sdb.q("SELECT id, ts, source, severity, title, detail, status "
+                 "FROM anomalies ORDER BY ts DESC LIMIT 50")
+
+
 @app.post("/scan/daily", response_model=ScanOut, tags=["运维"],
            dependencies=[Depends(require_control)])
 def scan_daily():

@@ -387,3 +387,10 @@
 - 提速三件套: ① OKXRealtime.subscribe() 动态订阅——open_position 成功后立即把该币接入 WS 秒级推送(幂等/重连自愈/线程安全);② worker WS 覆盖全回退池(config.SYMBOLS 10 币);③ 监控节拍 2s→1s,交易所持仓 REST 快照 2s 节流(避免 REST 频率翻倍),快照未刷新拍只做价格判定、平仓执行等下一拍(≤1s)。
 - 延迟链现状: 价格变动 → WS 秒级推送 → 1s 节拍内判定 → 市价平仓(REST ~百毫秒) + 交易所侧 slTriggerPx 原生止损兜底(进程崩溃也生效)。
 - 测试: test_phase0_review 增 2 项(订阅去重/持仓节流不误平),23 项全绿;全量回归见套件。
+
+## 2026-08-17 凌晨 统一异常中心（用户要求:所有异常统一输出到一个接口,报警链统一打到本 session）
+- 落地: storage anomalies 表(唯一事实源: source/severity/title/detail/status,30min 同源同题去重); tools/anomalies.py 唯一登记入口。
+- 生产者全部收编: 体检失败(health)/下单失败逐笔(order_failure)/引擎异常(engine_error)/风控熔断(risk,critical)——不再各写各表;alerts 信箱退役。
+- 统一接口: 交易服务 GET /anomalies + 看板 /api/anomalies + 闭环健康页「统一异常中心」面板(置顶)。
+- 报警链统一: alert_diag 从 anomalies.list_new() 组装统一格式消息 → 飞书 + 注入本 session。
+- 测试: anomalies 登记/去重/resolve 3 项,test_strategy_b 24 项全绿;全量回归见套件。

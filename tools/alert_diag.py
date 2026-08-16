@@ -131,20 +131,17 @@ def send_feishu(text):
         pass
 
 
-def _mailbox_write(failed_items):
-    """告警入信箱(会话值守循环的待办队列)。"""
+def _register_anomalies(failed_items):
+    """统一异常中心登记(2026-08-17: alerts 信箱退役,所有异常进 anomalies 表)。"""
     try:
-        import storage.db as sdb
-        sdb.init_db()
-        sig = ",".join(sorted(failed_items))
-        dup = sdb.q1("SELECT id FROM alerts WHERE status='new' AND items=?",
-                     [sig])
-        if dup:
-            return
-        sdb.x("INSERT INTO alerts (ts, source, items, status) VALUES (?,?,?,?)",
-              [time.time(), "health_check", sig, "new"])
+        from tools.anomalies import register, list_new
+        for item in failed_items:
+            register("health", item, severity="error")
+        rows = list_new()
+        return [f"[{r['severity']}] {r['source']}: {r['title']}"
+                for r in rows[:8]]
     except Exception:
-        pass
+        return [f"- {x}" for x in failed_items]
 
 
 def inject_session(text):
@@ -161,16 +158,15 @@ def inject_session(text):
 
 
 def diagnose_and_alert(failed_items, db=None):
-    """告警主入口: 诊断材料 → AI 分析 → 飞书(告警+AI诊断)。返回发送的文本。"""
-    _mailbox_write(failed_items)
+    """告警主入口: 统一异常中心登记 → AI 分析 → 飞书 + 注入本 session(统一格式)。"""
+    items = _register_anomalies(failed_items)
     diag = build_diagnostics(db)
     analysis = analyze(failed_items, diag)
+    head = "🚨 统一异常中心:\n" + "\n".join(items)
     if analysis:
-        text = ("🚨 系统体检异常:\n" + "\n".join(f"- {x}" for x in failed_items)
-                + "\n\n🤖 AI 初步诊断:\n" + analysis)
+        text = head + "\n\n🤖 AI 初步诊断:\n" + analysis
     else:
-        text = ("🚨 系统体检异常:\n" + "\n".join(f"- {x}" for x in failed_items)
-                + "\n\n(AI 诊断暂不可用,请人工查证 tools/health_check.py)")
+        text = head + "\n\n(AI 诊断暂不可用,请人工查证 tools/health_check.py)"
     send_feishu(text)
     # 真·推送: 同时注入 DSH 当前会话(2026-08-16 用户方案,飞书之外的第二通道)
     inject_session(text)
