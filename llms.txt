@@ -1,0 +1,43 @@
+# Crypto Agent — 自动化加密货币交易系统（OKX 模拟盘）
+
+> 方向性日内短线 + 资金费率套利（停用）的自动化交易 agent。FastAPI 服务端承载双引擎，
+> 分层架构 + 原生 OKX REST（无 ccxt）。模拟盘虚拟资金，单笔风险 1%、名义 ≤150 USDT、
+> 组合总敞口 ≤600、交易所侧止损。宁可做对，也不做错。
+
+## 入口文档（AI 必读）
+
+- [AGENTS.md](AGENTS.md): AI 协作模型 —— 分层架构、入口、安全不变量、文档路径约束、写码前读经验、写码时记踩坑、10 条红线
+- [README.md](README.md): 项目总览与快速开始（服务端唯一入口 `python3 -m service.main`）
+- [docs/README.md](docs/README.md): 文档中心索引（按功能分类 + 按时间线）
+
+## 架构
+
+- [docs/architecture/dependency_graph.md](docs/architecture/dependency_graph.md): 代码关系图（层间依赖 mermaid + 矩阵 + 分层检查脚本）
+- [docs/architecture/exchange_layers.md](docs/architecture/exchange_layers.md): 交易所访问四层（transport/adapter/base/models）
+- [docs/architecture/mtf_resonance_design.md](docs/architecture/mtf_resonance_design.md): 1h+4h 多周期共振设计
+
+## 经验与踩坑（写代码前必读）
+
+- [docs/reports/pitfalls.md](docs/reports/pitfalls.md): 踩坑档案（现象/根因/修复/预防，15 条）
+- [docs/reports/optimization_notes.md](docs/reports/optimization_notes.md): 历史实施记录（R1/R2/OP/CR/RES）
+- [docs/reports/final_report.md](docs/reports/final_report.md): 系统交付终报
+
+## 代码
+
+- [service/main.py](service/main.py): 服务端进程入口（FastAPI + 双引擎线程）
+- [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎（回踩确认信号 + tick 止损）
+- [engines/trading_main.py](engines/trading_main.py): 套利引擎（事件驱动，ENABLE_FUNDING_ARB=False 停用）
+- [engines/daily_scan.py](engines/daily_scan.py): 每日全市场候选扫描
+- [exchange/okx_adapter.py](exchange/okx_adapter.py): OKX 原生 REST 适配器
+- [tests/test_exchange_layers.py](tests/test_exchange_layers.py): 分层单测（FakeAdapter 离线）
+- [tests/test_service_api.py](tests/test_service_api.py): 服务端接口单测（TestClient 离线）
+
+## 运维
+
+- [docs/ops/watchdog_launchd.md](docs/ops/watchdog_launchd.md): launchd 进程守护部署
+- [docs/ops/tp_sandbox_verify.md](docs/ops/tp_sandbox_verify.md): TP 沙盘验证清单
+- [docs/ops/subaccount_test_plan.md](docs/ops/subaccount_test_plan.md): 子账户测试计划
+
+## 工具
+
+- [tools/dependency_graph.py](tools/dependency_graph.py): 依赖图生成 + 分层违规检查（--check/--mermaid/--dump）

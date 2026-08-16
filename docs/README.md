@@ -7,7 +7,7 @@
 
 | 目录 | 内容 | 文档 |
 |---|---|---|
-| [architecture/](architecture/) | 架构设计 | [exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计） |
+| [architecture/](architecture/) | 架构设计 | [exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计）、[dependency_graph.md](architecture/dependency_graph.md)（代码关系图：mermaid+矩阵+分层检查）、[ai_friendly_repo.md](architecture/ai_friendly_repo.md)（AI 友好仓库调研与落地） |
 | [plans/](plans/) | 优化/实施计划与简报 | Agent B R1/R2 方案及终审稿、D 批次实施简报（brief_template / launch_brief_draft / batch2_brief / r2_brief） |
 | [reports/](reports/) | 研究报告与收敛报告 | research_report_round2/3、optimization_report、convergence_report、final_report、evolution_loop_report、optimization_notes（实施日志）、backtest_report、**pitfalls（踩坑档案，写代码前必读）** |
 | [ops/](ops/) | 运维与验证手册 | watchdog_launchd（进程守护）、tp_sandbox_verify（止盈沙盘验证清单）、subaccount_test_plan（子账户测试计划）、data_collection_schedule（数据采集调度） |
@@ -15,7 +15,7 @@
 
 根目录保留三个入口文档（不在 docs/ 内）：`README.md`（项目总览）、`AGENTS.md`（AI 协作模型）、`docs/README.md`（本索引）。
 
-## 二、按时间线（全部 23 篇）
+## 二、按时间线（全部 25 篇）
 
 | 时间 | 文档 | 一句话 |
 |---|---|---|
@@ -42,6 +42,8 @@
 | 08-16 14:39 | [reports/optimization_notes.md](reports/optimization_notes.md) | 实施日志（R1/R2/OP/CR/RES 全记录） |
 | 08-16 16:03 | [architecture/exchange_layers.md](architecture/exchange_layers.md) | 交易所访问分层架构 |
 | 08-16 16:48 | [reports/pitfalls.md](reports/pitfalls.md) | 踩坑档案（API/数量/工程类，写代码前必读） |
+| 08-16 17:00 | [architecture/dependency_graph.md](architecture/dependency_graph.md) | 代码关系图（层间依赖 mermaid + 矩阵 + --check） |
+| 08-16 17:05 | [architecture/ai_friendly_repo.md](architecture/ai_friendly_repo.md) | AI 友好仓库调研与落地对照 |
 
 ## 三、命名约定
 

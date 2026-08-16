@@ -51,17 +51,20 @@ exchange/          交易所访问四层（见 docs/architecture/exchange_layers
   fake_adapter.py  内存假交易所（单测注入）
 
 factors/           因子挖掘研究层（factor_discovery/evolution/mining）
-tools/             工具脚本（scan.py / paper_trade.py / okx_pg_ingest.py / watchdog.py）
+tools/             工具脚本（scan.py / paper_trade.py / okx_pg_ingest.py / watchdog.py / dependency_graph.py）
 data/              数据源（fetch_okx / fetch_* / realtime_okx / economic_calendar）
 strategy/  risk/  backtest/   指标 / 风控 / 回测
 tests/             全部测试（test_exchange_layers.py / test_service_api.py / test_r*）
 docs/              文档中心（architecture/plans/reports/ops/prompts，索引见 docs/README.md）
 legacy/            废弃文件（trading_daemon.py.legacy）
 config.py          全局配置（根目录，被所有层 import）
+llms.txt           AI 入口索引（llmstxt 标准，指向 AGENTS/README/docs 关键文档）
 ```
 
 依赖单向向下：service → engines/decision/execution → exchange 接口 → OKX 传输层。
 **禁止反向 import**（如 exchange 层 import engines）。
+代码关系图（mermaid + 依赖矩阵 + 分层检查）见 `docs/architecture/dependency_graph.md`；
+改动 import 后跑 `python3 tools/dependency_graph.py --check` 验证无反向依赖。
 
 ## 3. 怎么跑（服务端，唯一推荐入口）
 
@@ -127,8 +130,9 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 - 文件名：`YYYY-MM-DD_功能名.md`；同一方案保留草稿+`_FINAL` 终审稿，终审稿标注"权威实施稿"。
 - 例外（活文档，追加式更新，不加日期前缀）：`docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md`。
 - 新增/移动文档后：同步更新 `docs/README.md`（功能表+时间线表）与全部交叉引用。
-- 根目录只留 `README.md`、`AGENTS.md` 两个入口，禁止在根目录新增散装 md。
+- 根目录只留 `README.md`、`AGENTS.md`、`llms.txt` 三个入口，禁止在根目录新增散装 md。
 - 禁止把文档塞进代码目录（backtest/ data/ 等已清空归位）。
+- 新增关键入口文档/架构文档后，同步更新 `llms.txt` 链接清单（AI 靠它发现入口）。
 
 ## 7. 写代码前：先借鉴已有经验（必做）
 
