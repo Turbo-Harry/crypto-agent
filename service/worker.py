@@ -118,34 +118,54 @@ class TraderWorker:
         t.signal_cool = {}
         self._last_snapshot = 0
         self._last_analysis = 0
-        while not self._stop.is_set():
-            try:
-                t.tick()                       # 心跳在 tick 内写
-                self.last_hb_dir = time.time()
-                # 本地仓位快照（每 60 秒，交易所持仓是唯一事实源）
-                if time.time() - self._last_snapshot >= 60:
-                    self._last_snapshot = time.time()
-                    self._save_positions_snapshot()
-                # 每日看账（自我进化：定期分析问题并反馈，≥24h 跑一次）
-                if time.time() - self._last_analysis >= 24 * 3600:
-                    self._last_analysis = time.time()
-                    try:
-                        from decision.analyst import run_daily
-                        run_daily()
-                    except Exception as e:
-                        print(f"每日分析失败: {e}")
-            except Exception as e:
-                tb = traceback.format_exc(limit=3)
-                t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{tb}"
-                print(f"方向性引擎异常: {e}")
+        # 2026-08-16 结构性修复: 独立心跳线程——扫描/每日刷新等长阻塞期间
+        # 心跳不断更(激进档首轮 20 币扫描 + 全市场初筛需数分钟,曾两次触发
+        # watchdog 误杀崩溃循环)。心跳与 tick 彻底解耦。
+        stop_hb = threading.Event()
+
+        def _hb_loop():
+            from execution.pidfile import write_heartbeat
+            while not stop_hb.is_set():
                 try:
-                    import storage.db as sdb
-                    sdb.init_db()
-                    sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
-                          [time.time(), "directional", str(e), tb])
+                    write_heartbeat("directional")
+                    self.last_hb_dir = time.time()
                 except Exception:
                     pass
-            time.sleep(2)
+                stop_hb.wait(10)
+
+        threading.Thread(target=_hb_loop, name="engine-heartbeat",
+                         daemon=True).start()
+        try:
+            while not self._stop.is_set():
+                try:
+                    t.tick()                       # 心跳由独立线程负责
+                    self.last_hb_dir = time.time()
+                    # 本地仓位快照（每 60 秒，交易所持仓是唯一事实源）
+                    if time.time() - self._last_snapshot >= 60:
+                        self._last_snapshot = time.time()
+                        self._save_positions_snapshot()
+                    # 每日看账（自我进化：定期分析问题并反馈，≥24h 跑一次）
+                    if time.time() - self._last_analysis >= 24 * 3600:
+                        self._last_analysis = time.time()
+                        try:
+                            from decision.analyst import run_daily
+                            run_daily()
+                        except Exception as e:
+                            print(f"每日分析失败: {e}")
+                except Exception as e:
+                    tb = traceback.format_exc(limit=3)
+                    t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{tb}"
+                    print(f"方向性引擎异常: {e}")
+                    try:
+                        import storage.db as sdb
+                        sdb.init_db()
+                        sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
+                              [time.time(), "directional", str(e), tb])
+                    except Exception:
+                        pass
+                time.sleep(2)
+        finally:
+            stop_hb.set()
 
     # ---------- 只读状态快照（供 HTTP 层） ----------
     def heartbeat_age(self) -> float:
