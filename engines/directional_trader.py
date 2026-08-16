@@ -415,6 +415,12 @@ class DirectionalTrader:
                 sig = dict(sig, stop=sig["entry"] + (1 + stop_adj) * sig["atr"])
             print(f"  {base}: 历史止损教训 → 止损放宽 +{stop_adj:.1f}×ATR")
 
+        # 2026-08-17: 沙盘不可交易合约预检拒绝(生产行情有、demo 51001 不存在)
+        if base in config.DEMO_UNTRADABLE:
+            self._log_order_failure(base, self._inst_id(base, "swap"), "n/a", 0,
+                                    "preflight", "沙盘无此合约(DEMO_UNTRADABLE)")
+            return None
+
         price = sig["entry"]
 
         # ===== 现货路径（仅现货的美股代币，仅做多，无杠杆，止损由本地监控执行） =====

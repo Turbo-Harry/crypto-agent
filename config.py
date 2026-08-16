@@ -143,3 +143,6 @@ LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0
 STRATEGY_B_SHADOW_ENABLED = True   # 只记录假设性交易,绝不下单
 BREAKOUT_LOOKBACK = 20             # 突破前 N 根 1H K 线的高低点
 BREAKOUT_VOL_RATIO = 1.2           # 突破 K 线量能 ≥ 均量 × 1.2 才确认
+
+# ---- 沙盘可交易范围（2026-08-17 实测: 沙盘 demo 缺少部分生产合约）----
+DEMO_UNTRADABLE = ["BICO", "GRVT"]   # 生产行情有、沙盘 51001 不存在的合约,预检拒绝

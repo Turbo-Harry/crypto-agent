@@ -128,10 +128,29 @@ badf = q(DB, "SELECT COUNT(*) c FROM trade_features "
 check("H10 特征缺失率=0（生产）", badf[0]["c"] == 0,
       f"{badf[0]['c']} 行有缺失字段")
 
-# ---------- H11 下单失败（结构化日志,2026-08-16 起记录） ----------
-of = q(DB, "SELECT COUNT(*) c FROM order_failures WHERE ts > ?",
-       [time.time() - 86400])
-check("H11 近 24h 下单失败 ≤ 5", of[0]["c"] <= 5, f"{of[0]['c']} 次")
+# ---------- H11 下单失败（新增即告警,2026-08-17 用户要求:逐笔进报警链） ----------
+OF_STATE = "/tmp/crypto-order-failures.last_id"
+new_fails = []
+try:
+    last = q(DB, "SELECT MAX(id) m FROM order_failures")
+    max_id = last[0]["m"] or 0
+    prev = 0
+    if os.path.exists(OF_STATE):
+        try:
+            prev = int(open(OF_STATE).read().strip() or 0)
+        except Exception:
+            prev = 0
+    if max_id > prev:
+        rows = q(DB, "SELECT base, side, stage, error FROM order_failures "
+                     "WHERE id > ? ORDER BY id", [prev])
+        new_fails = [f"下单失败 {r['base']} {r['side']} [{r['stage']}]: "
+                     f"{r['error'][:60]}" for r in rows]
+        open(OF_STATE, "w").write(str(max_id))
+    check("H11 无新增下单失败", not new_fails,
+          ("; ".join(new_fails[:3]) + ("…" if len(new_fails) > 3 else ""))
+          if new_fails else "")
+except Exception:
+    check("H11 无新增下单失败", True)
 
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
 if failed:

@@ -197,3 +197,9 @@
 - 根因：H7 主路径读 /status API，重启窗口内 5s 超时走 DB 回退；回退判定"最近 halt 事件 24h 内→判熔断"，抓到 7 小时前的旧误报事件（服务已重启多次、风控早已重置，且无 recovery 行）。
 - 修复：回退窗口 24h→1h，超 1h 视为历史事件，附注"以 /status 为准"。
 - 预防：基于事件表的"当前状态"推断必须设置新鲜度窗口，不得把历史事件当现状；恢复类事件缺失时（进程重启重置风控）历史 halt 不算数。
+
+### 2026-08-17 沙盘所有新订单失败：clOrdId 连字符触发 51000（被 code=1 掩盖）
+- 现象：XRP/BICO/BNB/GRVT 空单全部"下单异常且反查无法确认成交: code=1 All operations failed"；实测 ETH 多空单同样失败——系统自 P0 幂等键改造后无法开出任何新订单（持仓全是旧代码遗留）。
+- 根因：① clOrdId 格式 "ca-…-…" 含连字符，OKX 要求纯字母数字 → 51000 Parameter clOrdId error，被沙盘通用 code=1 "All operations failed" 掩盖（transport 只抛顶层 code/msg，data[0].sCode 的真相被丢弃）；② 另有 BICO/GRVT 沙盘 51001 合约不存在（生产行情有、demo 无，XIAOMI 同款坑）。
+- 修复：① clOrdId 改纯字母数字（ca+毫秒+hex8），实测多空四单全 sCode=0；② config.DEMO_UNTRADABLE 黑名单预检拒绝 BICO/GRVT；③ H11 升级为逐笔新增告警（此前只有 24h 聚合）。
+- 预防：交易所错误必须穿透到 data[0].sCode/sMsg 再归一（顶层 code=1 是噪声）；新幂等键格式先对照交易所字段规范（只允许字母数字）；"全部失败"类模式问题先做"确定可交易标的上的最小开平"对照实验。

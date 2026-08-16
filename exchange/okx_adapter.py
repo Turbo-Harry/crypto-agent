@@ -190,7 +190,10 @@ class OKXAdapter(ExchangeAdapter):
                            cl_ord_id: Optional[str] = None) -> OrderResult:
         inst = self.instrument(inst_id)
         # 审计 C1:客户端幂等键(下单响应丢失/超时后按它反查真实状态)
-        cl_ord_id = cl_ord_id or f"ca-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
+        # 2026-08-17 根因修复: OKX clOrdId 只允许字母数字,禁止连字符——
+        # 旧格式 "ca-...-..." 触发 51000 Parameter clOrdId error,被沙盘
+        # 通用 code=1 "All operations failed" 掩盖,导致所有新订单失败。
+        cl_ord_id = cl_ord_id or f"ca{int(time.time()*1000)}{uuid.uuid4().hex[:8]}"
         if venue == "spot":
             sz = floor_to_lot(qty, inst.lot_sz)
             if inst.min_sz > 0 and sz < inst.min_sz:
