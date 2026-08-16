@@ -889,10 +889,13 @@ class DirectionalTrader:
         """扫一轮候选池信号（每 15 分钟，日内短线）。
         频率约束（用户要求：看币动态调整笔数）：每个币每天的允许笔数按其当日
         评分动态给（评分越高越值得多给机会）+ 同币信号冷却 SIGNAL_COOLDOWN_MINUTES。"""
-        # 每日刷新候选池（跨天自动重扫全市场）
+        # 每日刷新候选池（跨天自动重扫全市场）——screen_daily 耗时 1-2 分钟,
+        # 期间心跳停更会被 watchdog 误杀:先刷一次心跳再进阻塞段(2026-08-16 事故)。
         if time.time() - self._last_watch_refresh >= 24 * 3600 or \
                 time.strftime("%Y-%m-%d") != getattr(self, "_watch_date", ""):
             try:
+                from execution.pidfile import write_heartbeat
+                write_heartbeat("directional")
                 from engines.daily_scan import screen_daily
                 w = screen_daily()
                 if w:
@@ -911,6 +914,10 @@ class DirectionalTrader:
               f"候选池 {len(self.watchlist)} 个 + 回退池 {len(scan_pool) - len(self.watchlist)} 个 ===")
         today = time.strftime("%Y-%m-%d")
         for base in scan_pool:
+            # 2026-08-16: 长扫描期间每币刷新心跳——18 币扫描需数分钟,
+            # 心跳停更 >30s 会被 watchdog 误杀（exit -15 崩溃循环事故）。
+            from execution.pidfile import write_heartbeat
+            write_heartbeat("directional")
             # 0. 动态笔数：该币今天已开几笔？按当日评分给额度（看币动态调整）
             opened_base = [t for t in self.journal.trades
                            if t.get("symbol") == base and t.get("entry_time")

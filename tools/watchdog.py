@@ -21,7 +21,9 @@ import sys
 import time
 
 HEARTBEATS = {
-    "directional": {"timeout": 30, "proc": "directional_trader.py"},
+    # 2026-08-16 采集加速后首轮扫描 18 币需数分钟（心跳随 tick 阻塞停更），
+    # 30s 超时会误杀正在工作的引擎 → 放宽到 120s（配合 scan 内每币心跳刷新）。
+    "directional": {"timeout": 120, "proc": "directional_trader.py"},
     # （2026-08-16 用户决定：套利引擎移除，"arb" 项已随 trading_main.py 归档删除）
 }
 MISSING_TOLERANCE = 3          # 心跳文件连续缺失 N 次才 kill（去抖）
