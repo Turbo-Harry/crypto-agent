@@ -12,7 +12,7 @@
 
 ## 架构
 
-- [docs/architecture/dependency_graph.md](docs/architecture/dependency_graph.md): 代码关系图（层间依赖 mermaid + 矩阵 + 分层检查脚本）
+- [docs/architecture/code_graph.md](docs/architecture/code_graph.md): 代码知识图谱（模块/符号/数据流三层 + --check/--query）
 - [docs/architecture/exchange_layers.md](docs/architecture/exchange_layers.md): 交易所访问四层（transport/adapter/base/models）
 - [docs/architecture/mtf_resonance_design.md](docs/architecture/mtf_resonance_design.md): 1h+4h 多周期共振设计
 
@@ -40,4 +40,4 @@
 
 ## 工具
 
-- [tools/dependency_graph.py](tools/dependency_graph.py): 依赖图生成 + 分层违规检查（--check/--mermaid/--dump）
+- [tools/code_graph.py](tools/code_graph.py): 轻量代码知识图谱（三层：模块/符号/数据流，--check/--query/--mermaid/--json）
