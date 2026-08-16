@@ -47,12 +47,13 @@ def main():
     bn = Counter(r["bottleneck"] for r in rows)
     nm = sum(r["near_miss"] for r in rows)
     print(f"\n瓶颈分布（信号断在哪一环）:")
+    max_pct = max((bn.get(x, 0) / n * 100) for x in bn)
     for k in ("trend", "touch", "wick", "vol", "none"):
         c = bn.get(k, 0)
         if c:
             pct = c / n * 100
-            print(f"  {k:8} {c:5}  ({pct:4.1f}%)  {'◀ 主要约束' if pct == max(
-                bn.get(x, 0) / n * 100 for x in bn)}")
+            mark = "  ◀ 主要约束" if abs(pct - max_pct) < 1e-9 else ""
+            print(f"  {k:8} {c:5}  ({pct:4.1f}%){mark}")
     print(f"\n近失（差一点就触发）: {nm} 次 ({nm/n*100:.1f}%)"
           + ("  ← 门槛微调即可显著提频" if nm / n > 0.2 else ""))
     by_sym = Counter(r["base"] for r in rows)

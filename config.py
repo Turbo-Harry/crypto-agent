@@ -56,9 +56,8 @@ TIME_STOP_DAYS = 10          # 时间止损：入场后 N 日无方向退出
 MAX_DRAWDOWN_SOFT = 0.12     # 回撤 12% 减仓
 MAX_DRAWDOWN_HARD = 0.20     # 回撤 20% 全停
 DAILY_LOSS_LIMIT = 0.015     # 单日亏损 1.5% 停手
-RISK_PER_TRADE = 0.015       # 单笔风险预算 1.5%
-MAX_POSITION_PER_COIN = 0.40 # 单币最大仓位 40%
-MAX_HOLDINGS = 4             # 同时持仓数
+# （历史遗留的 1.5%/40%/4仓 参数已删除——无引擎引用,
+#  统一由下方「参数统一维护区」RISK_PER_TRADE/MAX_NOTIONAL_PER_TRADE/MAX_TOTAL_NOTIONAL 管辖）
 
 # ============ 手续费/滑点假设（回测用） ============
 FEE_RATE = 0.001             # 单边 0.1%（现货挂单+吃单的混合估计）
