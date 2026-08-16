@@ -147,6 +147,19 @@ def _mailbox_write(failed_items):
         pass
 
 
+def inject_session(text):
+    """POST /alert-inject 推入 DSH 当前会话(真·推送;失败静默,飞书仍兜底)。"""
+    try:
+        body = json.dumps({"text": text}).encode("utf-8")
+        req = urllib.request.Request("http://127.0.0.1:3080/alert-inject",
+                                     data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def diagnose_and_alert(failed_items, db=None):
     """告警主入口: 诊断材料 → AI 分析 → 飞书(告警+AI诊断)。返回发送的文本。"""
     _mailbox_write(failed_items)
@@ -159,6 +172,8 @@ def diagnose_and_alert(failed_items, db=None):
         text = ("🚨 系统体检异常:\n" + "\n".join(f"- {x}" for x in failed_items)
                 + "\n\n(AI 诊断暂不可用,请人工查证 tools/health_check.py)")
     send_feishu(text)
+    # 真·推送: 同时注入 DSH 当前会话(2026-08-16 用户方案,飞书之外的第二通道)
+    inject_session(text)
     return text
 
 
