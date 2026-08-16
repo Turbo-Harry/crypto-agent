@@ -1,3 +1,4 @@
+import config
 """
 经验评分系统 — 历史经验不一定对，每条经验用实际交易结果验证。
 好经验存活（分数上升），坏经验淘汰（分数下降，弃用）。
@@ -19,8 +20,8 @@ import json
 import os
 import time
 
-DECAY_HALFLIFE_DAYS = 30   # 分数向 50 回归的半衰期
-REVIVE_DAYS = 60           # discarded 经验 N 天后复活为 unverified
+DECAY_HALFLIFE_DAYS = config.DECAY_HALFLIFE_DAYS
+REVIVE_DAYS = config.REVIVE_DAYS
 
 
 class ScoredExperience:

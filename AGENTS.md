@@ -184,3 +184,13 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 2. 全量回归必须当场重跑并附数字（绿 N 项、红 0 项）；
 3. 活体改动必须附重启后验证（心跳年龄、持仓衔接、体检结果）；
 4. 与清单不符的项要么补做、要么在完成声明中明确标记"未做+原因"。
+
+## 13. 参数集中化规则（用户规则，机器执行）
+
+1. **新增/修改策略参数只能在 `config.py` 的「参数统一维护区」进行**；策略层模块
+   （engines/decision/execution/risk/service）只允许 `X = config.X` 形式引用，
+   禁止私藏数字/字符串字面量参数。
+2. 机器执行：`tools/params_lint.py` + `tests/test_params_centralization.py`（进全量套件，
+   违规则测试红）。合法例外（结构/凭证/服务绑定类）见 params_lint 注释。
+3. 门槛三件套联动约束：`THRESHOLD_INITIAL < DECIDE_MIN_SCORE <= SIGNAL_SCORE`
+   （不满足会导致全部信号被拒或门槛失效），改动必须在 config 注释中同步说明。

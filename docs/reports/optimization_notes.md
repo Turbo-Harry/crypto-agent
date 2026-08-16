@@ -338,3 +338,9 @@
 - 参数统一维护落地: config.py 新增「策略参数统一维护」区块，9 个参数收拢（信号分/决策门槛/阈值初始/拒绝K线比/止损止盈ATR倍数/单笔风险/单笔名义/总敞口）；engines/decision/execution 各模块改为只引用 config、删除私藏副本；PositionLedger 总敞口默认值也从 config 读。
 - 测试对齐: 各测试改用 config 常量（门槛用例 49/50、阈值用例 85/45）。
 - 验证: 全量回归 12 文件 130 项全绿。
+
+## 2026-08-16 深夜 参数集中化规则落地（用户规则:新增参数只能在 config.py 加）
+- config.py 统一维护区扩到 30+ 参数: 信号/门槛/阈值三件套、风险红线三件套、回退池/杠杆表/特性开关、每日扫描 6 参数、经验库衰减/复活、日度分析 6 参数、试验注册表 3 门槛、LEGACY_CT_VAL 面值表。
+- 各模块(engines/decision/execution)只保留 config 引用别名;搬运时修正一处自引入错误(DOGE 面值 1.0 误写 0.001,已还原)。
+- 机器执行: tools/params_lint.py(扫描策略层模块级字面量赋值) + tests/test_params_centralization.py(进全量套件);AGENTS.md §13 规则。lint 首跑抓出 LEGACY_CT_VAL 漏网。
+- 验证: 全量回归 13 文件 131 项全绿;lint 0 违规。

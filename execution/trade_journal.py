@@ -15,13 +15,14 @@
   journal.get_lessons()    读经验库（决策时参考）
 """
 import json
+import config
 import os
 import time
 
 from storage.db import _TRADE_COLS
 
 # 旧记录单位回填用的合约面值表（legacy size 是"张"时换算币数；新代码不再依赖此表）
-LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0}
+LEGACY_CT_VAL = config.LEGACY_CT_VAL
 
 
 class TradeJournal:

@@ -1,3 +1,4 @@
+import config
 """
 试验注册表（Phase 3 T3.2）—— 每次参数/规则变更提案必入账，多重检验可追溯。
 
@@ -11,9 +12,9 @@ import time
 from factors.overfit_guard import deflated_sharpe, pbo_cscv
 
 # 接受线(López de Prado 实务门槛,见设计文档 S3)
-DSR_ACCEPT = 1.0
-PBO_ACCEPT = 0.3
-MIN_SAMPLES = 30          # Tharp 最低样本门槛(S2)
+DSR_ACCEPT = config.DSR_ACCEPT
+PBO_ACCEPT = config.PBO_ACCEPT
+MIN_SAMPLES = config.MIN_SAMPLES
 
 
 def propose(change_id, kind, params, db_path=None):

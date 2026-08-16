@@ -26,12 +26,12 @@ WATCHLIST_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__
 
 # 筛选参数（非拟合：区间取经验保守值）
 # 2026-08-16 采集加速（用户指示）：流动性门槛 500万→200万,扩大候选池
-MIN_VOL = 2_000_000           # 24h 成交额 200 万 USDT（150 USDT 小单足够流动）
-MIN_PRICE = 0.01              # 最低价格
-MIN_TREND_DEV = 0.005         # EMA20 偏离 EMA50 ≥ 0.5% 才算有趋势
-ATR_SWEET_LOW = 0.005         # 1h ATR% 下限 0.5%
-ATR_SWEET_HIGH = 0.06         # 1h ATR% 上限 6%
-WATCH_N = 8                   # 每日候选池数量
+MIN_VOL = config.MIN_VOL
+MIN_PRICE = config.MIN_PRICE
+MIN_TREND_DEV = config.MIN_TREND_DEV
+ATR_SWEET_LOW = config.ATR_SWEET_LOW
+ATR_SWEET_HIGH = config.ATR_SWEET_HIGH
+WATCH_N = config.WATCH_N
 
 
 def _klines_to_dicts(kl):

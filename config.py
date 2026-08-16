@@ -102,8 +102,41 @@ TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比）
 RISK_PER_TRADE = 0.01        # 单笔风险 1%（红线,改动需用户明确拍板）
 MAX_NOTIONAL_PER_TRADE = 150 # 单笔名义上限 USDT（红线）
 MAX_TOTAL_NOTIONAL = 600     # 组合总敞口上限 USDT（红线,PositionLedger 共用）
+SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
+           "LINK", "ADA", "AVAX", "BNB", "LTC"]   # 回退主流池（采集加速扩到 10 个）
+LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3,
+                "LINK": 3, "ADA": 3, "AVAX": 3, "BNB": 3, "LTC": 3}
+FLAG_ENABLE_EXCHANGE_TP = False          # 止盈挂交易所侧（默认关,沙盘验证后开启）
+FLAG_USE_SHADOW_SCORE_GATE = False       # 影子分门控（A3 检验通过后人工开启）
 
 # ============ 套利失效防护（OP-3） ============
 ARB_BASIS_EXIT = 0.005       # 基差(perp/spot-1)向不利方向超过 0.5% → 平对冲仓
 ARB_FLIP_HOURS = 16          # 费率向不利方向翻转持续 16 小时（2 个结算周期）→ 平对冲仓
 ARB_LEVERAGE = 1             # 对冲本身不需要杠杆，1x 隔离（高杠杆只抬爆仓风险）
+
+# ============ 参数统一维护 · 扩展区（2026-08-16 用户规则:新增参数只能在 config.py 加） ============
+# ---- 每日候选扫描（daily_scan） ----
+MIN_VOL = 2_000_000           # 24h 成交额下限 USDT（采集加速 500万→200万）
+MIN_PRICE = 0.01              # 最低价格
+MIN_TREND_DEV = 0.005         # EMA20 偏离 EMA50 ≥ 0.5% 才算有趋势
+ATR_SWEET_LOW = 0.005         # 1h ATR% 下限 0.5%
+ATR_SWEET_HIGH = 0.06         # 1h ATR% 上限 6%
+WATCH_N = 8                   # 每日候选池数量
+# ---- 经验库（experience_scoring） ----
+DECAY_HALFLIFE_DAYS = 30      # 分数向 50 回归的半衰期
+REVIVE_DAYS = 60              # discarded 经验 N 天后复活为 unverified
+# ---- 日度分析（analyst） ----
+WINDOW_DAYS = 7
+MIN_TRADES_FOR_STATS = 5      # 统计结论最少样本
+MIN_SAMPLES_FOR_ISSUE = 3     # 感知问题最少样本
+LOSS_STREAK_ALERT = 3         # 连亏笔数告警线
+STOP_BREACH_RATIO = 1.3       # 实亏/预设风险 > 1.3 视为止损被击穿
+WIN_RATE_FLOOR = 0.30         # 胜率下限（样本≥5 时）
+# ---- 试验注册表（experiments） ----
+DSR_ACCEPT = 1.0              # Deflated Sharpe 接受线（LdP）
+PBO_ACCEPT = 0.3              # PBO 接受线（LdP）
+MIN_SAMPLES = 30              # Tharp 最低样本门槛（S2）
+
+LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0,
+                 "LINK": 1.0, "ADA": 1.0, "AVAX": 1.0, "BNB": 0.01, "LTC": 1.0}
+    # 旧台账回填用合约面值表（legacy size 单位换算,见 trade_journal）

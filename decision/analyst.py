@@ -20,12 +20,14 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-WINDOW_DAYS = 7
-MIN_TRADES_FOR_STATS = 5      # 统计结论最少样本
-MIN_SAMPLES_FOR_ISSUE = 3     # 感知问题最少样本
-LOSS_STREAK_ALERT = 3         # 连亏笔数告警线
-STOP_BREACH_RATIO = 1.3       # 实亏/预设风险 > 1.3 视为止损被击穿
-WIN_RATE_FLOOR = 0.30         # 胜率下限（样本≥5 时）
+import config
+
+WINDOW_DAYS = config.WINDOW_DAYS
+MIN_TRADES_FOR_STATS = config.MIN_TRADES_FOR_STATS
+MIN_SAMPLES_FOR_ISSUE = config.MIN_SAMPLES_FOR_ISSUE
+LOSS_STREAK_ALERT = config.LOSS_STREAK_ALERT
+STOP_BREACH_RATIO = config.STOP_BREACH_RATIO
+WIN_RATE_FLOOR = config.WIN_RATE_FLOOR
 
 
 def _collect():

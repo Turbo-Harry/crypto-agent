@@ -37,22 +37,15 @@ from exchange.models import floor_to_lot, OrderResult
 
 LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
 FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
-LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3}
-# 用户授权 3-10x；取区间下沿 3x——仓位由 1% 风险公式决定（与杠杆无关），
-# 更高杠杆只缩短爆仓距离、不提高胜率；方向性策略历史回测未证明正期望，保守为上
-# 2026-08-16 采集加速（用户指示）: 回退池扩到 10 个主流,扫描池 = watchlist ∪ 回退池
-SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
-           "LINK", "ADA", "AVAX", "BNB", "LTC"]
 # 策略参数统一维护于 config.py（2026-08-16 用户指示: 数值不再分散）——
-# 本模块只引用、不私藏副本。
+# 本模块只保留 config 引用别名、不私藏任何参数副本。
+LEVERAGE_MAP = config.LEVERAGE_MAP
+SYMBOLS = config.SYMBOLS
 SIGNAL_SCORE = config.SIGNAL_SCORE          # 回踩确认信号基础分
 RISK_PER_TRADE = config.RISK_PER_TRADE      # 单笔风险 1%
 RR_RATIO = config.TP_ATR_MULT / config.STOP_ATR_MULT  # 2:1 盈亏比
-# R2-5：止盈挂交易所侧（默认关闭——需沙盘验证通过后由用户/协调者开启）
-FLAG_ENABLE_EXCHANGE_TP = False
-# Phase 3 T3.1：影子连续分门控开关。默认 False——影子分未通过假设 A3 检验
-# （与事后 R 倍数秩相关 |p|<0.1, 需 ≥30 笔平仓）前不得影响决策；届时由人工开启。
-FLAG_USE_SHADOW_SCORE_GATE = False
+FLAG_ENABLE_EXCHANGE_TP = config.FLAG_ENABLE_EXCHANGE_TP
+FLAG_USE_SHADOW_SCORE_GATE = config.FLAG_USE_SHADOW_SCORE_GATE
 
 
 def notify(msg):
