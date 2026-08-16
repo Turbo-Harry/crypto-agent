@@ -294,3 +294,11 @@
 - 穷尽体检发现并修复：DEF-11（重启后账本不补账→敞口闸门漏计 230 USDT；restore 聚合+覆盖语义，回归测试 17 项绿，活体账本已对齐 230/230）；采集守护挂起 2h（重启，market.db 恢复 1 分钟级写入）；H7 误报修正（改读 /status.risk_halted）。
 - 机制落地：M1 tools/health_check.py（H1-H9 不变量，launchd 每 5 分钟 + 飞书告警去重）；M2 test_production_guard.py；M3 tools/test_isolation_lint.py（首跑抓 2 处漏隔离）；M4 全量回归 98 项绿；M5 缺陷台账（设计文档 §10）。
 - 当前体检 9/9 全绿；收敛判定标准见设计文档 §10.3。
+
+## 2026-08-16 晚 因子挖掘完善（用户:"整个目标prompt,然后完善因子挖掘"）
+- 目标 prompt 落盘: docs/prompts/2026-08-16_factor_mining_goal_prompt.md（自包含主提示词:原理/业界标准/现状差距/范围/阶段/验收/红线）。
+- 新增 factors/factor_gate.py 验证门: walk-forward 折内 IC→t 值(Harvey-Liu-Zhu t≥3.0 promote/≥2.0 watch)；成本扣除(净价差<0→reject_on_cost)；去冗余(|corr|>0.7→redundant)；经济逻辑必填(无→hypothesis_only,GP 产物永不自证)；每次检验入 factor_trials 试验日志(storage SCHEMA 新增表)。
+- factor_mining.py 4 个因子接入验证门,真实数据裁决: 恐惧贪婪/恐惧贪婪变化/动量7天/均线偏离50 全部 reject(最强 |t| 0.37——与仓库"传统技术指标因子无效"历史结论一致)。
+- 离线单测 tests/test_factor_gate.py 6 项全绿(随机拒/单调过/高成本拒/冗余拒/无逻辑降级/日志落库);全量回归 104 项绿。
+- Deflated Sharpe/PBO 留接口钩子(试验日志字段齐备),诚实标注未实现(见 prompt §4)。
+- 影子政策: 任何因子 promote+人工批准前不得进决策(prompt §6 红线 1);factor_top.json 保持无消费方。

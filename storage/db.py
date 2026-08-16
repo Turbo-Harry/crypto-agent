@@ -116,6 +116,18 @@ CREATE INDEX IF NOT EXISTS idx_analyses_ts ON analyses(ts);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY, value TEXT, updated_at REAL
 );
+
+CREATE TABLE IF NOT EXISTS factor_trials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, name TEXT, rationale TEXT,     -- 经济逻辑必填(GP 产物标 hypothesis_only)
+    n_samples INTEGER, n_folds INTEGER,
+    mean_ic REAL, icir REAL, ic_tstat REAL, -- IC/ICIR/t 值(多重检验校正门槛 t>3.0)
+    gross_spread REAL, turnover REAL, net_spread REAL,  -- 毛价差/换手/扣费净价差
+    status TEXT,                            -- promote / watch / reject / redundant /
+                                            -- hypothesis_only / reject_on_cost
+    expression TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_factor_trials_ts ON factor_trials(ts);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）
