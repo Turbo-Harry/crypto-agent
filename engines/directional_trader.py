@@ -423,6 +423,7 @@ class DirectionalTrader:
             qty = floor_to_lot(config.MAX_NOTIONAL_PER_TRADE / price, inst.lot_sz)
             if qty <= 0 or (inst.min_sz > 0 and qty < inst.min_sz):
                 print(f"⛔ 拒绝开仓 {base}: 数量 {qty} 无效（最小 {inst.min_sz}）")
+                self._log_order_failure(base, inst_id, "buy", qty, "preflight", "数量无效(最小下单量)")
                 return None
             try:
                 usdt_free = self.exchange.fetch_balance().usdt_free
@@ -447,6 +448,7 @@ class DirectionalTrader:
                 except Exception:
                     pass
                 print(f"❌ 现货开仓失败 {base}: {res.message}")
+                self._log_order_failure(base, inst_id, "buy", qty, "open", res.message)
                 return None
             tid = self.journal.log_entry(
                 symbol=base, signal="回踩确认",
@@ -492,6 +494,8 @@ class DirectionalTrader:
         if qty < min_qty:
             print(f"⛔ 拒绝开仓 {base}: 名义 {config.MAX_NOTIONAL_PER_TRADE} USDT 只够 {qty} 币 < 最小 {min_qty} 币"
                   f"（宁可错过，不放大仓位）")
+            self._log_order_failure(base, inst_id, side, qty, "preflight",
+                                    "名义不足最小张数")
             return None
         # 余额检查（曾发生 USDT 耗尽事故）
         try:
@@ -524,6 +528,7 @@ class DirectionalTrader:
                 except Exception:
                     pass
                 print(f"❌ 开仓失败 {base}: {res.message}")
+                self._log_order_failure(base, inst_id, side, qty, "open", res.message)
                 return None
             # 审计 M5:用真实成交均价记账(响应里没有时回填;失败退回信号价)
             fill_px = None
@@ -542,8 +547,10 @@ class DirectionalTrader:
                     print(f"  🛡️ 已挂交易所侧止损单（原生 slTriggerPx） @ {sig['stop']:.2f}")
                 else:
                     print(f"  ⚠️ 交易所侧止损单挂单失败（本地 tick 监控兜底）: {sl_res.message}")
+                self._log_order_failure(base, inst_id, stop_side, qty, "stop_order", sl_res.message)
             except ExchangeError as e:
                 print(f"  ⚠️ 交易所侧止损单挂单失败（本地 tick 监控兜底）: {e}")
+                self._log_order_failure(base, inst_id, stop_side, qty, "stop_order", e)
             # R2-5: 止盈挂交易所侧（默认关闭；开启前须通过 docs/ops/tp_sandbox_verify.md 沙盘验证）
             tp_ok = True
             if FLAG_ENABLE_EXCHANGE_TP:
@@ -583,6 +590,7 @@ class DirectionalTrader:
             except Exception:
                 pass
             print(f"❌ 开仓失败 {base}: {e}")
+            self._log_order_failure(base, inst_id, side, qty, "open", e)
             return None
 
     def _recover_order(self, inst_id, cl_ord_id, qty, error):
@@ -612,9 +620,11 @@ class DirectionalTrader:
                 print(f"  🎯 已挂交易所侧 TP 条件单（原生 tpTriggerPx） @ {sig['tp']:.2f}")
                 return True
             print(f"  ⚠️ TP 挂单失败（本地 monitor 止盈兜底）: {res.message}")
+            self._log_order_failure(base, inst_id, "tp", qty, "tp_order", res.message)
             return False
         except ExchangeError as e:
             print(f"  ⚠️ TP 挂单失败（本地 monitor 止盈兜底）: {e}")
+            self._log_order_failure(base, inst_id, "tp", qty, "tp_order", e)
             return False
 
     # ---------- 幽灵止损单清理（R1-1） ----------
@@ -677,6 +687,9 @@ class DirectionalTrader:
                                 inst_id, "sell", abs(float(t["size"])), venue="spot")
                             if not res.ok:
                                 print(f"  现货平仓失败: {res.message}")
+                                self._log_order_failure(base, inst_id, "sell",
+                                                        abs(float(t["size"])),
+                                                        "close", res.message)
                                 continue
                             self.ledger.release(sym_ledger, "long", "dir",
                                                 float(t["size"]),
@@ -686,6 +699,7 @@ class DirectionalTrader:
                             print(f"  {base} 现货已不在账户（外部平仓），按现价记账")
                     except Exception as e:
                         print(f"  现货平仓失败: {e}")
+                        self._log_order_failure(base, inst_id, "sell", qty, "close", e)
                         continue
                     closed = self.journal.log_exit(t["id"], price, "止损/止盈")
                     if closed:
@@ -706,6 +720,7 @@ class DirectionalTrader:
                             pos_side=pos.side, reduce_only=True)
                         if not res.ok:
                             print(f"平仓失败: {res.message}")
+                            self._log_order_failure(base, inst_id, side, close_qty, "close", res.message)
                             continue
                         # R1-1：平仓成功后取消交易所侧条件停损单（防幽灵单残留）
                         self._cancel_stop_orders(base, "止损/止盈平仓")
@@ -718,6 +733,7 @@ class DirectionalTrader:
                             pass
                     except Exception as e:
                         print(f"平仓失败: {e}")
+                        self._log_order_failure(base, inst_id, "close", 0, "close", e)
                         continue
                 closed = self.journal.log_exit(t["id"], price, "止损/止盈")
                 if closed:
@@ -984,6 +1000,19 @@ class DirectionalTrader:
         self.scan_signals()
         self.monitor()
 
+
+    def _log_order_failure(self, base, inst_id, side, qty, stage, error):
+        """下单失败结构化落库（2026-08-16 用户问"有没有下单失败的日志"——
+        此前只有 stdout 文本,无法查询/告警。每次下单/挂单/预检失败必入账）。"""
+        try:
+            import storage.db as sdb
+            sdb.init_db(self._db_path)
+            sdb.x("INSERT INTO order_failures (ts, base, inst_id, side, qty, "
+                  "stage, error) VALUES (?,?,?,?,?,?,?)",
+                  [time.time(), base, inst_id, side, qty, stage,
+                   str(error)[:300]], db_path=self._db_path)
+        except Exception:
+            pass
 
     def _log_scan_decision(self, base, has_signal, direction, decision, reason=""):
         """信号决策过程落库（self-evolution 看账数据）：每币每轮扫都记一条。

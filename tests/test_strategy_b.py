@@ -164,11 +164,34 @@ def test_engine_shadow_no_orders(tmp):
         _restore_notify()
 
 
+def test_order_failure_logged(tmp):
+    print("== 下单失败结构化日志（order_failures）==")
+    from exchange.models import OrderResult
+    tmp = os.path.join(tmp, "of")
+    os.makedirs(tmp, exist_ok=True)
+    dt, fake = _make_trader(tmp)
+    fake.last_prices["BTC-USDT-SWAP"] = 110.0
+    fake.last_prices["BTC-USDT"] = 110.0
+
+    def _fail(*a, **kw):
+        return OrderResult(ok=False, message="模拟下单失败")
+    fake.place_market_order = _fail
+    sig = {"dir": "long", "entry": 110.0, "stop": 108.9, "tp": 112.2, "atr": 1.1}
+    dt.open_position("BTC", sig, score=80)
+    conn = sqlite3.connect(os.path.join(tmp, "scan.db"))
+    n = conn.execute("SELECT COUNT(*) FROM order_failures").fetchone()[0]
+    row = conn.execute("SELECT stage, error FROM order_failures LIMIT 1").fetchone()
+    conn.close()
+    check("失败下单入 order_failures", n >= 1 and row and row[0] == "open",
+          f"实际 n={n} row={row}")
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_sb_")
     test_breakout_signal()
     test_record_shadow_dedup(os.path.join(tmp, "d1"))
     test_engine_shadow_no_orders(tmp)
     test_scan_signal_short()
+    test_order_failure_logged(os.path.join(tmp, "of"))
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
+

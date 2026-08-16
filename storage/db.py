@@ -169,6 +169,16 @@ CREATE TABLE IF NOT EXISTS shadow_signals (
     kline_ts INTEGER, status TEXT DEFAULT 'hypothetical'
 );
 CREATE INDEX IF NOT EXISTS idx_shadow_ts ON shadow_signals(ts);
+
+-- 下单失败结构化日志(2026-08-16 用户问"有没有下单失败的日志"——此前只有
+-- stdout 文本,无法查询/告警。每次下单/挂单失败必入账,含预检拒绝)
+CREATE TABLE IF NOT EXISTS order_failures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, base TEXT, inst_id TEXT, side TEXT, qty REAL,
+    stage TEXT,              -- open / close / stop_order / tp_order / preflight
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_of_ts ON order_failures(ts);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）

@@ -125,6 +125,11 @@ badf = q(DB, "SELECT COUNT(*) c FROM trade_features "
 check("H10 特征缺失率=0（生产）", badf[0]["c"] == 0,
       f"{badf[0]['c']} 行有缺失字段")
 
+# ---------- H11 下单失败（结构化日志,2026-08-16 起记录） ----------
+of = q(DB, "SELECT COUNT(*) c FROM order_failures WHERE ts > ?",
+       [time.time() - 86400])
+check("H11 近 24h 下单失败 ≤ 5", of[0]["c"] <= 5, f"{of[0]['c']} 次")
+
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
 if failed:
     # 飞书告警（30 分钟内只发一次，防轰炸）
