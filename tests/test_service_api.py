@@ -78,7 +78,8 @@ def main():
     trader._last_risk_update = 0
     trader.signal_cool = {}
 
-    client = TestClient(app)
+    # base_url=127.0.0.1:让 Host 头落在控制面白名单内(审计 B-H1 的 Host 校验)
+    client = TestClient(app, base_url="http://127.0.0.1")
     print("== 聚合冒烟（全部只读端点一次遍历）==")
     smoke_ok, smoke_detail = True, []
     for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
