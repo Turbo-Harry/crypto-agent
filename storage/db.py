@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS lessons (
     good INTEGER DEFAULT 0, bad INTEGER DEFAULT 0,
     status TEXT DEFAULT 'unverified',
     source_trade TEXT,
+    regime TEXT,                        -- Phase 4: 教训产生的市场环境标签
     ts REAL, last_update REAL
 );
 CREATE INDEX IF NOT EXISTS idx_lessons_symbol ON lessons(symbol);
@@ -147,6 +148,16 @@ CREATE TABLE IF NOT EXISTS trade_features (
     features_missing TEXT                  -- 缺失字段清单(质量报告;生产目标=空串)
 );
 CREATE INDEX IF NOT EXISTS idx_tf_symbol_ts ON trade_features(symbol, entry_ts);
+
+-- Phase 3 试验注册表（每次参数/规则变更提案必入账;多重检验与 PBO/DSR 证据）
+CREATE TABLE IF NOT EXISTS experiments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, change_id TEXT, kind TEXT, params TEXT,
+    n_samples INTEGER, dsr REAL, pbo REAL,
+    status TEXT,                -- proposed / shadow / accepted / rejected /
+                                -- insufficient_data
+    decided_by TEXT, notes TEXT
+);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）
@@ -168,6 +179,7 @@ def init_db(db_path=None):
         conn = _connect(db_path)
         try:
             conn.executescript(SCHEMA)
+            _add_missing_columns(conn)
             conn.commit()
         finally:
             conn.close()
@@ -175,6 +187,15 @@ def init_db(db_path=None):
             _initialized = True
             migrate_from_json(db_path)
     return db_path or DB_PATH
+
+
+def _add_missing_columns(conn):
+    """轻量迁移:为既有库补新增列(幂等,CREATE TABLE IF NOT EXISTS 不会改旧表)。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(lessons)")}
+    if "regime" not in cols:
+        conn.execute("ALTER TABLE lessons ADD COLUMN regime TEXT")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_features)")}
+    # trade_features 为本次新增表,无需补列;此处仅示例 future 增量迁移入口
 
 
 def migrate_from_json(db_path=None):

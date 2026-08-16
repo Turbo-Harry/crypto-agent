@@ -75,17 +75,20 @@ class ScoredExperience:
         import storage.db as sdb
         for l in self.lessons:
             sdb.x("INSERT OR REPLACE INTO lessons (id,symbol,category,content,score,"
-                  "adoptions,good,bad,status,source_trade,ts,last_update) "
-                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "adoptions,good,bad,status,source_trade,regime,ts,last_update) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   [l.get("id"), l.get("symbol"), l.get("category"), l.get("content"),
                    l.get("score", 50), l.get("adoptions", 0), l.get("good", 0),
                    l.get("bad", 0), l.get("status", "unverified"), l.get("source_trade"),
-                   l.get("ts"), l.get("last_update")], db_path=self.db_path)
+                   l.get("regime"), l.get("ts"), l.get("last_update")],
+                  db_path=self.db_path)
 
     # ---------- 经验生命周期 ----------
-    def add(self, symbol, category, content, source_trade, status="unverified"):
+    def add(self, symbol, category, content, source_trade, status="unverified",
+            regime=None):
         """新增经验（初始分 50）。status 默认 unverified；平仓复盘链按一致性初筛
-        传入 candidate/dubious（Phase0 T0.2，见 directional_trader._post_close_review）。"""
+        传入 candidate/dubious（Phase0 T0.2，见 directional_trader._post_close_review）。
+        regime: 教训产生的市场环境标签（Phase 4 结构化匹配）。"""
         now = time.time()
         lesson = {
             "id": len(self.lessons) + 1,
@@ -98,6 +101,7 @@ class ScoredExperience:
             "bad": 0,
             "status": status,
             "source_trade": source_trade,
+            "regime": regime,
             "ts": now,
             "last_update": now,
         }

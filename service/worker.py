@@ -80,9 +80,10 @@ class TraderWorker:
             raise RuntimeError("已有交易引擎实例在运行（engine.lock 被持有），拒绝启动第二个实例")
         self._stop.clear()
         self.started_at = time.time()
-        # PID 文件沿用 watchdog 命名（只写方向性；trading_main.pid 已随套利移除）
-        with open("directional_trader.pid", "w") as f:
-            f.write(str(os.getpid()))
+        # PID 文件沿用 watchdog 命名（写入点统一走 execution/pidfile——
+        # code_graph 跨层共享状态告警修复）
+        from execution.pidfile import write_pid
+        write_pid("directional")
         self._threads = [
             threading.Thread(target=self._dir_loop, name="engine-directional", daemon=True),
         ]

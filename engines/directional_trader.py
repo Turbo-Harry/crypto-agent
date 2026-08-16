@@ -46,6 +46,9 @@ RR_RATIO = 2.0         # 2:1 盈亏比
 SIGNAL_SCORE = 80      # 回踩确认信号的基础分（用于阈值决策与记录）
 # R2-5：止盈挂交易所侧（默认关闭——需沙盘验证通过后由用户/协调者开启）
 FLAG_ENABLE_EXCHANGE_TP = False
+# Phase 3 T3.1：影子连续分门控开关。默认 False——影子分未通过假设 A3 检验
+# （与事后 R 倍数秩相关 |p|<0.1, 需 ≥30 笔平仓）前不得影响决策；届时由人工开启。
+FLAG_USE_SHADOW_SCORE_GATE = False
 
 
 def notify(msg):
@@ -103,9 +106,13 @@ class _ExpAdapter:
 
     def relevant(self, symbol=None, category=None):
         # R2-3：只返回 trusted（带 id，供采纳追踪）；discarded 走 discarded() 单独查
+        # Phase 4：system 级教训（symbol='*'，analyst 日度看账产出）也进入决策参考
         out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
                 "lesson": l["content"]}
                for l in self.bank.trusted(symbol)]
+        out += [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
+                 "lesson": l["content"]}
+                for l in self.bank.trusted(None) if l.get("symbol") == "*"]
         if category:
             out = [l for l in out if l["category"] == category]
         return out
@@ -748,6 +755,15 @@ class DirectionalTrader:
             pass
         lessons = report.get("lessons", [])
         pnl = closed.get("pnl")
+        # Phase 4: 教训带 regime 标签(取自本笔入场特征),供同环境结构化匹配
+        regime_tag = None
+        try:
+            import storage.db as sdb
+            row = sdb.q1("SELECT regime_tag FROM trade_features WHERE trade_id=?",
+                         [t["id"]], db_path=self._db_path)
+            regime_tag = row["regime_tag"] if row else None
+        except Exception:
+            regime_tag = None
         for l in lessons:
             # Phase0 T0.2 一级·一致性初筛：教训的归因方向（implies）与本笔结果一致
             # → candidate（可被决策层低权重采纳）；不一致 → dubious（不进采纳池）。
@@ -760,7 +776,7 @@ class DirectionalTrader:
             else:
                 status = "unverified"
             self.exp_bank.add(base, l["category"], l["lesson"], t["id"],
-                              status=status)
+                              status=status, regime=regime_tag)
         # R2-3：只 validate 本笔实际采纳的经验（替换全量 trusted validate 回声）
         for lid in t.get("adopted_lesson_ids") or []:
             self.exp_bank.validate(lid, closed["pnl"])
@@ -900,19 +916,28 @@ class DirectionalTrader:
             sig = self.scan_signal(base)
             if sig:
                 self.signal_cool[base] = time.time()
-                # 阈值决策：用自适应阈值（审计 CR-6：此前硬编码 80、与阈值无关）
-                if SIGNAL_SCORE < self.threshold_learner.threshold:
-                    print(f"{base}: 信号分 {SIGNAL_SCORE} < 自适应阈值 "
+                # 阈值决策（审计 CR-6 + Phase3 T3.1）：默认用常量 SIGNAL_SCORE 卡门槛
+                # （影子分未过假设 A3 检验前不得影响决策——防过拟合红线）；
+                # FLAG_USE_SHADOW_SCORE_GATE=True 在 A3 通过后由人工开启。
+                gate_score = SIGNAL_SCORE
+                if FLAG_USE_SHADOW_SCORE_GATE:
+                    gate_score = sig.get("shadow_score")
+                    if gate_score is None:
+                        gate_score = SIGNAL_SCORE
+                if gate_score < self.threshold_learner.threshold:
+                    print(f"{base}: 信号分 {gate_score} < 自适应阈值 "
                           f"{self.threshold_learner.threshold}，观望")
                     self._log_scan_decision(base, True, sig["dir"], "reject",
-                                            f"信号分 {SIGNAL_SCORE} < 阈值 {self.threshold_learner.threshold}")
+                                            f"信号分 {gate_score} < 阈值 {self.threshold_learner.threshold}")
                     continue
                 # 决策（经验库，统一 ScoredExperience — B6）
                 dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0)
                 if dec["trade"]:
                     self._log_scan_decision(base, True, sig["dir"], "open",
                                             "; ".join(dec.get("reason") or ["信号达标"]))
-                    self.open_position(base, sig, score=SIGNAL_SCORE,
+                    # Phase3 T3.1: journal 记影子分(供阈值学习喂分),门控仍由常量负责
+                    self.open_position(base, sig,
+                                       score=sig.get("shadow_score") or SIGNAL_SCORE,
                                        stop_adj=dec.get("stop_adj", 0.0),
                                        size_factor=dec.get("size_factor", 1.0),
                                        adopted_ids=dec.get("adopted_lesson_ids", []))
@@ -960,9 +985,10 @@ class DirectionalTrader:
         """单拍主循环体（服务模式由 service/worker 线程调用；独立模式由 run() 调用）。
         包含：心跳、每分钟账户风控、2s 止损监控、15min 信号扫描。"""
         now = time.time()
-        # R2-4: 心跳（watchdog 超时 30s 判定）
-        with open("heartbeat_directional.txt", "w") as f:
-            f.write(str(now))
+        # R2-4: 心跳（watchdog 超时 30s 判定）。写入点统一走 execution/pidfile
+        # （code_graph 跨层共享状态告警修复: 文件名字面量只在 pidfile 一处）。
+        from execution.pidfile import write_heartbeat
+        write_heartbeat("directional")
         # 0. 账户级风控：净值喂入 + 熔断检查（每分钟 — 审计 CR-2）
         if now - self._last_risk_update >= 60:
             self._last_risk_update = now
@@ -1001,9 +1027,9 @@ class DirectionalTrader:
             print("❌ 已有交易引擎实例在运行（engine.lock 被持有），本进程退出")
             sys.exit(1)
         notify("🎯 方向性交易 agent 启动（回踩确认 + 2:1盈亏比 + 2-3x杠杆 + tick级止损）")
-        # R2-4: PID + 心跳文件（watchdog 用）
-        with open("directional_trader.pid", "w") as f:
-            f.write(str(os.getpid()))
+        # R2-4: PID + 心跳文件（watchdog 用）；写入点统一走 execution/pidfile
+        from execution.pidfile import write_pid
+        write_pid("directional")
         self._last_scan = 0
         self._last_risk_update = 0
         self.signal_cool = {}   # 同币信号冷却（SIGNAL_COOLDOWN_MINUTES）

@@ -41,27 +41,45 @@ def check(name, cond, detail=""):
         print(f"  ❌ {name} {detail}")
 
 
-def main():
-    if not os.path.exists(PROD):
-        print("生产库不存在，跳过哨兵（无生产环境）")
-        return
-    conn = sqlite3.connect(f"file:{PROD}?mode=ro", uri=True)
+def run_checks(db_path):
+    """对任意库执行污染签名检查，返回违反清单 [(检查名, 违例值列表)]。
+    生产哨兵与变异注入自证（M6）共用此函数。"""
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    violations = []
     try:
         rows = conn.execute("SELECT key FROM thresholds").fetchall()
         bad = [r[0] for r in rows if any(m in r[0] for m in TMP_KEY_MARKERS)
                or r[0] not in LEGIT_KEYS]
-        check("thresholds 无临时路径/非法 key", not bad, f"发现 {bad}")
-
+        if bad:
+            violations.append(("thresholds 临时路径/非法 key", bad))
         rows = conn.execute("SELECT DISTINCT base FROM scan_decisions").fetchall()
         bad = [r[0] for r in rows if r[0] in TEST_BASES]
-        check("scan_decisions 无测试专用标的", not bad, f"发现 {bad}")
-
+        if bad:
+            violations.append(("scan_decisions 测试专用标的", bad))
         rows = conn.execute(
             "SELECT DISTINCT symbol FROM lessons WHERE symbol IS NOT NULL").fetchall()
         bad = [r[0] for r in rows if r[0] in TEST_BASES]
-        check("lessons 无测试专用标的", not bad, f"发现 {bad}")
+        if bad:
+            violations.append(("lessons 测试专用标的", bad))
+        return violations
     finally:
         conn.close()
+
+
+def main():
+    if not os.path.exists(PROD):
+        print("生产库不存在，跳过哨兵（无生产环境）")
+        return
+    violations = run_checks(PROD)
+    check("thresholds 无临时路径/非法 key",
+          not any(v[0].startswith("thresholds") for v in violations),
+          f"发现 {[v for v in violations if v[0].startswith('thresholds')]}")
+    check("scan_decisions 无测试专用标的",
+          not any(v[0].startswith("scan") for v in violations),
+          f"发现 {[v for v in violations if v[0].startswith('scan')]}")
+    check("lessons 无测试专用标的",
+          not any(v[0].startswith("lessons") for v in violations),
+          f"发现 {[v for v in violations if v[0].startswith('lessons')]}")
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 

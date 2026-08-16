@@ -118,6 +118,12 @@ snap = q(DB, "SELECT MAX(ts) m FROM position_snapshots")
 s_age = time.time() - (snap[0]["m"] or 0)
 check("H9 仓位快照新鲜(<5min)", s_age < 300, f"{s_age:.0f}s 前")
 
+# ---------- H10 特征缺失率（Phase 1 质量,生产目标 0%） ----------
+badf = q(DB, "SELECT COUNT(*) c FROM trade_features "
+            "WHERE features_missing IS NOT NULL AND features_missing != ''")
+check("H10 特征缺失率=0（生产）", badf[0]["c"] == 0,
+      f"{badf[0]['c']} 行有缺失字段")
+
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
 if failed:
     # 飞书告警（30 分钟内只发一次，防轰炸）

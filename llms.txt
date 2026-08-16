@@ -32,6 +32,10 @@
 
 - [docs/prompts/2026-08-16_factor_mining_goal_prompt.md](docs/prompts/2026-08-16_factor_mining_goal_prompt.md): 因子挖掘完善目标 prompt（原理/业界标准/验证门/影子政策）
 - [factors/factor_gate.py](factors/factor_gate.py): 因子验证门（walk-forward t 值 ≥3.0 / 成本扣除 / 去冗余 / 经济逻辑必填 + factor_trials 试验日志）
+- [factors/overfit_guard.py](factors/overfit_guard.py): 防过拟合守卫（Deflated Sharpe + CSCV-PBO）
+- [tools/strategy_report.py](tools/strategy_report.py): 策略体检报告（SQN≥30 笔才报/MAE-MFE 分布/特征缺失率）
+- [tools/replay_signals.py](tools/replay_signals.py): 决策重放集（影子数据，只给证伪权）
+- [tools/health_check.py](tools/health_check.py): 系统体检 H1-H10（launchd 每 5 分钟）
 
 ## 代码
 

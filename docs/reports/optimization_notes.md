@@ -311,3 +311,12 @@
 - 订单流特征接入（币安镜像订单簿/主动买占比 + Gate.io OI/爆仓量），仅生产 OKX 适配器启用；失败→null+features_missing 记账。
 - 验收：test_phase1_features.py 16 项全绿；全量回归 120 项全绿（零回归）；schema 文档 docs/architecture/trade_features_schema.md。
 - 影子政策：signal_score 等特征只记录不进决策，消费方须过 S1-S3 验证（schema 文档 §三）。
+
+## 2026-08-16 晚 全部不依赖样本的工程一次性落地（用户:"所有都一次性做完,样本可以等"）
+- Phase 2 评估引擎: tools/strategy_report.py（SQN≥30 笔才报/PF/回撤/MAE-MFE 分布/缺失率,样本不足时诚实标注）+ 体检 H10。
+- Phase 3 学习闸门基建: 阈值层喂影子分(FLAG_USE_SHADOW_SCORE_GATE=False 门控默认关, A3 通过后人工开启); experiments 试验注册表 + decision/experiments.py(propose/judge, DSR≥1+PBO<0.3+样本≥30); factors/overfit_guard.py(Deflated Sharpe Acklam 逆正态 + CSCV-PBO, 8 项单测含 n_trials=1 边界)。
+- Phase 4: lessons 加 regime 列(SCHEMA+ALTER 迁移) + 结构化匹配; analyst 的 symbol='*' 教训进入决策; tools/replay_signals.py 决策重放集(影子,只给证伪权,结果落 data/replay.db)。
+- Phase 5: data-dashboard 新增「闭环健康」页签(/api/strategy-report + /api/closed-loop)。
+- 收尾: M6 变异注入自证(test_mutation_selfcheck.py 4 项,注入三类污染必被抓+合法行不误报); M7 完成声明=证据包(AGENTS.md §12); pid/心跳写入统一走 execution/pidfile.py(code_graph --check 从 1 处违规 → 0)。
+- 验证: 全量回归 12 文件 132 项全绿; code_graph 零违规; 策略体检工具实测输出"样本不足"诚实标注; 重放集后台运行。
+- 设计文档 v0.3(§11): Q9/Q10/Q13 答复 + 各阶段状态表 + "等样本"清单。
