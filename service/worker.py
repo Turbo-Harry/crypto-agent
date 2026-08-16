@@ -140,6 +140,11 @@ class TraderWorker:
             while not self._stop.is_set():
                 try:
                     t.tick()                       # 心跳由独立线程负责
+                    # 2026-08-17: tick 进度标记——主循环被网络黑洞阻塞时心跳线程
+                    # 照常写心跳会让 watchdog 失明(51 分钟盲窗事故),此标记反映
+                    # 主循环真实进度,watchdog 据此判真卡死。
+                    from execution.pidfile import write_tick
+                    write_tick("directional")
                     self.last_hb_dir = time.time()
                     # 本地仓位快照（每 60 秒，交易所持仓是唯一事实源）
                     if time.time() - self._last_snapshot >= 60:

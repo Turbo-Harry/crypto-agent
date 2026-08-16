@@ -957,6 +957,19 @@ class DirectionalTrader:
             # 心跳停更 >30s 会被 watchdog 误杀（exit -15 崩溃循环事故）。
             from execution.pidfile import write_heartbeat
             write_heartbeat("directional")
+            # 2026-08-17 事故: 网络黑洞让 20 币扫描 × 30s 超时阻塞主循环 51 分钟,
+            # 期间 tick() 无法执行 → 止损监控失明。逐币插拍止损监控 + tick 进度:
+            # 扫描每处理一个币就查一次持仓(盲窗≤单币网络超时30s),并刷新 tick
+            # 标记(慢速但有进展的扫描不算卡死,单调用真死锁才会被 watchdog 抓)。
+            try:
+                self.monitor()
+            except Exception:
+                pass
+            try:
+                from execution.pidfile import write_tick
+                write_tick("directional")
+            except Exception:
+                pass
             # 0. 动态笔数：该币今天已开几笔？按当日评分给额度（看币动态调整）
             opened_base = [t for t in self.journal.trades
                            if t.get("symbol") == base and t.get("entry_time")

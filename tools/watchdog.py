@@ -27,6 +27,11 @@ HEARTBEATS = {
     # （2026-08-16 用户决定：套利引擎移除，"arb" 项已随 trading_main.py 归档删除）
 }
 MISSING_TOLERANCE = 3          # 心跳文件连续缺失 N 次才 kill（去抖）
+# 2026-08-17: tick 进度判真卡死——心跳线程与主循环解耦后,主循环阻塞时心跳照常,
+# watchdog 失明(51 分钟盲窗事故)。tick_<name>.txt 由主循环每拍完成时写入:
+# tick 超时 + 进程年龄超宽限(启动扫描期豁免) → 判真卡死 kill。
+TICK_TIMEOUT = 300             # tick 进度 5 分钟不动 = 主循环卡死
+STARTUP_GRACE = 900            # 进程启动 15 分钟内不判 tick(首轮扫描需数分钟)
 STATE_FILE = "watchdog_state.json"
 
 
@@ -87,6 +92,31 @@ def _pid_matches(name, pid):
     return (HEARTBEATS[name]["proc"] in out) or ("service/main.py" in out)
 
 
+def _pid_elapsed(pid):
+    """进程年龄(秒)——tick 判死需豁免启动扫描期。"""
+    try:
+        import subprocess
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "etimes="],
+                             capture_output=True, text=True, timeout=5).stdout
+        return int(out.strip())
+    except Exception:
+        return 0
+
+
+def _kill(name, pid, reason):
+    notify(f"⚠️ {reason}，按 PID={pid} kill，launchd 将自动重启")
+    try:
+        os.kill(pid, signal.SIGTERM)        # 先优雅退出
+        for _ in range(8):                  # 最多等 8s
+            time.sleep(1)
+            if not _pid_alive(pid):
+                break
+        if _pid_alive(pid):
+            os.kill(pid, 9)                 # 超时仍存活才 SIGKILL
+    except Exception as e:
+        print(f"kill 失败 {name} pid={pid}: {e}")
+
+
 def check():
     state = _load_state()
     now = time.time()
@@ -103,24 +133,31 @@ def check():
             stale = False
             state[name] = state.get(name, 0) + 1   # 缺失计数
         missing = state.get(name, 0)
+        # 2026-08-17: tick 进度判真卡死（心跳解耦后的盲区补丁）。
+        # tick 文件缺失=启动中(宽限期内豁免);tick 超时+进程够老 → 真卡死。
+        tick_stale = False
+        try:
+            tts = float(open(f"tick_{name}.txt").read().strip())
+            tick_stale = (now - tts) > TICK_TIMEOUT
+        except Exception:
+            tick_stale = _pid_elapsed(pid) > STARTUP_GRACE
+        if tick_stale and _pid_elapsed(pid) > STARTUP_GRACE:
+            if not _pid_matches(name, pid):
+                notify(f"⚠️ {cfg['proc']} tick 进度卡死，但 PID={pid} 进程身份不匹配"
+                       f"（防误杀），跳过 kill，请人工检查")
+                state.pop(name, None)
+                continue
+            _kill(name, pid, f"{cfg['proc']} 主循环 tick 卡死超过 {TICK_TIMEOUT}s"
+                             f"（心跳正常，tick 进度停滞）")
+            state.pop(name, None)
+            continue
         if stale or missing >= MISSING_TOLERANCE:
             if not _pid_matches(name, pid):
                 notify(f"⚠️ {cfg['proc']} 心跳异常，但 PID={pid} 进程身份不匹配"
                        f"（防误杀），跳过 kill，请人工检查")
                 state.pop(name, None)
                 continue
-            notify(f"⚠️ {cfg['proc']} 心跳异常（stale={stale}, 缺失{missing}次），"
-                   f"按 PID={pid} kill，launchd 将自动重启")
-            try:
-                os.kill(pid, signal.SIGTERM)        # 先优雅退出
-                for _ in range(8):                  # 最多等 8s
-                    time.sleep(1)
-                    if not _pid_alive(pid):
-                        break
-                if _pid_alive(pid):
-                    os.kill(pid, 9)                 # 超时仍存活才 SIGKILL
-            except Exception as e:
-                print(f"kill 失败 {name} pid={pid}: {e}")
+            _kill(name, pid, f"{cfg['proc']} 心跳异常（stale={stale}, 缺失{missing}次）")
             state.pop(name, None)
     _save_state(state)
 

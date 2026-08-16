@@ -94,7 +94,16 @@ class OKXTransport:
             except Exception as e:
                 raise ExchangeError(f"网络错误: {e}")
             if resp.get("code") != "0":
-                raise ExchangeError(f"code={resp.get('code')} {resp.get('msg')}")
+                # 2026-08-17: 沙盘 code=1 "All operations failed" 会掩盖真实原因
+                # (如 51000/51001/51169),必须把 data[].sCode/sMsg 穿透进异常文本,
+                # 否则每次下单失败都要人工做最小对照实验(见 pitfalls.md 关键教训)。
+                rows = resp.get("data") or [{}]
+                row = rows[0] if isinstance(rows, list) else rows
+                extra = ""
+                if row.get("sCode") and row.get("sCode") != "0":
+                    extra = f" | sCode={row.get('sCode')} {row.get('sMsg')}"
+                raise ExchangeError(
+                    f"code={resp.get('code')} {resp.get('msg')}{extra}")
             return resp
 
     # ---------- 便捷封装 ----------
