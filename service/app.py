@@ -80,6 +80,14 @@ def status():
     today_n = sum(1 for x in t.journal.trades
                   if x.get("entry_time")
                   and time.strftime("%Y-%m-%d", time.localtime(x["entry_time"])) == today)
+    def notional(x):
+        return x.get("notional_usdt") if x.get("notional_usdt") is not None \
+            else round(float(x.get("size") or 0) * float(x.get("entry_price") or 0), 2)
+    total_notional = sum(notional(x) for x in t.journal.trades)
+    open_notional = sum(notional(x) for x in open_trades)
+    today_notional = sum(notional(x) for x in t.journal.trades
+                         if x.get("entry_time")
+                         and time.strftime("%Y-%m-%d", time.localtime(x["entry_time"])) == today)
     return StatusOut(
         balance=BalanceOut(total_equity=bal.total_eq if bal else 0,
                            usdt_free=bal.usdt_free if bal else 0,
@@ -92,11 +100,16 @@ def status():
                                   size=x.get("size"), entry_price=x.get("entry_price"),
                                   stop_loss=x.get("stop_loss"),
                                   take_profit=x.get("take_profit"),
-                                  venue=x.get("venue") or "swap") for x in open_trades],
+                                  venue=x.get("venue") or "swap",
+                                  notional_usdt=x.get("notional_usdt"),
+                                  risk_usdt=x.get("risk_usdt")) for x in open_trades],
         risk_halted=not t.risk.can_trade(),
         risk_reason=t.risk.halt_reason,
         decision_threshold=t.threshold_learner.threshold,
-        today_trade_count=today_n)
+        today_trade_count=today_n,
+        total_notional_usdt=round(total_notional, 2),
+        open_notional_usdt=round(open_notional, 2),
+        today_notional_usdt=round(today_notional, 2))
 
 
 @app.get("/watchlist", response_model=WatchlistOut, tags=["观测"])
@@ -139,7 +152,8 @@ def journal(limit: int = 20):
                           status=x["status"],
                           entry_time=x.get("entry_time"),
                           exit_time=x.get("exit_time"),
-                          venue=x.get("venue") or "swap") for x in trades])
+                          venue=x.get("venue") or "swap",
+                          notional_usdt=x.get("notional_usdt")) for x in trades])
 
 
 @app.get("/realtime/{base}", response_model=RealtimeOut, tags=["观测"])

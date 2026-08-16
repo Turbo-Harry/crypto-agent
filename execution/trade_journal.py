@@ -32,6 +32,21 @@ class TradeJournal:
                 d = json.load(f)
                 self.trades = d.get("trades", [])
                 self.lessons = d.get("lessons", [])
+                self._backfill_notional()
+
+    def _backfill_notional(self):
+        """旧记录缺投注额字段时按 size×price 回填（只补一次，落盘）。"""
+        dirty = False
+        for t in self.trades:
+            if "notional_usdt" not in t:
+                size = float(t.get("size") or 0)
+                entry = float(t.get("entry_price") or 0)
+                stop = float(t.get("stop_loss") or entry)
+                t["notional_usdt"] = round(size * entry, 2)
+                t["risk_usdt"] = round(abs(entry - stop) * size, 2)
+                dirty = True
+        if dirty:
+            self._save()
 
     def _save(self):
         with open(self.path, "w") as f:
@@ -61,6 +76,9 @@ class TradeJournal:
             "adopted_lesson_ids": adopted_lesson_ids or [],   # R2-3：本笔实际采纳的经验
             "atr_value": atr_value,                            # R2-6：复盘用 ATR
             "signal_price": signal_price,                      # R2-6：复盘用信号价
+            # 投注记录（显式落盘，不靠 size×price 反推——API/复盘/统计直接读）
+            "notional_usdt": round(size * entry_price, 2),     # 名义投注额（USDT）
+            "risk_usdt": round(abs(entry_price - stop_loss) * size, 2),  # 止损风险额（USDT）
             "entry_time": entry_time or time.time(),
             "status": "open",
             "exit_price": None,

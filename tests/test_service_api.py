@@ -70,6 +70,8 @@ def main():
     r = client.get("/status")
     j = r.json()
     check("/status 200 且含余额/持仓", r.status_code == 200 and "balance" in j and j["balance"]["usdt_free"] == 10000.0)
+    check("/status 含投注统计字段（total/open/today notional）",
+          all(k in j for k in ("total_notional_usdt", "open_notional_usdt", "today_notional_usdt")))
     r = client.get("/watchlist")
     check("/watchlist 200", r.status_code == 200)
     r = client.get("/journal")
@@ -109,6 +111,16 @@ def main():
     trader.tick()
     check("恢复态 tick 后可开仓（FakeAdapter 记录市价单）",
           len(fake.orders) >= 1 and fake.orders[0]["venue"] == "swap")
+    # 投注额已落盘：journal 新交易带 notional_usdt / risk_usdt，API 统计非零
+    opened = [x for x in trader.journal.trades if x["status"] == "open"]
+    check("journal 记录投注额 notional_usdt", opened and opened[-1].get("notional_usdt", 0) > 0)
+    check("journal 记录风险额 risk_usdt", opened and opened[-1].get("risk_usdt", 0) > 0)
+    r = client.get("/journal")
+    jr = r.json()
+    check("/journal 交易项含 notional_usdt",
+          jr["trades"] and jr["trades"][0].get("notional_usdt") is not None)
+    r = client.get("/status")
+    check("/status 未平仓投注额 > 0", r.json()["open_notional_usdt"] > 0)
 
     # 心跳文件（tick 会写 heartbeat_directional.txt）
     check("tick 写心跳文件", os.path.exists("heartbeat_directional.txt")

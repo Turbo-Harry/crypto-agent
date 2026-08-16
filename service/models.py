@@ -40,6 +40,8 @@ class OpenTradeOut(BaseModel):
     stop_loss: Optional[float]
     take_profit: Optional[float]
     venue: str
+    notional_usdt: Optional[float]    # 投注额（名义 USDT）
+    risk_usdt: Optional[float]        # 止损风险额（USDT）
 
 
 class StatusOut(BaseModel):
@@ -50,6 +52,10 @@ class StatusOut(BaseModel):
     risk_reason: str
     decision_threshold: float
     today_trade_count: int
+    # 投注统计（显式字段，不靠调用方反推）
+    total_notional_usdt: float        # 累计投注额（全部交易）
+    open_notional_usdt: float         # 当前未平仓投注额
+    today_notional_usdt: float        # 今日投注额
 
 
 class WatchItem(BaseModel):
@@ -81,6 +87,7 @@ class TradeItem(BaseModel):
     entry_time: Optional[float]
     exit_time: Optional[float]
     venue: str
+    notional_usdt: Optional[float]    # 投注额（名义 USDT）
 
 
 class JournalOut(BaseModel):
