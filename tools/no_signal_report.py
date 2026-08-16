@@ -62,6 +62,10 @@ def main():
         sub = [r for r in rows if r["base"] == b]
         top = Counter(r["bottleneck"] for r in sub).most_common(1)[0][0]
         print(f"  {b:8} {c:5} 次, 主瓶颈 {top}")
+    print("\n归因反哺提案（全部过 experiments 验证门 + 人工放行,不自动生效）:")
+    for rule, action, evidence, triggered in generate_feedback(rows):
+        mark = "✅ 触发" if triggered else "— 未达阈值"
+        print(f"  {rule} [{mark}] {action}   ({evidence})")
     print("\n结论性建议:")
     top = max(bn, key=bn.get)
     if top == "trend":
@@ -81,5 +85,56 @@ def main():
         for r in recent))
 
 
+# ---------- 归因反哺（2026-08-17 用户问:未触发归因如何反哺决策系统） ----------
+
+def generate_feedback(rows):
+    """把未触发归因转成结构化反哺提案（只提案、永不自动生效——防过拟合红线）。
+
+    规则（全部需要 experiments 验证门 + 人工放行,见设计文档 Phase 3）:
+      R1 近失率高(≥20%) 且主瓶颈=wick → 影线门槛微调候选(×0.9,下限 0.8)
+      R2 主瓶颈=trend 且占比 ≥60% → 策略 B(突破)转正评估启动信号
+      R3 主瓶颈=touch 且占比 ≥70% → 纪律性等待结论(显式抑制调参冲动)
+      R4 主瓶颈=vol → 量能确认条件观察(策略 B 的量能门槛关联)
+    返回 [(rule, action, evidence, triggered)]。"""
+    n = len(rows)
+    if n < 20:
+        return [("R0", "样本不足(<20),反哺提案搁置——等待画像积累",
+                 f"n={n}", False)]
+    from collections import Counter
+    bn = Counter(r["bottleneck"] for r in rows)
+    top, top_n = bn.most_common(1)[0]
+    top_pct = top_n / n
+    near = sum(r["near_miss"] for r in rows) / n
+    out = []
+    out.append(("R1", "REJECT_WICK_RATIO 微调候选(×0.9,下限 0.8)",
+                f"近失率 {near:.0%}, 主瓶颈 {top} {top_pct:.0%}",
+                near >= 0.2 and top == "wick"))
+    out.append(("R2", "策略 B(突破)转正评估启动",
+                f"主瓶颈 {top} {top_pct:.0%}(≥60% 才触发)",
+                top == "trend" and top_pct >= 0.6))
+    out.append(("R3", "纪律性等待(显式抑制调参)——回踩是策略纪律",
+                f"主瓶颈 {top} {top_pct:.0%}(≥70% 才触发)",
+                top == "touch" and top_pct >= 0.7))
+    out.append(("R4", "量能确认条件观察(与策略 B 量能门槛关联)",
+                f"主瓶颈 {top} {top_pct:.0%}",
+                top == "vol" and top_pct >= 0.4))
+    return out
+
+
+def propose_feedback(rows, db_path=None):
+    """把触发的反哺规则写入 experiments 注册表(proposed,等待验证门)。"""
+    from decision.experiments import propose
+    done = []
+    for rule, action, evidence, triggered in generate_feedback(rows):
+        if triggered:
+            propose(f"attribution_{rule.lower()}",
+                    "attribution_feedback",
+                    f'{{"action": "{action}", "evidence": "{evidence}"}}'
+                    f"|未触发归因自动提案,待验证门+人工放行",
+                    db_path=db_path)
+            done.append(rule)
+    return done
+
 if __name__ == "__main__":
     main()
+

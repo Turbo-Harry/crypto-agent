@@ -236,6 +236,30 @@ def test_anomalies_registry(tmp):
     resolve("engine_error", "引擎异常X", db_path=db)
     check("resolve 后列表只剩 1 条", len(list_new(db_path=db)) == 1)
 
+def test_attribution_feedback():
+    print("== 归因反哺规则(阈值触发/抑制) ==")
+    from tools.no_signal_report import generate_feedback
+
+    def rows(bn, near=0):
+        out = []
+        for b, c in bn.items():
+            out += [{"bottleneck": b, "near_miss": 1} for _ in range(c)]
+        return out
+
+    fb = generate_feedback(rows({"touch": 24}))
+    check("touch 主瓶颈 → R3 纪律等待触发",
+          any(r[0] == "R3" and r[3] for r in fb), f"实际 {fb}")
+    check("touch 主瓶颈 → R1/R2 不触发",
+          all(not r[3] for r in fb if r[0] in ("R1", "R2")))
+    fb2 = generate_feedback(rows({"trend": 20, "wick": 10}))
+    check("trend≥60% → R2 策略B转正评估触发",
+          any(r[0] == "R2" and r[3] for r in fb2), f"实际 {fb2}")
+    fb3 = generate_feedback(rows({"wick": 24}, near=6))
+    check("wick 主瓶颈+近失≥20% → R1 门槛微调候选",
+          any(r[0] == "R1" and r[3] for r in fb3), f"实际 {fb3}")
+    fb4 = generate_feedback(rows({"touch": 5}))
+    check("样本<20 → R0 搁置", any(r[0] == "R0" for r in fb4))
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_sb_")
     test_breakout_signal()
@@ -245,6 +269,7 @@ if __name__ == "__main__":
     test_order_failure_logged(os.path.join(tmp, "of"))
     test_profile_and_record(os.path.join(tmp, "prof"))
     test_anomalies_registry(os.path.join(tmp, "anom"))
+    test_attribution_feedback()
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 

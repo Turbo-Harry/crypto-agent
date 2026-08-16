@@ -394,3 +394,9 @@
 - 统一接口: 交易服务 GET /anomalies + 看板 /api/anomalies + 闭环健康页「统一异常中心」面板(置顶)。
 - 报警链统一: alert_diag 从 anomalies.list_new() 组装统一格式消息 → 飞书 + 注入本 session。
 - 测试: anomalies 登记/去重/resolve 3 项,test_strategy_b 24 项全绿;全量回归见套件。
+
+## 2026-08-17 凌晨 未触发归因反哺决策系统（用户问:归因如何反哺决策）
+- 落地 tools/no_signal_report.py: generate_feedback() 把画像分布转成四条反哺规则提案——R1 影线门槛微调候选(近失≥20%+主瓶颈wick)/R2 策略B转正评估启动(trend≥60%)/R3 纪律性等待显式抑制调参(touch≥70%)/R4 量能观察(vol≥40%)。
+- 反哺纪律: 提案只进 experiments 注册表(proposed),永不自动生效——验证门(S1-S3)+人工放行(防过拟合红线)。
+- 当前实测: 主瓶颈 touch 84% → R3 触发("等回踩是纪律,抑制调参冲动")——归因反哺的第一课是"什么都不改"。
+- 测试: 4 项规则触发/抑制断言,test_strategy_b 29 项全绿。
