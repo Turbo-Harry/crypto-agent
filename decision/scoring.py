@@ -118,7 +118,7 @@ def _calendar_expiry_alert(last):
                f"请更新 DEFAULT_EVENTS 或接入日历数据源")
         try:
             import subprocess
-            subprocess.run(["/Users/wuhai/Desktop/untitled folder/lark", "im",
+            subprocess.run([os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark"), "im",
                             "+messages-send", "--as", "bot",
                             "--user-id", "ou_3c597d18937078f2587b56adb8b960d2",
                             "--text", msg], capture_output=True, timeout=20)

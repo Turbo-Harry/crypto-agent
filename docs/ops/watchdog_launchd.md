@@ -14,10 +14,10 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/wuhai/Desktop/untitled folder/crypto-agent/engines/directional_trader.py</string>
+    <string>/Users/wuhai/crypto-agent/engines/directional_trader.py</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/wuhai/Desktop/untitled folder/crypto-agent</string>
+  <string>/Users/wuhai/crypto-agent</string>
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/directional_trader.log</string>
@@ -36,10 +36,10 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/wuhai/Desktop/untitled folder/crypto-agent/tools/watchdog.py</string>
+    <string>/Users/wuhai/crypto-agent/tools/watchdog.py</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/wuhai/Desktop/untitled folder/crypto-agent</string>
+  <string>/Users/wuhai/crypto-agent</string>
   <key>StartInterval</key><integer>60</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/watchdog.log</string>

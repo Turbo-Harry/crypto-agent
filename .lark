@@ -1,0 +1,12 @@
+#!/bin/bash
+# Feishu (lark-cli) wrapper.
+# Redirects HOME and the config dir into this workspace so that:
+#   1. The CLI's keychain storage lives under $HOME/Library/Application Support/lark-cli
+#      (workspace-write friendly) instead of the real macOS home.
+#   2. A pre-created master.key.file makes the CLI use a file master key,
+#      so the macOS system Keychain is never touched.
+#   3. config.json lives under LARKSUITE_CLI_CONFIG_DIR (workspace-write friendly).
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export HOME="$DIR/.lark-home"
+export LARKSUITE_CLI_CONFIG_DIR="$DIR/.lark-config"
+exec "$DIR/lark-cli-local/node_modules/@larksuite/cli/bin/lark-cli" "$@"

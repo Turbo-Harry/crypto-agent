@@ -29,7 +29,7 @@ from decision.self_evolving_trader import SelfEvolvingTrader
 from exchange.base import ExchangeAdapter
 from exchange.okx_adapter import OKXAdapter
 
-LARK = "/Users/wuhai/Desktop/untitled folder/lark"
+LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
 FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
 ANNUAL_THRESHOLD = 0.08
 # 对冲不需要杠杆：1x 隔离（高杠杆只降低保证金率、抬高爆仓风险 — OP-3）

@@ -34,7 +34,7 @@ from decision.review_engine import deep_review
 from exchange.base import ExchangeAdapter, ExchangeError
 from exchange.models import floor_to_lot
 
-LARK = "/Users/wuhai/Desktop/untitled folder/lark"
+LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
 FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
 LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3}
 # 用户授权 3-10x；取区间下沿 3x——仓位由 1% 风险公式决定（与杠杆无关），

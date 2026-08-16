@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install deps (仅测试所需，不含重型研究库)
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn pydantic httpx numpy websocket-client
+
+      - name: Compile check
+        run: |
+          python -m compileall -q -x 'lib/|node_modules/|\.git/' .
+          echo "✅ py_compile 全部通过"
+
+      - name: Layer check (code graph)
+        run: python tools/code_graph.py --check
+
+      - name: Unit tests
+        run: |
+          python tests/test_exchange_layers.py
+          python tests/test_service_api.py

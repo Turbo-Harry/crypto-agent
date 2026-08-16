@@ -63,8 +63,7 @@ def test_full_trade_flow():
     fake.last_prices["BTC-USDT-SWAP"] = 110.0
     fake.last_prices["BTC-USDT"] = 110.0
 
-    dt = DirectionalTrader(exchange=fake)
-    dt.rt = None   # 单测不启 WebSocket
+    dt = DirectionalTrader(exchange=fake, rt=None)   # CI 安全：不启 WebSocket
     # 隔离持久化：临时 journal/账本/经验库/阈值（绝不污染实盘状态文件）
     import tempfile
     tmp = tempfile.mkdtemp(prefix="tst_exch_")

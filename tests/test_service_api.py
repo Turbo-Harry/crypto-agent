@@ -12,6 +12,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # tests 目录（import test_exchange_layers）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
 from fastapi.testclient import TestClient
@@ -32,6 +33,26 @@ def check(name, cond):
         print(f"  ❌ {name}")
 
 
+class _FakeWorker:
+    """CI 安全的假 worker：只提供 app 层读取的属性，不连 OKX/WS。"""
+
+    def __init__(self, trader, arb):
+        self.trader = trader
+        self.arb = arb
+        self.last_hb_dir = time.time()
+        self.last_hb_arb = time.time()
+        self.started_at = time.time()
+
+    def heartbeat_age(self):
+        return time.time() - self.last_hb_dir
+
+    def arb_heartbeat_age(self):
+        return time.time() - self.last_hb_arb
+
+    def uptime(self):
+        return time.time() - self.started_at
+
+
 def main():
     # 组装：FakeAdapter + ServiceTrader（离线）+ TestClient
     fake = FakeAdapter(usdt_free=10_000.0)
@@ -49,15 +70,9 @@ def main():
                                    lock_path=os.path.join(tmp, "ledger.lock"))
     trader.threshold_learner = ThresholdLearner(path=os.path.join(tmp, "threshold.json"))
     trader.exp_bank = ScoredExperience(path=os.path.join(tmp, "exp.json"))
-    from service.worker import TraderWorker
-    worker = TraderWorker()
-    worker.trader = trader
-    worker.last_hb_dir = time.time()
-    worker.last_hb_arb = time.time()
-    worker.started_at = time.time()
     # 套利引擎也用 fake（避免真连 OKX）
     from engines.trading_main import TradingMain
-    worker.arb = TradingMain(exchange=fake, rt=None)
+    worker = _FakeWorker(trader, TradingMain(exchange=fake, rt=None))
     app.state.worker = worker
     trader._last_scan = 0
     trader._last_risk_update = 0
