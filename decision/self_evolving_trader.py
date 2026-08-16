@@ -54,10 +54,16 @@ class SelfEvolvingTrader:
             if cats.get("入场时机", 0) >= 1:
                 decision["adopted_lesson_ids"] += ids_by_cat.get("入场时机", [])
                 decision["reason"].append("历史有追高记录，本次用限价单，不追市价")
-            if cats.get("信号", 0) >= 3:
-                decision["adopted_lesson_ids"] += ids_by_cat.get("信号", [])
+        # 信号失效检查：读【被证伪】的经验（discarded），不是 trusted——
+        # 失效教训经亏损验证后只会进 discarded，此前读 trusted 使该分支恒不可达
+        discarded = getattr(self.bank, "discarded", lambda s, c=None: [])(symbol=symbol)
+        if discarded:
+            cats_d = Counter(l["category"] for l in discarded)
+            if cats_d.get("信号", 0) >= 3:
+                decision["adopted_lesson_ids"] += [l["id"] for l in discarded
+                                                   if l["category"] == "信号" and l.get("id")]
                 decision["trade"] = False
-                decision["reason"].append(f"该信号模式历史 {cats['信号']} 次失效，拒绝")
+                decision["reason"].append(f"该信号模式历史 {cats_d['信号']} 次失效，拒绝")
                 return decision
 
         # 3. 连亏检查

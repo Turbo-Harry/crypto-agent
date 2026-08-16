@@ -71,10 +71,20 @@ class _ExpAdapter:
         self.bank = bank
 
     def relevant(self, symbol=None, category=None):
-        # R2-3：只返回 trusted（带 id，供采纳追踪）；discarded 只用于决策减分，不返回
+        # R2-3：只返回 trusted（带 id，供采纳追踪）；discarded 走 discarded() 单独查
         out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
                 "lesson": l["content"]}
                for l in self.bank.trusted(symbol)]
+        if category:
+            out = [l for l in out if l["category"] == category]
+        return out
+
+    def discarded(self, symbol=None, category=None):
+        """被证伪的经验（3 次验证且 <40 分）。信号模式失效检查必须读这里——
+        trusted 语义是'证明有用'，信号失效教训经亏损验证后只会进 discarded。"""
+        out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
+                "lesson": l["content"]}
+               for l in self.bank.discarded(symbol)]
         if category:
             out = [l for l in out if l["category"] == category]
         return out
