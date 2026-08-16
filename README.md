@@ -36,7 +36,7 @@ PYTHONPATH=lib python3 -m service.main --port 8090
 ```
 crypto-agent/
 ├── AGENTS.md               # AI 协作模型：分层/入口/安全不变量/最佳实践/红线
-├── EXCHANGE_LAYERS.md      # 交易所访问四层架构
+├── docs/architecture/exchange_layers.md      # 交易所访问四层架构
 ├── service/                # 服务端外壳（FastAPI + uvicorn，完整功能入口）
 │   ├── main.py             #   进程入口：双引擎 + HTTP
 │   ├── app.py              #   HTTP 接口层（只读观测 + 暂停/恢复，禁止下单）
@@ -56,6 +56,7 @@ crypto-agent/
 ├── data/                   # 数据源（fetch_okx/fetch_*/realtime_okx/economic_calendar）
 ├── strategy/  risk/  backtest/
 ├── tests/                  # 全部测试
+├── docs/                   # 文档中心（architecture/plans/reports/ops/prompts，索引 docs/README.md）
 ├── legacy/                 # 废弃文件
 └── config.py               # 全局配置
 ```

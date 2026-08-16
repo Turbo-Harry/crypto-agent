@@ -1,9 +1,9 @@
 # D — R2 实施简报（R1 批次2完成后下达）
 
-> 权威方案：optimization_plan_agentB_R2_FINAL.md（C 终审+协调者裁定定稿）。
+> 权威方案：docs/plans/optimization_plan_agentB_R2_FINAL.md（C 终审+协调者裁定定稿）。
 > 实施顺序：R2-6 → R2-1 → R2-3 → R2-2 → R2-4 → R2-5。
 
-每项要求：先读当前文件（R1 批次改动已叠加）；py_compile + 离线单测 + 导入冒烟；fail-closed；更新 OPTIMIZATION_NOTES.md（「R2 实施记录」章节）。
+每项要求：先读当前文件（R1 批次改动已叠加）；py_compile + 离线单测 + 导入冒烟；fail-closed；更新 docs/reports/optimization_notes.md（「R2 实施记录」章节）。
 
 ## R2-6【接受·零风险】
 - trade_journal.log_entry 加 atr_value=None, signal_price=None 字段
@@ -34,11 +34,11 @@
 ## R2-4【接受】
 - watchdog.py 新建：PID 文件读取 + 心跳文件读取 + MISSING_TOLERANCE=3 去抖 + os.kill(pid, 9) 精确 kill + 飞书告警 + 状态文件持久化缺失计数
 - directional_trader.run / trading_main.run：启动写 <name>.pid；每 tick 写 heartbeat_<name>.txt
-- launchd plist 模板文档 watchdog_launchd.md（KeepAlive + StartInterval=60），不实际注册
+- launchd plist 模板文档 docs/ops/watchdog_launchd.md（KeepAlive + StartInterval=60），不实际注册
 - 单测：心跳 stale → kill 且 notify 一次；缺失 3 次才 kill；无 pid 文件不动作
 
 ## R2-5【接受·默认关闭】
 - 代码挂载点 + FLAG_ENABLE_EXCHANGE_TP=False 全局开关（默认关闭）
 - attachAlgoOrds 首选实现 + 原生 private_post_trade_order_algo 降级实现（两者封装 _place_tp）
 - mark_tp_missing：TP 挂失败 → 告警 + journal 打标 + 本地 monitor 兜底
-- 交付沙盘验证步骤文档 tp_sandbox_verify.md（验证清单），不开 FLAG
+- 交付沙盘验证步骤文档 docs/ops/tp_sandbox_verify.md（验证清单），不开 FLAG

@@ -1,6 +1,6 @@
 # 加密货币交易 Agent 调研报告（第三轮 · 外部情报官 Agent A）
 
-> 本轮聚焦"第 1 轮裁定与实施后仍未覆盖的空白"。已核对 `optimization_plan_agentB_R1.md`（Agent B R1-1~R1-9），避免与已立项项重复。
+> 本轮聚焦"第 1 轮裁定与实施后仍未覆盖的空白"。已核对 `docs/plans/optimization_plan_agentB_R1.md`（Agent B R1-1~R1-9），避免与已立项项重复。
 > 每条 = 标题 + URL + 一句现状差距 + 一句收益 + 优先级。
 
 ---

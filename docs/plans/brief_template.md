@@ -8,7 +8,7 @@
 1. 先读目标文件（read 工具），改动最小化、保持现有风格
 2. 实施后必须验证：`PYTHONPYCACHEPREFIX="$PWD/.pycache_tmp" python3 -m py_compile <文件>` + 离线单测（构造假数据，不依赖网络，断言关键行为）+ `python3 -c "import <模块>"` 导入冒烟
 3. 涉及下单/资金路径的改动必须 fail-closed（查询异常/余额不足/熔断 → 拒绝并告警）
-4. 实施后更新 OPTIMIZATION_NOTES.md（方案编号、改动文件、验证结果）
+4. 实施后更新 docs/reports/optimization_notes.md（方案编号、改动文件、验证结果）
 5. 禁止：删除他人功能、静默吞异常（裸 except: pass）、修改下单路径不加风控
 6. 报告格式：每条方案 = 改动文件列表 + 验证输出摘录 + 遗留风险说明
 

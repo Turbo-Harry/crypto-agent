@@ -368,7 +368,7 @@ class DirectionalTrader:
                     print(f"  ⚠️ 交易所侧止损单挂单失败（本地 tick 监控兜底）: {sl_res.message}")
             except ExchangeError as e:
                 print(f"  ⚠️ 交易所侧止损单挂单失败（本地 tick 监控兜底）: {e}")
-            # R2-5: 止盈挂交易所侧（默认关闭；开启前须通过 tp_sandbox_verify.md 沙盘验证）
+            # R2-5: 止盈挂交易所侧（默认关闭；开启前须通过 docs/ops/tp_sandbox_verify.md 沙盘验证）
             tp_ok = True
             if FLAG_ENABLE_EXCHANGE_TP:
                 tp_ok = self._place_tp(base, sig, qty)

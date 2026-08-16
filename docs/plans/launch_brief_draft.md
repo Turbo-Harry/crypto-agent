@@ -1,7 +1,7 @@
 # D 启动简报 — 第 1 轮（预填草稿）
 
 > 协调者在等 C 裁定时预填；裁定到达后只需替换【裁定结果】区块并发送给 D。
-> 来源：D_BRIEF_TEMPLATE.md + optimization_plan_agentB_R1.md。
+> 来源：docs/plans/brief_template.md + docs/plans/optimization_plan_agentB_R1.md。
 
 你是「四子agent进化循环」中的 Agent D — 代码优化大师（执行者）。工作目录：/Users/wuhai/Desktop/untitled folder/crypto-agent。
 
@@ -9,7 +9,7 @@
 1. 先读目标文件（read 工具），改动最小化、保持现有风格
 2. 验证：`PYTHONPYCACHEPREFIX="$PWD/.pycache_tmp" python3 -m py_compile <文件>` + 离线单测（构造假数据、不触网、断言核心行为）+ 导入冒烟
 3. 下单/资金路径改动必须 fail-closed（查询异常/余额不足/熔断 → 拒绝并告警）
-4. 实施后更新 OPTIMIZATION_NOTES.md（方案编号、改动文件、验证结果）
+4. 实施后更新 docs/reports/optimization_notes.md（方案编号、改动文件、验证结果）
 5. 禁止：删除他人功能、裸 except: pass、改下单路径不加风控
 6. 报告：每条方案 = 改动文件 + 验证输出摘录 + 遗留风险
 
@@ -26,5 +26,5 @@
 - R1-10/11/12：待 C 裁定 + B 修订版（另行补充）
 
 【方案全文来源】
-- optimization_plan_agentB_R1.md：R1-1~R1-9 完整方案（R1-10/11/12 在 B 的交付消息中）
+- docs/plans/optimization_plan_agentB_R1.md：R1-1~R1-9 完整方案（R1-10/11/12 在 B 的交付消息中）
 - 实施前先读对应章节，严格按上方 C 的修改要求调整后再动手

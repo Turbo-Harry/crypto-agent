@@ -1,8 +1,8 @@
 # D 批次2简报（预填，批次1交付后下达）
 
-> 来源：optimization_plan_agentB_R1_FINAL.md（C 终审定稿）
+> 来源：docs/plans/optimization_plan_agentB_R1_FINAL.md（C 终审定稿）
 
-你是 Agent D（执行者）。批次2 实施以下 6 项（R1-2/3/4/6/11 + R1-12 账本），每项验证要求同批次1（py_compile + 离线单测 + 导入冒烟 + fail-closed），完成后更新 OPTIMIZATION_NOTES.md 并报告。
+你是 Agent D（执行者）。批次2 实施以下 6 项（R1-2/3/4/6/11 + R1-12 账本），每项验证要求同批次1（py_compile + 离线单测 + 导入冒烟 + fail-closed），完成后更新 docs/reports/optimization_notes.md 并报告。
 
 ## R1-2 套利平仓喂阈值学习【接受】
 - execute() 台账存 composite_score + weights_version 快照；run_once/run 两处传 total 与 scores。
@@ -32,4 +32,4 @@
 - position_ownership.json：{symbol+posSide: {strategy, qty, opened_at}}；claim/release + 锁文件 + 原子写。
 - 组合总合约敞口 ≤600 并入账本层（开仓 claim 前检查）。
 - 下单临界区锁：仅包裹 create_order 提交（毫秒级 flock LOCK_EX/UN）。
-- 子账户（R1-13）仅交付 subaccount_test_plan.md 测试步骤文档。
+- 子账户（R1-13）仅交付 docs/ops/subaccount_test_plan.md 测试步骤文档。

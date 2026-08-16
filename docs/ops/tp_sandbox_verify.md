@@ -29,4 +29,4 @@
 ## 判定
 - 全部通过 → 把 FLAG_ENABLE_EXCHANGE_TP 置 True 并记录验证日期。
 - 任一失败 → 保持 False（现状：只交易所侧止损 + 本地 monitor 止盈），
-  在 OPTIMIZATION_NOTES.md 标注"止盈依赖进程存活"为已知残余风险。
+  在 docs/reports/optimization_notes.md 标注"止盈依赖进程存活"为已知残余风险。

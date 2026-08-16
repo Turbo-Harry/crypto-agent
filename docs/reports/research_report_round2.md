@@ -1,7 +1,7 @@
 # 加密货币交易 Agent 调研报告（第二轮 · 外部情报官 Agent A）
 
-> 本轮全部为【新】方向，不与 optimization_report.md 的 OP-1~OP-10 重复，不涉及已实施项。
-> 已通读 scoring.py / directional_trader.py / trading_main.py / realtime_okx.py / funding_arb.py / weight_learning.py / risk_manager.py / evolution_gate.py / threshold_learning.py / experience_scoring.py / review_engine.py / factor_evolution.py / data/fetch_open_interest.py / data/fetch_orderflow.py / backtest/report.md / MTF_RESONANCE_DESIGN.md。
+> 本轮全部为【新】方向，不与 docs/reports/optimization_report.md 的 OP-1~OP-10 重复，不涉及已实施项。
+> 已通读 scoring.py / directional_trader.py / trading_main.py / realtime_okx.py / funding_arb.py / weight_learning.py / risk_manager.py / evolution_gate.py / threshold_learning.py / experience_scoring.py / review_engine.py / factor_evolution.py / data/fetch_open_interest.py / data/fetch_orderflow.py / docs/reports/backtest_report.md / docs/architecture/mtf_resonance_design.md。
 
 ---
 

@@ -15,8 +15,8 @@
 ## 第 1 轮（进行中）
 
 ### A 调研产出
-- ✅ R1 交付：`research_report_round2.md`，8 条新提案（NEW-1~8），Top3 = NEW-3/NEW-1/NEW-7。已转发 B 做第二批设计。
-- ✅ R2 交付：`research_report_round3.md`，5 条（R3-1 attachAlgoOrds TP/SL 一体+OCO【高】、R3-2 OKX 子账户隔离【高，RES-3 根治方案】、R3-3 进程 watchdog+heartbeat【高】、R3-4 funding 结算时间对齐【中，补 R1-4】、R3-5 NautilusTrader 订单状态机【中】）。供 B 下一批设计（R2 轮）。
+- ✅ R1 交付：`docs/reports/research_report_round2.md`，8 条新提案（NEW-1~8），Top3 = NEW-3/NEW-1/NEW-7。已转发 B 做第二批设计。
+- ✅ R2 交付：`docs/reports/research_report_round3.md`，5 条（R3-1 attachAlgoOrds TP/SL 一体+OCO【高】、R3-2 OKX 子账户隔离【高，RES-3 根治方案】、R3-3 进程 watchdog+heartbeat【高】、R3-4 funding 结算时间对齐【中，补 R1-4】、R3-5 NautilusTrader 订单状态机【中】）。供 B 下一批设计（R2 轮）。
 
 ### C 预审产出
 - ✅ 已交付：20 条残余问题（RES-1~RES-20）。致命 3 条：RES-1 套利平仓现货腿方向硬编码（rate<0 仓平仓时卖空翻倍）、RES-2 套利仓无交易所侧止损、RES-3 跨进程共享账户（杠杆互覆+持仓合并致误平）。高 7 条：RES-4 幽灵止损单/RES-5 阈值死代码/RES-6 回滚不生效/RES-7 经验采纳未追踪/RES-9 权重label同源自证/RES-10 幂等被穿透（journal 3个同日同价ETH残留）。中 10 条。已转发 B：首批设计必须覆盖 7 条致命+高，中等级选 ≤3 条。
@@ -57,7 +57,7 @@
 | 5 | B8：经验验证未记录"本笔实际采纳哪些经验"（trusted 全量 validate=回声） | 待 C 预审确认 | directional_trader.py monitor 平仓段 |
 | 6 | calendar 手写 6 事件过期静默失效 | 待 C 预审确认 | economic_calendar.py |
 | 7 | factor_top.json（walk-forward 通过的 1 因子）未接入决策，需 paper 前瞻 90 天 | 待立项 | factor_top.json 存在但无消费方 |
-| 8 | OP-4/5/8（订单流IC/HAR/费率截面）——先回测验证再立项 | 标记：待验证 | optimization_report.md |
+| 8 | OP-4/5/8（订单流IC/HAR/费率截面）——先回测验证再立项 | 标记：待验证 | docs/reports/optimization_report.md |
 
 ### 轮次小结
 ✅ 第 1-3 轮循环完整收官：
@@ -65,10 +65,10 @@
 - B 设计 2 轮 18 条方案 → C 裁定 4 轮 → 修订 3 轮 → 定稿
 - 实施 18 项 + 3 项驳回 + 3 份文档（subaccount_test_plan / tp_sandbox_verify / watchdog_launchd）
 - 全量验证：16 文件语法 ✅ + 16 模块导入 ✅ + 30+ 单测 ✅
-- 收敛达成，详见 CONVERGENCE_REPORT.md。遗留仅用户执行项：子账户沙盘实测、TP 沙盘验证。
+- 收敛达成，详见 docs/reports/convergence_report.md。遗留仅用户执行项：子账户沙盘实测、TP 沙盘验证。
 
 ## 协调者裁定记录（流程性错位修复）
-- R2 终审出现与 R1 相同的流程性错位：B 修订在消息正文、C 只核验落盘旧文件 → 协调者对照双方文本逐条裁定：**B 修订正文已满足 C 全部 6 条最终要求** → 定稿 `optimization_plan_agentB_R2_FINAL.md`（权威实施稿）。R2-6 通过；R2-1/2/3/4 接受；R2-5 接受但实施前置=沙盘验证（代码默认关闭 FLAG_ENABLE_EXCHANGE_TP）。
+- R2 终审出现与 R1 相同的流程性错位：B 修订在消息正文、C 只核验落盘旧文件 → 协调者对照双方文本逐条裁定：**B 修订正文已满足 C 全部 6 条最终要求** → 定稿 `docs/plans/optimization_plan_agentB_R2_FINAL.md`（权威实施稿）。R2-6 通过；R2-1/2/3/4 接受；R2-5 接受但实施前置=沙盘验证（代码默认关闭 FLAG_ENABLE_EXCHANGE_TP）。
 
 ---
 

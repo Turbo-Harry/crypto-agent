@@ -12,7 +12,7 @@
 用法（launchd）：
   watchdog 自身:  StartInterval=60
   交易进程:        KeepAlive=true
-具体 plist 模板见 watchdog_launchd.md。
+具体 plist 模板见 docs/ops/watchdog_launchd.md。
 """
 import json
 import os

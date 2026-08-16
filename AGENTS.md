@@ -43,7 +43,7 @@ execution/         执行与台账层
   ├─ trade_journal.py         交易台账（原子写）
   └─ position_ownership.py    持仓所有权账本（flock + 总敞口≤600）
 
-exchange/          交易所访问四层（见 EXCHANGE_LAYERS.md）
+exchange/          交易所访问四层（见 docs/architecture/exchange_layers.md）
   transport.py     OKX 原生 REST：HMAC 签名/模拟盘/限速/错误归一
   okx_adapter.py   单位换算(ctVal/lotSz)/场所探测/响应翻译
   base.py          抽象接口 ExchangeAdapter + ExchangeError
@@ -55,6 +55,7 @@ tools/             工具脚本（scan.py / paper_trade.py / okx_pg_ingest.py / 
 data/              数据源（fetch_okx / fetch_* / realtime_okx / economic_calendar）
 strategy/  risk/  backtest/   指标 / 风控 / 回测
 tests/             全部测试（test_exchange_layers.py / test_service_api.py / test_r*）
+docs/              文档中心（architecture/plans/reports/ops/prompts，索引见 docs/README.md）
 legacy/            废弃文件（trading_daemon.py.legacy）
 config.py          全局配置（根目录，被所有层 import）
 ```
