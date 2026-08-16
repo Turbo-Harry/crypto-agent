@@ -102,11 +102,14 @@ try:
     check("H7 风控未处于熔断停手", not st.get("risk_halted", False),
           st.get("risk_reason", ""))
 except Exception:
+    # 2026-08-16 误报修复: 回退窗口 24h→1h——重启窗口内 API 短暂不可达时,
+    # 曾把 7 小时前的旧 halt 事件误判为"当前熔断"并告警(用户收到假警报)。
     last = q(DB, "SELECT kind, ts FROM risk_events ORDER BY ts DESC LIMIT 1")
-    if last and last[0]["kind"] == "halt" and time.time() - last[0]["ts"] < 86400:
-        check("H7 风控未处于熔断停手", False, "最近事件为 halt（停手中）")
+    if last and last[0]["kind"] == "halt" and time.time() - last[0]["ts"] < 3600:
+        check("H7 风控未处于熔断停手", False, "最近 1h 内 halt（停手中）")
     else:
-        check("H7 风控未处于熔断停手", True)
+        check("H7 风控未处于熔断停手", True,
+              "API 暂不可达;DB 无 1h 内 halt(以 /status 为准)")
 
 # ---------- H8 日度分析新鲜 ----------
 ana = q(DB, "SELECT MAX(ts) m FROM analyses")
