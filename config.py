@@ -80,23 +80,22 @@ ARB_ROUNDTRIP_COST = 0.003   # 开+平 双向往返总成本占名义比例（�
 
 # ============ 日内短线交易频率约束（用户要求：抓最佳时机，不频繁交易） ============
 # 每个币每天的允许笔数按其【当日扫描评分】动态调整：评分越高，越值得多给机会
-# 2026-08-16 用户指示"策略可以激进点，为了采集数据"：额度翻倍 + 冷却 3h→1h +
-# MTF 共振过滤临时关闭（1h 单周期信号即可入场；4h 离散度已作为特征记录,
-# 事后可用数据检验 MTF 是否真有价值——把预设变成可检验假设,可随时回滚）。
+# 2026-08-16 晚 用户指示"模拟盘,激进为主,降低参数以加大交易概率"（第二档）:
+# 额度再翻倍 + 冷却 1h→30min + 门槛全线再降。
 # 【风险红线不变】: 单笔 1% 风险 / 名义 ≤150 / 总敞口 ≤600 / 交易所侧止损。
-TRADE_BUDGET_BY_SCORE = [(0.7, 8), (0.5, 6), (0.3, 4), (0.0, 2)]  # (评分阈值, 允许笔数)
-DEFAULT_TRADE_BUDGET = 4      # 无评分（回退池）时的默认笔数
-SIGNAL_COOLDOWN_MINUTES = 60  # 同币信号冷却 1 小时（采集加速;原 180）
-MTF_ENABLED = False           # 多周期共振过滤临时关闭（采集加速;tf4h_spread 特征已记录,可事后检验;可回滚 True）
+TRADE_BUDGET_BY_SCORE = [(0.7, 16), (0.5, 12), (0.3, 8), (0.0, 4)]  # (评分阈值, 允许笔数)
+DEFAULT_TRADE_BUDGET = 8      # 无评分（回退池）时的默认笔数
+SIGNAL_COOLDOWN_MINUTES = 30  # 同币信号冷却 30 分钟（激进第二档;原 180→60→30）
+MTF_ENABLED = False           # 多周期共振过滤关闭（采集加速;tf4h_spread 特征已记录,可事后检验;可回滚 True）
 
 # ============ 策略参数统一维护（2026-08-16 用户指示:数值不再分散在各模块） ============
 # 改交易门槛只改这里;各模块一律 import config 引用,禁止私藏副本。
 # 注意三件套联动关系（不满足会导致"全部信号被拒"或"门槛失效"）:
 #   THRESHOLD_INITIAL < DECIDE_MIN_SCORE <= SIGNAL_SCORE
-SIGNAL_SCORE = 50            # 回踩确认信号基础分（引擎门控 + journal 记录;采集加速 80→50）
-DECIDE_MIN_SCORE = 50        # 决策层最低信号分（self_evolving_trader.decide 门槛）
-THRESHOLD_INITIAL = 45       # 阈值学习层初始阈值（directional_trader 构造时）
-REJECT_WICK_RATIO = 1.5      # 拒绝K线: 影线/实体 最小比（回踩确认信号定义）
+SIGNAL_SCORE = 40            # 回踩确认信号基础分（激进第二档: 80→50→40）
+DECIDE_MIN_SCORE = 40        # 决策层最低信号分（与 SIGNAL_SCORE 联动）
+THRESHOLD_INITIAL = 35       # 阈值学习层初始阈值（联动约束: < DECIDE_MIN_SCORE）
+REJECT_WICK_RATIO = 1.0      # 拒绝K线: 影线/实体 最小比（激进第二档 1.5→1.0,信号更多）
 STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR
 TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比）
 RISK_PER_TRADE = 0.01        # 单笔风险 1%（红线,改动需用户明确拍板）
@@ -115,13 +114,13 @@ ARB_FLIP_HOURS = 16          # 费率向不利方向翻转持续 16 小时（2 �
 ARB_LEVERAGE = 1             # 对冲本身不需要杠杆，1x 隔离（高杠杆只抬爆仓风险）
 
 # ============ 参数统一维护 · 扩展区（2026-08-16 用户规则:新增参数只能在 config.py 加） ============
-# ---- 每日候选扫描（daily_scan） ----
-MIN_VOL = 2_000_000           # 24h 成交额下限 USDT（采集加速 500万→200万）
+# ---- 每日候选扫描（daily_scan）【激进第二档: 流动性/趋势/波动率门槛放宽,候选更多】 ----
+MIN_VOL = 1_000_000           # 24h 成交额下限 USDT（500万→200万→100万）
 MIN_PRICE = 0.01              # 最低价格
-MIN_TREND_DEV = 0.005         # EMA20 偏离 EMA50 ≥ 0.5% 才算有趋势
-ATR_SWEET_LOW = 0.005         # 1h ATR% 下限 0.5%
-ATR_SWEET_HIGH = 0.06         # 1h ATR% 上限 6%
-WATCH_N = 8                   # 每日候选池数量
+MIN_TREND_DEV = 0.003         # EMA20 偏离 EMA50 ≥ 0.3% 才算有趋势（0.5%→0.3%）
+ATR_SWEET_LOW = 0.003         # 1h ATR% 下限 0.3%（0.5%→0.3%）
+ATR_SWEET_HIGH = 0.08         # 1h ATR% 上限 8%（6%→8%）
+WATCH_N = 12                  # 每日候选池数量（8→12）
 # ---- 经验库（experience_scoring） ----
 DECAY_HALFLIFE_DAYS = 30      # 分数向 50 回归的半衰期
 REVIVE_DAYS = 60              # discarded 经验 N 天后复活为 unverified

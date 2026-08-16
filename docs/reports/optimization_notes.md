@@ -344,3 +344,8 @@
 - 各模块(engines/decision/execution)只保留 config 引用别名;搬运时修正一处自引入错误(DOGE 面值 1.0 误写 0.001,已还原)。
 - 机器执行: tools/params_lint.py(扫描策略层模块级字面量赋值) + tests/test_params_centralization.py(进全量套件);AGENTS.md §13 规则。lint 首跑抓出 LEGACY_CT_VAL 漏网。
 - 验证: 全量回归 13 文件 131 项全绿;lint 0 违规。
+
+## 2026-08-16 深夜 激进第二档（用户指示:模拟盘,激进为主,降低参数加大交易概率）
+- 门槛三件套: 40/40/35; 拒绝K线比 1.5→1.0; 冷却 60→30min; 每日额度×2(最高16笔/币); 流动性 100万; 趋势偏离 0.3%; ATR 甜区 0.3%-8%; 候选池 8→12。
+- 全部经 experiments 登记(aggressive_v2_* 4 项); 风险红线(1%/150/600/交易所侧止损)未动。
+- 验证: 全量回归 131 项全绿(见套件); params_lint 0 违规。
