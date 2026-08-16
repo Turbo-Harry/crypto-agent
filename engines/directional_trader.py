@@ -209,6 +209,29 @@ class DirectionalTrader:
         for k in released:
             print(f"🧹 启动对账:释放幽灵 claim {k}")
             notify(f"🧹 启动对账:释放幽灵 claim {k}")
+        # DEF-11:账本缺失/不完整的未平仓 journal 交易补账——journal 是本策略
+        # 事实源(pitfalls),重启后账本若丢 claim,组合敞口闸门会漏计既有持仓。
+        # restore() 不走 600 闸门(恢复既有事实而非授予新敞口),语义=以聚合值
+        # 覆盖(幂等);同 symbol+side 的多笔交易共享同一 key,必须先聚合再补。
+        pending = {}
+        for t in open_journal:
+            base = t["symbol"]
+            venue = t.get("venue") or "swap"
+            sym = f"{base}/USDT" if venue == "spot" else f"{base}/USDT:USDT"
+            key = f"{sym}:{t.get('direction') or 'long'}"
+            qty = float(t.get("size") or 0)
+            notional = float(t.get("notional_usdt")
+                             or (qty * float(t.get("entry_price") or 0)))
+            if qty <= 0:
+                continue
+            p = pending.setdefault(key, {"qty": 0.0, "notional": 0.0})
+            p["qty"] += qty
+            p["notional"] += notional
+        for key, p in pending.items():
+            sym, side = key.rsplit(":", 1)
+            # 以 journal 聚合值为准:部分补账残留也会被覆盖修正
+            self.ledger.restore(sym, side, "dir", p["qty"], p["notional"])
+            print(f"🔧 启动对账:补账 {key} qty={p['qty']} notional={p['notional']:.0f}")
         for p in positions:
             if p.base_qty <= 0:
                 continue

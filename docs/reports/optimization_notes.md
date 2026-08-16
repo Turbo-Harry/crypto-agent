@@ -289,3 +289,8 @@
 - 修复：DELETE 临时 key；新增 tests/test_production_guard.py 哨兵——把 DEF-8 类污染的探测器固化为测试（thresholds 临时 key / scan_decisions 测试标的 / lessons 测试符号，3 项签名断言），此后任何测试漏隔离会在全量套件中被当场抓住。
 - 收敛性数据（重启后 19:26 起）：engine_errors 0 条；scan_decisions 生产写入只剩 AEON/LINK（真实候选池）；全量 95 项绿。
 - 结论：系统级缺陷到达率已归零，但"收敛"未到可宣布标准——详见设计文档与下方缺陷到达分类表。
+
+## 2026-08-16 晚 收敛机制落地（用户追问"什么机制才能保证问题收敛"）
+- 穷尽体检发现并修复：DEF-11（重启后账本不补账→敞口闸门漏计 230 USDT；restore 聚合+覆盖语义，回归测试 17 项绿，活体账本已对齐 230/230）；采集守护挂起 2h（重启，market.db 恢复 1 分钟级写入）；H7 误报修正（改读 /status.risk_halted）。
+- 机制落地：M1 tools/health_check.py（H1-H9 不变量，launchd 每 5 分钟 + 飞书告警去重）；M2 test_production_guard.py；M3 tools/test_isolation_lint.py（首跑抓 2 处漏隔离）；M4 全量回归 98 项绿；M5 缺陷台账（设计文档 §10）。
+- 当前体检 9/9 全绿；收敛判定标准见设计文档 §10.3。

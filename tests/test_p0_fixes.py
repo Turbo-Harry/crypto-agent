@@ -63,8 +63,9 @@ def test_reconcile_releases_ghost():
 
 def _make_trader():
     fake = FakeAdapter(usdt_free=10_000.0)
-    trader = DirectionalTrader(exchange=fake, rt=None)
     tmp = tempfile.mkdtemp(prefix="p0_trd_")
+    trader = DirectionalTrader(exchange=fake, rt=None,
+                               db_path=os.path.join(tmp, "scan.db"))
     from execution.trade_journal import TradeJournal
     trader.journal = TradeJournal(path=os.path.join(tmp, "journal.db"))
     trader.ledger = PositionLedger(path=os.path.join(tmp, "ledger.db"),

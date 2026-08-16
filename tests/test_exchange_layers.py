@@ -63,10 +63,11 @@ def test_full_trade_flow():
     fake.last_prices["BTC-USDT-SWAP"] = 110.0
     fake.last_prices["BTC-USDT"] = 110.0
 
-    dt = DirectionalTrader(exchange=fake, rt=None)   # CI 安全：不启 WebSocket
-    # 隔离持久化：临时 journal/账本/经验库/阈值（绝不污染实盘状态文件）
+    # 隔离持久化：临时 journal/账本/经验库/阈值/决策日志（绝不污染实盘状态文件）
     import tempfile
     tmp = tempfile.mkdtemp(prefix="tst_exch_")
+    dt = DirectionalTrader(exchange=fake, rt=None,   # CI 安全：不启 WebSocket
+                           db_path=os.path.join(tmp, "scan.db"))
     from execution.trade_journal import TradeJournal
     from execution.position_ownership import PositionLedger
     from decision.threshold_learning import ThresholdLearner

@@ -194,11 +194,46 @@ def test_scan_decision_isolation(tmp):
         _restore_notify()
 
 
+def test_startup_reclaims_journal(tmp):
+    print("== DEF-11 启动对账补回 journal 持仓 claim ==")
+    tmp = os.path.join(tmp, "def11")
+    os.makedirs(tmp, exist_ok=True)
+    _silence_notify()
+    try:
+        dt, fake = _make_trader(tmp)
+        # 预置:journal 两笔同币 open 交易(同 key 聚合:100+60=160 USDT),账本为空
+        dt.journal.log_entry(
+            symbol="ETH", signal="回踩确认", reason="测试",
+            entry_price=2000.0, stop_loss=1950.0, take_profit=2100.0,
+            size=0.05, direction="long", score=80,
+            adopted_lesson_ids=[], atr_value=20.0, signal_price=1990.0,
+            venue="swap")
+        dt.journal.log_entry(
+            symbol="ETH", signal="回踩确认", reason="测试2",
+            entry_price=2000.0, stop_loss=1950.0, take_profit=2100.0,
+            size=0.03, direction="long", score=80,
+            adopted_lesson_ids=[], atr_value=20.0, signal_price=1990.0,
+            venue="swap")
+        check("前置:账本为空", dt.ledger.total_notional() == 0.0,
+              f"实际 {dt.ledger.total_notional()}")
+        dt._reconcile_startup()
+        check("DEF-11 同 key 多笔聚合补账（闸门不漏计既有持仓）",
+              155 < dt.ledger.total_notional() < 165,
+              f"实际 {dt.ledger.total_notional()}")
+        dt._reconcile_startup()
+        check("DEF-11 幂等（重复对账不累加）",
+              155 < dt.ledger.total_notional() < 165,
+              f"实际 {dt.ledger.total_notional()}")
+    finally:
+        _restore_notify()
+
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_p0_review_")
     test_liquidate_runs_review(tmp)
     test_deadlock_broken(tmp)
     test_post_exit_reverse(tmp)
     test_scan_decision_isolation(tmp)
+    test_startup_reclaims_journal(tmp)
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
