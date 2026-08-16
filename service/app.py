@@ -17,12 +17,14 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from typing import List
+
 from fastapi import FastAPI, HTTPException
 
 from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             StatusOut, WatchItem, WatchlistOut, SignalOut,
                             TradeItem, JournalOut, ControlOut, ArbStatusOut,
-                            RealtimeOut, ScanOut, ReconcileOut)
+                            RealtimeOut, ScanOut, ReconcileOut, RiskEventOut)
 
 app = FastAPI(
     title="Crypto Agent 交易服务",
@@ -277,6 +279,15 @@ def reconcile():
                         journal_open=journal_open,
                         exchange_positions=exchange_positions,
                         per_symbol=per_symbol, balanced=balanced, notes=notes)
+
+
+@app.get("/risk/events", response_model=List[RiskEventOut], tags=["观测"])
+def risk_events(limit: int = 20):
+    """风控事件复盘记录：熔断/恢复，含触发时净值与持仓数快照。"""
+    import storage.db as sdb
+    sdb.init_db()
+    rows = sdb.q("SELECT * FROM risk_events ORDER BY id DESC LIMIT ?", [limit])
+    return [RiskEventOut(**r) for r in reversed(rows)]
 
 
 @app.get("/error", response_model=dict, tags=["观测"])

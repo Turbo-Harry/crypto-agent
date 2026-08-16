@@ -130,6 +130,16 @@ class ScanOut(BaseModel):
     candidates: List[dict]      # {base, dir, score, ...}
 
 
+class RiskEventOut(BaseModel):
+    """风控事件（熔断/恢复）复盘记录。"""
+    id: int
+    ts: float
+    kind: str
+    reason: str
+    equity: float
+    open_trades: int
+
+
 class ReconcileOut(BaseModel):
     """journal 记账 vs 交易所真实持仓 对账结果。"""
     snapshot_ts: Optional[float]     # 本地仓位快照时间（None=尚无快照）

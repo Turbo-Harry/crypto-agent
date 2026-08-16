@@ -112,7 +112,7 @@ class DirectionalTrader:
         # 账户级风控（审计 CR-2：RiskManager 必须真正接线）
         from risk.risk_manager import RiskManager
         try:
-            eq = self.exchange.fetch_balance().usdt_total
+            eq = self.exchange.fetch_balance().total_eq
         except Exception:
             eq = 0
         self.risk = RiskManager(initial_equity=eq if eq > 0 else 4190)
@@ -544,7 +544,7 @@ class DirectionalTrader:
         self.threshold_learner.record(score, closed["pnl"])
         # 账户级风控：净值更新（平仓后）
         try:
-            eq = self.exchange.fetch_balance().usdt_total
+            eq = self.exchange.fetch_balance().total_eq
             if eq > 0:
                 self.risk.update_equity(eq, time.strftime("%Y-%m-%d"))
         except Exception:
@@ -676,6 +676,19 @@ class DirectionalTrader:
         self.scan_signals()
         self.monitor()
 
+
+    def _log_risk_event(self, kind, reason, eq):
+        """风控事件落库（复盘用）：halt/recovery 各记一条，含净值快照。"""
+        try:
+            import storage.db as sdb
+            sdb.init_db()
+            open_n = sum(1 for t in self.journal.trades if t.get("status") == "open")
+            sdb.x("INSERT INTO risk_events (ts, kind, reason, equity, open_trades) "
+                  "VALUES (?,?,?,?,?)",
+                  [time.time(), kind, reason, round(eq, 2), open_n])
+        except Exception:
+            pass
+
     def tick(self):
         """单拍主循环体（服务模式由 service/worker 线程调用；独立模式由 run() 调用）。
         包含：心跳、每分钟账户风控、2s 止损监控、15min 信号扫描。"""
@@ -686,7 +699,7 @@ class DirectionalTrader:
         # 0. 账户级风控：净值喂入 + 熔断检查（每分钟 — 审计 CR-2）
         if now - self._last_risk_update >= 60:
             self._last_risk_update = now
-            eq = self.exchange.fetch_balance().usdt_total
+            eq = self.exchange.fetch_balance().total_eq
             if eq > 0:
                 self.risk.update_equity(eq, time.strftime("%Y-%m-%d"))
             if not self.risk.can_trade():
@@ -696,11 +709,13 @@ class DirectionalTrader:
                            f"正在强制平掉本策略全部持仓…")
                     print(msg)
                     notify(msg)
+                    self._log_risk_event("halt", self.risk.halt_reason, eq)
                     self._liquidate_all(self.risk.halt_reason)
                 time.sleep(2)
                 return
             elif self._halt_notified:
                 self._halt_notified = False
+                self._log_risk_event("recovery", "风控解除", eq)
                 notify("✅ 风控解除，恢复信号扫描")
         # 1. tick 级止损止盈监控（每 2 秒 — OP-1，替代 6 小时轮询）
         self.monitor()

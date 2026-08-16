@@ -82,7 +82,7 @@ class TradingMain:
         # 账户级风控（审计 CR-2：RiskManager 必须真正接线）
         from risk.risk_manager import RiskManager
         try:
-            eq = self.exchange.fetch_balance().usdt_total
+            eq = self.exchange.fetch_balance().total_eq
         except Exception:
             eq = 0
         self.risk = RiskManager(initial_equity=eq if eq > 0 else 4190)
@@ -633,6 +633,19 @@ class TradingMain:
                                    "price": data["price"]}
         return event
 
+
+    def _log_risk_event(self, kind, reason, eq):
+        """风控事件落库（复盘用）：halt/recovery 各记一条，含净值快照。"""
+        try:
+            import storage.db as sdb
+            sdb.init_db()
+            open_n = len(self.arb_positions)
+            sdb.x("INSERT INTO risk_events (ts, kind, reason, equity, open_trades) "
+                  "VALUES (?,?,?,?,?)",
+                  [time.time(), kind, reason, round(eq, 2), open_n])
+        except Exception:
+            pass
+
     def tick(self):
         """单拍主循环体（服务模式由 service/worker 线程调用；独立模式由 run() 调用）。
         包含：心跳、账户风控、OI 采样、实时告警、套利持仓管理、信号事件检测。"""
@@ -641,7 +654,7 @@ class TradingMain:
             f.write(str(time.time()))
         # 0. 账户级风控：净值喂入 + 熔断检查（审计 CR-2）
         try:
-            eq = self.exchange.fetch_balance().usdt_total
+            eq = self.exchange.fetch_balance().total_eq
             if eq > 0:
                 self.risk.update_equity(eq, time.strftime("%Y-%m-%d"))
         except Exception:
@@ -652,9 +665,11 @@ class TradingMain:
                 msg = f"⛔ 风控熔断: {self.risk.halt_reason}——停止一切开仓决策"
                 print(msg)
                 notify(msg)
+                self._log_risk_event("halt", self.risk.halt_reason, eq)
             return
         elif self._halt_notified:
             self._halt_notified = False
+            self._log_risk_event("recovery", "风控解除", eq)
             notify(f"✅ 风控解除（日界/净值恢复），恢复决策。当前阈值 {self.threshold_learner.threshold}")
         # 0.5 OI 采样（清算级联检测用 — OP-6，每分钟）
         try:

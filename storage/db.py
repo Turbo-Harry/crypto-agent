@@ -81,6 +81,14 @@ CREATE TABLE IF NOT EXISTS ownership (
     strategies TEXT, updated_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS risk_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, kind TEXT,            -- halt / recovery
+    reason TEXT, equity REAL,
+    open_trades INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_risk_ts ON risk_events(ts);
+
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY, value TEXT, updated_at REAL
 );
