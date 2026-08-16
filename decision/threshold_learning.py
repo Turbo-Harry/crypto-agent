@@ -23,8 +23,11 @@ class ThresholdLearner:
     def __init__(self, path="threshold_state.json", initial_threshold=70,
                  min_samples=30, bucket_width=5, safety_margin=5,
                  min_bucket_samples=8, min_threshold=60, max_threshold=90,
-                 max_history=500):
+                 max_history=500, db_path=None):
+        # db_path=None → 共享库（key=path，生产：threshold_state_dir/arb.json）；
+        # db_path 显式传（测试隔离）→ 独立库。防测试临时 key 污染生产 thresholds 表。
         self.path = path
+        self.db_path = db_path
         self.threshold = initial_threshold
         self.min_samples = min_samples
         self.bucket_width = bucket_width
@@ -39,8 +42,9 @@ class ThresholdLearner:
     def _load(self):
         # SQLite 后端（storage 层）：key=path（dir/arb 各自独立状态）
         import storage.db as sdb
-        sdb.init_db()
-        row = sdb.q1("SELECT threshold, records FROM thresholds WHERE key=?", [self.path])
+        sdb.init_db(self.db_path)
+        row = sdb.q1("SELECT threshold, records FROM thresholds WHERE key=?",
+                     [self.path], db_path=self.db_path)
         if row:
             self.threshold = row["threshold"]
             try:
@@ -55,7 +59,8 @@ class ThresholdLearner:
         import storage.db as sdb
         sdb.x("INSERT OR REPLACE INTO thresholds (key, threshold, records, updated_at) "
               "VALUES (?,?,?,?)",
-              [self.path, self.threshold, json.dumps(self.decisions), time.time()])
+              [self.path, self.threshold, json.dumps(self.decisions), time.time()],
+              db_path=self.db_path)
 
     # ---------- 记录决策结果 ----------
     def record(self, score, pnl, pnl_estimated=False):

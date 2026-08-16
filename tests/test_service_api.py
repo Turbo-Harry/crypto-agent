@@ -68,7 +68,7 @@ def main():
     trader.journal = TradeJournal(path=os.path.join(tmp, "journal.json"))
     trader.ledger = PositionLedger(path=os.path.join(tmp, "ledger.json"),
                                    lock_path=os.path.join(tmp, "ledger.lock"))
-    trader.threshold_learner = ThresholdLearner(path=os.path.join(tmp, "threshold.json"))
+    trader.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"))
     trader.exp_bank = ScoredExperience(path=os.path.join(tmp, "exp.json"))
     # 套利引擎也用 fake（避免真连 OKX）
     from engines.trading_main import TradingMain

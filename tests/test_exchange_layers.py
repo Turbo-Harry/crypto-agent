@@ -74,7 +74,7 @@ def test_full_trade_flow():
     dt.journal = TradeJournal(path=os.path.join(tmp, "journal.json"))
     dt.ledger = PositionLedger(path=os.path.join(tmp, "ledger.json"),
                                lock_path=os.path.join(tmp, "ledger.lock"))
-    dt.threshold_learner = ThresholdLearner(path=os.path.join(tmp, "threshold.json"))
+    dt.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"))
     dt.exp_bank = ScoredExperience(path=os.path.join(tmp, "exp.json"))
     dt.evolver.bank = __import__("engines.directional_trader", fromlist=["_ExpAdapter"])._ExpAdapter(dt.exp_bank)
 
