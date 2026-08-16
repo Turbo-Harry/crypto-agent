@@ -43,8 +43,10 @@ def _make_trader(tmp):
     """隔离环境：临时 DB 的 journal + 经验库 + 空 FakeAdapter。"""
     fake = FakeAdapter(usdt_free=10_000.0)
     dt = DirectionalTrader(exchange=fake, rt=None)
+    from execution.position_ownership import PositionLedger
     dt.journal = TradeJournal(path=os.path.join(tmp, "j.json"))
     dt.exp_bank = ScoredExperience(path=os.path.join(tmp, "e.json"))
+    dt.ledger = PositionLedger(path=os.path.join(tmp, "ledger.json"))
     dt.evolver.bank = _ExpAdapter(dt.exp_bank)
     return dt, fake
 

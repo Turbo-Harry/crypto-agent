@@ -145,3 +145,13 @@
 - 修复：_ExpAdapter 增加 discarded()；decide 的信号失效检查改读 discarded。
 - 预防：写决策分支前先想清楚数据来源的语义（trusted=证明有用，discarded=证明有害）；
   行为测试必须覆盖每条决策分支的可达性。
+
+### 2026-08-16 熔断强平不释放账本 + 测试污染生产账本（双 bug 连查）
+- 现象：测试跑完 production ownership 表残留 BTC/LINK claim（测试未隔离账本）；
+  且 LINK 被熔断强平后 claim 未释放（真 bug）。
+- 根因：① test_decision_loop 建 trader 时没替换 ledger（用了生产库）；② _liquidate_all
+  的 ledger.release 放在 if pos 分支内——交易所持仓已归零时 pos=None，跳过释放。
+- 修复：① 测试 ledger 隔离（临时路径）；② release 移出 if pos 分支（journal 是本策略
+  事实源，无论交易所持仓是否存在都必须释放）；③ 清理污染 claim。
+- 预防：测试必须隔离所有带状态的对象（journal/ledger/exp_bank/threshold），清单核对；
+  "清理"类操作不依赖"查询到才执行"，要无条件执行。

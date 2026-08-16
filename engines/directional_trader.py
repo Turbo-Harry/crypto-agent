@@ -609,13 +609,14 @@ class DirectionalTrader:
                     if res.ok:
                         # R1-1：强平后取消交易所侧条件停损单
                         self._cancel_stop_orders(base, "熔断强平")
-                        # R1-12：释放账本认领
-                        try:
-                            self.ledger.release(sym_ledger, t.get("direction") or "long", "dir",
-                                                float(t["size"]),
-                                                float(t["size"]) * float(t.get("entry_price") or 0))
-                        except Exception:
-                            pass
+                # 账本释放：无论交易所持仓是否存在都必须执行（journal 是本策略事实源；
+                # 此前放在 if pos 分支内，持仓已归零时跳过 → 账本残留，见 pitfalls）
+                try:
+                    self.ledger.release(sym_ledger, t.get("direction") or "long", "dir",
+                                        float(t["size"]),
+                                        float(t["size"]) * float(t.get("entry_price") or 0))
+                except Exception:
+                    pass
                 px = self._ticker_last(base, prefer_swap=True)
                 if px is None:
                     print(f"强平失败 {base}: 无法获取价格")
