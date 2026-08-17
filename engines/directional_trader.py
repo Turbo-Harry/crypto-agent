@@ -419,8 +419,10 @@ class DirectionalTrader:
         # 2026-08-17: 沙盘不可交易合约预检拒绝(生产行情有、demo 51001 不存在)。
         # 来源合并: 配置静态表 + untradable_symbols 动态表(下单失败自动登记)。
         if base in config.DEMO_UNTRADABLE or self._is_auto_untradable(base):
-            self._log_order_failure(base, self._inst_id(base, "swap"), "n/a", 0,
-                                    "preflight", "沙盘无此合约(不可交易黑名单)")
+            # 这是正常运营拒绝(无订单发出),记决策日志而非失败台账——
+            # 否则黑名单符号每次出信号都产生一条 H11 假告警(2026-08-17 噪音修复)。
+            self._log_scan_decision(base, True, sig["dir"], "reject_untradable",
+                                    "沙盘无此合约(不可交易黑名单)")
             return None
 
         price = sig["entry"]
