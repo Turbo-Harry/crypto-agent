@@ -138,12 +138,22 @@ def analyze(failed_items, diag, key=None, url=API_URL, model=MODEL):
         return None
 
 
+def _feishu_plain(text):
+    """飞书 bot 纯文本通道不渲染 Markdown——剥离 **加粗/`代码/#标题,
+    保留换行与 emoji(2026-08-17 用户反馈: 飞书显示满屏星号)。"""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = text.replace("`", "")
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.M)
+    return text
+
+
 def send_feishu(text):
     """复用 .lark CLI 发飞书;失败静默(与 notify 同策略)。"""
     try:
         subprocess.run([os.path.join(ROOT, ".lark"), "im", "+messages-send",
                         "--as", "bot", "--user-id", FEISHU_USER_ID,
-                        "--text", text], capture_output=True, timeout=20)
+                        "--text", _feishu_plain(text)], capture_output=True,
+                       timeout=20)
     except Exception:
         pass
 
