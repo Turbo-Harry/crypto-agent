@@ -138,9 +138,9 @@ def analyze(failed_items, diag, key=None, url=API_URL, model=MODEL):
         return None
 
 
-def _feishu_plain(text):
-    """飞书 bot 纯文本通道不渲染 Markdown——剥离 **加粗/`代码/#标题,
-    保留换行与 emoji(2026-08-17 用户反馈: 飞书显示满屏星号)。"""
+def _plain(text):
+    """告警文本 Markdown 清洗(2026-08-17 用户反馈两次: 飞书与会话通道均不
+    渲染 MD,满屏星号)——剥离 **加粗/`代码/#标题,保留换行与 emoji。"""
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = text.replace("`", "")
     text = re.sub(r"^#{1,6}\s*", "", text, flags=re.M)
@@ -152,7 +152,7 @@ def send_feishu(text):
     try:
         subprocess.run([os.path.join(ROOT, ".lark"), "im", "+messages-send",
                         "--as", "bot", "--user-id", FEISHU_USER_ID,
-                        "--text", _feishu_plain(text)], capture_output=True,
+                        "--text", _plain(text)], capture_output=True,
                        timeout=20)
     except Exception:
         pass
@@ -174,9 +174,10 @@ def _register_anomalies(failed_items):
 
 
 def inject_session(text):
-    """POST /alert-inject 推入 DSH 当前会话(真·推送;失败静默,飞书仍兜底)。"""
+    """POST /alert-inject 推入 DSH 当前会话(真·推送;失败静默,飞书仍兜底)。
+    注入前同样做 Markdown 清洗(2026-08-17 用户反馈: 会话里也不渲染)。"""
     try:
-        body = json.dumps({"text": text}).encode("utf-8")
+        body = json.dumps({"text": _plain(text)}).encode("utf-8")
         req = urllib.request.Request("http://127.0.0.1:3080/alert-inject",
                                      data=body,
                                      headers={"Content-Type": "application/json"})
