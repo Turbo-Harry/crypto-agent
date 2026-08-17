@@ -67,11 +67,21 @@ def build_diagnostics(db=None):
     """收集诊断材料(纯文本,随告警一起发给 AI)。"""
     db = db or os.path.join(ROOT, "crypto_agent.db")
     parts = []
-    of = _q(db, "SELECT base, stage, error FROM order_failures "
+    of = _q(db, "SELECT base, stage, error, ts FROM order_failures "
                 "ORDER BY ts DESC LIMIT 5")
     if of:
-        parts.append("最近下单失败:\n" + "\n".join(
-            f"- {r['base']} [{r['stage']}] {r['error']}" for r in of))
+        import time as _t
+        now = _t.time()
+        parts.append("最近下单失败(含时间,供判断新旧):\n" + "\n".join(
+            f"- {r['base']} [{r['stage']}] {r['error']}"
+            f"（{now - r['ts']:.0f}s 前）" for r in of))
+    # 2026-08-17: 异常处置状态进诊断材料——已 resolved 的项不得再被当成
+    # 新故障(此前 AI 拿过期失败记录反复报'通道全灭',造成恐慌式误诊)。
+    an = _q(db, "SELECT source, title, status FROM anomalies "
+                "ORDER BY id DESC LIMIT 8")
+    if an:
+        parts.append("异常中心最新状态:\n" + "\n".join(
+            f"- [{r['status']}] {r['source']}: {r['title']}" for r in an))
     ee = _q(db, "SELECT engine, error FROM engine_errors "
                 "ORDER BY ts DESC LIMIT 3")
     if ee:
