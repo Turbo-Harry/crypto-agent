@@ -183,9 +183,11 @@ def diagnose_and_alert(failed_items, db=None):
         text = head + "\n\n🤖 AI 初步诊断:\n" + analysis
     else:
         text = head + "\n\n(AI 诊断暂不可用,请人工查证 tools/health_check.py)"
-    send_feishu(text)
-    # 真·推送: 同时注入 DSH 当前会话(2026-08-16 用户方案,飞书之外的第二通道)
-    inject_session(text)
+    # 2026-08-17 渠道治理: 双通道并行导致同一告警被用户看到两遍(飞书+会话
+    # 双份轰炸)。改主从: session 注入优先,成功则不再发飞书;注入失败才走
+    # 飞书兜底(值守模式 = 浏览器开着的 session 是主通道)。
+    if not inject_session(text):
+        send_feishu(text)
     return text
 
 
