@@ -77,8 +77,11 @@ def _stock_pool():
         return []
 
 
-def screen_daily(pool_top=60, watch_n=None):
-    """全市场筛选（加密 + 美股代币），返回候选列表（按评分降序）。"""
+def screen_daily(pool_top=60, watch_n=None, progress_cb=None):
+    """全市场筛选（加密 + 美股代币），返回候选列表（按评分降序）。
+    progress_cb(2026-08-17): 每处理一个候选调用一次——供引擎在长扫描期间
+    插拍止损监控/心跳/tick 进度(网络慢时 60 币扫描可阻塞主循环数十分钟,
+    与 51 分钟盲窗同源事故)。"""
     watch_n = watch_n or WATCH_N
     print(f"[{time.strftime('%Y-%m-%d %H:%M')}] 每日候选扫描开始（观察池前 {pool_top} + 美股代币）…")
     pool = build_observe_pool(pool_top)
@@ -96,6 +99,8 @@ def screen_daily(pool_top=60, watch_n=None):
     # 阶段2：1h 趋势 + ATR（每个候选 1 次 K线请求）
     stage2 = []
     for p in stage1:
+        if progress_cb:
+            progress_cb()
         try:
             kl = fetch_klines(p["instId"], "1H", limit=120)
             if len(kl) < 60:
@@ -125,6 +130,8 @@ def screen_daily(pool_top=60, watch_n=None):
     # 阶段3：4h 共振（只对 1h 有趋势的候选再拉 4h）
     stage3 = []
     for c in stage2:
+        if progress_cb:
+            progress_cb()
         try:
             kl4 = fetch_klines(c["instId"], "4H", limit=80)
             if len(kl4) < 50:

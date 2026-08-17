@@ -951,7 +951,10 @@ class DirectionalTrader:
                 from execution.pidfile import write_heartbeat
                 write_heartbeat("directional")
                 from engines.daily_scan import screen_daily
-                w = screen_daily()
+                # 2026-08-17: 全市场筛选同样逐币插拍监控/心跳/tick——网络慢时
+                # 60 币筛选会阻塞主循环数十分钟(今晚 23:08 复现: tick 卡 5 分钟
+                # 停更,H9 报警),与 51 分钟盲窗同源。回调 = 每币一次。
+                w = screen_daily(progress_cb=self._long_scan_progress)
                 if w:
                     self.watchlist = [c["base"] for c in w]
                     self.watch_scores = {c["base"]: c["score"] for c in w}
@@ -970,21 +973,10 @@ class DirectionalTrader:
         for base in scan_pool:
             # 2026-08-16: 长扫描期间每币刷新心跳——18 币扫描需数分钟,
             # 心跳停更 >30s 会被 watchdog 误杀（exit -15 崩溃循环事故）。
-            from execution.pidfile import write_heartbeat
-            write_heartbeat("directional")
             # 2026-08-17 事故: 网络黑洞让 20 币扫描 × 30s 超时阻塞主循环 51 分钟,
-            # 期间 tick() 无法执行 → 止损监控失明。逐币插拍止损监控 + tick 进度:
-            # 扫描每处理一个币就查一次持仓(盲窗≤单币网络超时30s),并刷新 tick
-            # 标记(慢速但有进展的扫描不算卡死,单调用真死锁才会被 watchdog 抓)。
-            try:
-                self.monitor()
-            except Exception:
-                pass
-            try:
-                from execution.pidfile import write_tick
-                write_tick("directional")
-            except Exception:
-                pass
+            # 期间 tick() 无法执行 → 止损监控失明。逐币插拍(监控+心跳+tick+
+            # 60s 仓位快照): 盲窗≤单币网络超时,慢速但有进展的扫描不算卡死。
+            self._long_scan_progress()
             # 0. 动态笔数：该币今天已开几笔？按当日评分给额度（看币动态调整）
             opened_base = [t for t in self.journal.trades
                            if t.get("symbol") == base and t.get("entry_time")
@@ -1080,6 +1072,28 @@ class DirectionalTrader:
             return bool(row)
         except Exception:
             return False
+
+    def _long_scan_progress(self):
+        """长扫描逐币进度回调(2026-08-17): 插拍止损监控 + 心跳/tick 进度 +
+        60s 仓位快照——screen_daily/scan_signals 的长循环不再造成监控盲窗,
+        watchdog tick 判死也看到真实进度(单调用死锁仍会被抓)。"""
+        try:
+            from execution.pidfile import write_heartbeat, write_tick
+            write_heartbeat("directional")
+            write_tick("directional")
+            self.monitor()
+            now = time.time()
+            if now - getattr(self, "_last_snap_progress", 0) >= 60:
+                self._last_snap_progress = now
+                import storage.db as sdb
+                sdb.init_db(self._db_path)
+                for p in self.exchange.fetch_positions():
+                    sdb.x("INSERT INTO position_snapshots (ts,inst_id,side,"
+                          "contracts,base_qty,avg_px) VALUES (?,?,?,?,?,?)",
+                          [time.time(), p.inst_id, p.side, p.contracts,
+                           round(p.base_qty, 8), p.avg_px], db_path=self._db_path)
+        except Exception:
+            pass
 
     def _log_order_failure(self, base, inst_id, side, qty, stage, error):
         """下单失败结构化落库（2026-08-16 用户问"有没有下单失败的日志"——
