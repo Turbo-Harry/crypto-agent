@@ -132,12 +132,17 @@ class ScoredExperience:
         return None
 
     # ---------- 查询 ----------
-    def trusted(self, symbol=None, min_score=60):
-        """可信经验（分数达标，正常参考）。"""
+    def trusted(self, symbol=None, min_score=60, regime=None):
+        """可信经验（分数达标，正常参考）。
+        regime(2026-08-17): 给定当前环境标签时只匹配同环境教训;教训自身无
+        regime 标签(旧数据/analyst 系统级)视为通配,仍适用——宁多勿漏但可审计。"""
         out = [l for l in self.lessons
                if l["status"] == "trusted" and l["score"] >= min_score]
         if symbol:
             out = [l for l in out if l["symbol"] == symbol]
+        if regime:
+            out = [l for l in out
+                   if not l.get("regime") or l["regime"] == regime]
         return out
 
     def unverified(self, symbol=None):
@@ -162,11 +167,14 @@ class ScoredExperience:
             out = [l for l in out if l["symbol"] == symbol]
         return out
 
-    def discarded(self, symbol=None):
-        """已弃用经验（证明是错的，不参考）。"""
+    def discarded(self, symbol=None, regime=None):
+        """已弃用经验（证明是错的，不参考）。regime 过滤语义同 trusted()。"""
         out = [l for l in self.lessons if l["status"] == "discarded"]
         if symbol:
             out = [l for l in out if l["symbol"] == symbol]
+        if regime:
+            out = [l for l in out
+                   if not l.get("regime") or l["regime"] == regime]
         return out
 
     def summary(self):
@@ -189,6 +197,20 @@ def experience_score_for_decision(bank, symbol):
     discarded = bank.discarded(symbol)
     score = 60 + min(30, len(trusted) * 5) - min(20, len(discarded) * 5)
     return max(20, score)
+
+
+def evidence_strength(bank, symbol, category, regime=None):
+    """教训的【数据验证强度】聚合(2026-08-17 用户要求'教训聚合生效'):
+    只聚合 trusted;每条教训的权重 = 净验证次数(good - bad),钳制在
+    [0, config.EVIDENCE_CAP_PER_LESSON]——单条教训再强也有上限(防独裁),
+    多条独立验证的教训线性叠加。中文 content 完全不参与计算。"""
+    total = 0
+    for l in bank.trusted(symbol, regime=regime):
+        if l.get("category") != category:
+            continue
+        net = int(l.get("good", 0) or 0) - int(l.get("bad", 0) or 0)
+        total += max(0, min(config.EVIDENCE_CAP_PER_LESSON, net))
+    return total
 
 
 if __name__ == "__main__":

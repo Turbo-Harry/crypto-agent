@@ -130,6 +130,11 @@ MIN_SAMPLES_FOR_ISSUE = 3     # 感知问题最少样本
 LOSS_STREAK_ALERT = 3         # 连亏笔数告警线
 STOP_BREACH_RATIO = 1.3       # 实亏/预设风险 > 1.3 视为止损被击穿
 WIN_RATE_FLOOR = 0.30         # 胜率下限（样本≥5 时）
+# ---- 教训聚合（2026-08-17 用户要求: 教训按数据验证强度聚合生效） ----
+EVIDENCE_CAP_PER_LESSON = 2   # 单条教训最大贡献权重（good-bad 净验证钳制,防独裁）
+STOP_ADJ_TIERS = [(1, 0.2), (3, 0.4), (5, 0.5)]
+# 止损放宽分档: (聚合强度门槛, 放宽 ATR 数);硬顶 0.5 ATR,越界即封顶
+
 # ---- 试验注册表（experiments） ----
 DSR_ACCEPT = 1.0              # Deflated Sharpe 接受线（LdP）
 PBO_ACCEPT = 0.3              # PBO 接受线（LdP）

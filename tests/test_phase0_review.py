@@ -277,6 +277,67 @@ def test_monitor_pos_throttle(tmp):
     finally:
         _restore_notify()
 
+
+def test_aggregation_and_regime(tmp):
+    print("== 2026-08-17 教训聚合生效 + regime 环境匹配 ==")
+    tmp = os.path.join(tmp, "agg")
+    os.makedirs(tmp, exist_ok=True)
+    bank = ScoredExperience(path=os.path.join(tmp, "e3.json"))
+    t = SelfEvolvingTrader()
+    t.bank = _ExpAdapter(bank)
+    tj = TradeJournal(path=os.path.join(tmp, "j3.json"))
+
+    def _trusted_lesson(category, regime, good, bad):
+        lid = bank.add("BTC", category, f"{category}教训", f"t{category}{good}{bad}",
+                       status="candidate", regime=regime)
+        for _ in range(good):
+            bank.validate(lid, 0.02)
+        for _ in range(bad):
+            bank.validate(lid, -0.02)
+        return lid
+
+    # 两条同类别教训,不同 regime: good=3 各验证 3 次 → trusted
+    lid_hi = _trusted_lesson("止损", "high_vol", 3, 0)
+    lid_lo = _trusted_lesson("止损", "low_vol", 3, 0)
+    # regime 匹配: high_vol 场景只聚合 high_vol 教训 → 强度 3 → +0.2 ATR
+    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
+                   journal=tj, regime="high_vol")
+    check("同环境单条强教训 → +0.2 ATR", dec["stop_adj"] == 0.2,
+          f"实际 {dec['stop_adj']}")
+    check("只采纳同环境教训", lid_hi in dec["adopted_lesson_ids"]
+          and lid_lo not in dec["adopted_lesson_ids"])
+    # 两条同环境教训聚合: 强度 3+3=6 → +0.4 ATR(封顶档)
+    _trusted_lesson("止损", "high_vol", 3, 0)
+    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
+                   journal=tj, regime="high_vol")
+    check("两条强教训聚合 → +0.4 ATR", dec["stop_adj"] == 0.4,
+          f"实际 {dec['stop_adj']}")
+    # 坏验证抵消: 新教训 good=3 bad=3 → 净 0 权重,不影响强度
+    bank2 = ScoredExperience(path=os.path.join(tmp, "e4.json"))
+    t2 = SelfEvolvingTrader()
+    t2.bank = _ExpAdapter(bank2)
+    lid = bank2.add("BTC", "止损", "被抵消", "tx", status="candidate",
+                    regime="high_vol")
+    for _ in range(3):
+        bank2.validate(lid, 0.02)
+    for _ in range(3):
+        bank2.validate(lid, -0.02)
+    dec = t2.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
+                    journal=tj, regime="high_vol")
+    check("净验证为 0 的教训不产生效果", dec["stop_adj"] == 0,
+          f"实际 {dec['stop_adj']}")
+    # 无 regime 标签的教训 = 通配,任何环境都适用
+    bank3 = ScoredExperience(path=os.path.join(tmp, "e5.json"))
+    t3 = SelfEvolvingTrader()
+    t3.bank = _ExpAdapter(bank3)
+    lid_w = bank3.add("BTC", "止损", "通配", "tw", status="candidate")
+    for _ in range(3):
+        bank3.validate(lid_w, 0.02)
+    dec = t3.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
+                    journal=tj, regime="high_vol")
+    check("无 regime 标签教训视为通配 → +0.2 ATR", dec["stop_adj"] == 0.2,
+          f"实际 {dec['stop_adj']}")
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_p0_review_")
     test_liquidate_runs_review(tmp)
@@ -286,6 +347,7 @@ if __name__ == "__main__":
     test_startup_reclaims_journal(tmp)
     test_ws_subscribe_dedup()
     test_monitor_pos_throttle(os.path.join(tmp, "thr2"))
+    test_aggregation_and_regime(tmp)
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 

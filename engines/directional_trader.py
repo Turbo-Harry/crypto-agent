@@ -102,25 +102,29 @@ class _ExpAdapter:
     def __init__(self, bank):
         self.bank = bank
 
-    def relevant(self, symbol=None, category=None):
+    def relevant(self, symbol=None, category=None, regime=None):
         # R2-3：只返回 trusted（带 id，供采纳追踪）；discarded 走 discarded() 单独查
         # Phase 4：system 级教训（symbol='*'，analyst 日度看账产出）也进入决策参考
+        # 2026-08-17: regime 环境标签匹配 + 验证计数透传(聚合强度计算用)
         out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
-                "lesson": l["content"]}
-               for l in self.bank.trusted(symbol)]
+                "lesson": l["content"], "good": l.get("good", 0),
+                "bad": l.get("bad", 0), "regime": l.get("regime")}
+               for l in self.bank.trusted(symbol, regime=regime)]
         out += [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
-                 "lesson": l["content"]}
-                for l in self.bank.trusted(None) if l.get("symbol") == "*"]
+                 "lesson": l["content"], "good": l.get("good", 0),
+                 "bad": l.get("bad", 0), "regime": l.get("regime")}
+                for l in self.bank.trusted(None, regime=regime)
+                if l.get("symbol") == "*"]
         if category:
             out = [l for l in out if l["category"] == category]
         return out
 
-    def discarded(self, symbol=None, category=None):
+    def discarded(self, symbol=None, category=None, regime=None):
         """被证伪的经验（3 次验证且 <40 分）。信号模式失效检查必须读这里——
         trusted 语义是'证明有用'，信号失效教训经亏损验证后只会进 discarded。"""
         out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
                 "lesson": l["content"]}
-               for l in self.bank.discarded(symbol)]
+               for l in self.bank.discarded(symbol, regime=regime)]
         if category:
             out = [l for l in out if l["category"] == category]
         return out
@@ -1014,7 +1018,8 @@ class DirectionalTrader:
                     continue
                 # 决策（经验库，统一 ScoredExperience — B6）
                 dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0,
-                                          journal=self.journal)
+                                          journal=self.journal,
+                                          regime=sig.get("regime"))
                 if dec["trade"]:
                     self._log_scan_decision(base, True, sig["dir"], "open",
                                             "; ".join(dec.get("reason") or ["信号达标"]))

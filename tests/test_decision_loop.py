@@ -105,7 +105,8 @@ def test_decision_rules(tmp):
         for _ in range(3):
             bank.validate(lid, +0.02)
     dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0)
-    check("trusted 止损教训×2 → stop_adj=0.2", dec["stop_adj"] == 0.2)
+    # 2026-08-17 聚合口径: 两条各 3 次盈利验证的教训 → 强度 2+2=4 → +0.4 ATR
+    check("trusted 止损教训×2(各验证3次) → 聚合 stop_adj=0.4", dec["stop_adj"] == 0.4)
     check("采纳的经验 id 被记录（平仓后定向验证用）",
           len(dec["adopted_lesson_ids"]) >= 2)
 
