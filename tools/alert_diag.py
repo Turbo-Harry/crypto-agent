@@ -31,6 +31,10 @@ SYSTEM_PROMPT = (
     "简明诊断与处置建议。约束:只读分析,不得建议绕过风控红线(单笔1%/名义150/"
     "总敞口600/交易所侧止损);不确定就说不确定,给出下一步排查命令建议;"
     "用中文回答,200 字以内,按'结论/原因/建议'三段。"
+    "事实背景:下单/持仓走 OKX 模拟盘(sandbox, x-simulated-trading),"
+    "行情数据源是 Binance 公开数据端点,两者不要混淆;沙盘缺少部分生产合约"
+    "(51001)或已退市(51087),下单失败错误码已穿透进 order_failures.error,"
+    "报网络问题前先看错误码是不是 51001/51087。"
 )
 
 
@@ -132,14 +136,16 @@ def send_feishu(text):
 
 
 def _register_anomalies(failed_items):
-    """统一异常中心登记(2026-08-17: alerts 信箱退役,所有异常进 anomalies 表)。"""
+    """统一异常中心登记(2026-08-17: alerts 信箱退役,所有异常进 anomalies 表)。
+    只推送本轮【新登记】的项(register 返回 True)——此前 list_new() 会把所有
+    未解决异常每轮重推一遍,造成同一批告警重复轰炸(2026-08-17 噪音修复)。"""
     try:
-        from tools.anomalies import register, list_new
+        from tools.anomalies import register
+        newly = []
         for item in failed_items:
-            register("health", item, severity="error")
-        rows = list_new()
-        return [f"[{r['severity']}] {r['source']}: {r['title']}"
-                for r in rows[:8]]
+            if register("health", item, severity="error"):
+                newly.append(item)
+        return [f"[error] health: {item}" for item in newly]
     except Exception:
         return [f"- {x}" for x in failed_items]
 

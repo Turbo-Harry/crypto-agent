@@ -200,6 +200,14 @@ CREATE TABLE IF NOT EXISTS anomalies (
 );
 CREATE INDEX IF NOT EXISTS idx_anom_status ON anomalies(status);
 
+-- 沙盘不可交易符号(2026-08-17): 开仓失败 51001(无合约)/51087(已退市) 自动登记,
+-- 与 config.DEMO_UNTRADABLE 合并做预检,避免同符号每轮扫描反复下单失败。
+CREATE TABLE IF NOT EXISTS untradable_symbols (
+    base TEXT PRIMARY KEY,
+    reason TEXT,
+    ts REAL
+);
+
 -- 未触发信号复盘(2026-08-17 用户建议): 每轮 no_signal 记录四环节条件画像,
 -- 回答"为什么没触发"——瓶颈在趋势/触线/影线/量能哪一环,近失(差一点)多少
 CREATE TABLE IF NOT EXISTS signal_profiles (

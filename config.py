@@ -145,4 +145,8 @@ BREAKOUT_LOOKBACK = 20             # 突破前 N 根 1H K 线的高低点
 BREAKOUT_VOL_RATIO = 1.2           # 突破 K 线量能 ≥ 均量 × 1.2 才确认
 
 # ---- 沙盘可交易范围（2026-08-17 实测: 沙盘 demo 缺少部分生产合约）----
-DEMO_UNTRADABLE = ["BICO", "GRVT"]   # 生产行情有、沙盘 51001 不存在的合约,预检拒绝
+DEMO_UNTRADABLE = ["BICO", "GRVT", "AEON", "WLD", "WLFI"]
+# 生产行情有、沙盘不可交易的合约,预检拒绝:
+#   BICO/GRVT/AEON/WLD → 51001 沙盘无此合约; WLFI → 51087 已退市
+# 新符号遇同类错误码由 _log_order_failure 自动记入 untradable_symbols 表,
+# 预检合并查询(配置 + 动态表),后续无需人工扩表。

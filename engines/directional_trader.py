@@ -415,10 +415,11 @@ class DirectionalTrader:
                 sig = dict(sig, stop=sig["entry"] + (1 + stop_adj) * sig["atr"])
             print(f"  {base}: 历史止损教训 → 止损放宽 +{stop_adj:.1f}×ATR")
 
-        # 2026-08-17: 沙盘不可交易合约预检拒绝(生产行情有、demo 51001 不存在)
-        if base in config.DEMO_UNTRADABLE:
+        # 2026-08-17: 沙盘不可交易合约预检拒绝(生产行情有、demo 51001 不存在)。
+        # 来源合并: 配置静态表 + untradable_symbols 动态表(下单失败自动登记)。
+        if base in config.DEMO_UNTRADABLE or self._is_auto_untradable(base):
             self._log_order_failure(base, self._inst_id(base, "swap"), "n/a", 0,
-                                    "preflight", "沙盘无此合约(DEMO_UNTRADABLE)")
+                                    "preflight", "沙盘无此合约(不可交易黑名单)")
             return None
 
         price = sig["entry"]
@@ -1052,6 +1053,18 @@ class DirectionalTrader:
         self.monitor()
 
 
+    def _is_auto_untradable(self, base):
+        """查动态黑名单(untradable_symbols 表)——下单失败 51001/51087 自动登记,
+        避免同符号每轮扫描反复下单失败。"""
+        try:
+            import storage.db as sdb
+            sdb.init_db(self._db_path)
+            row = sdb.q1("SELECT 1 FROM untradable_symbols WHERE base=?",
+                         [base], db_path=self._db_path)
+            return bool(row)
+        except Exception:
+            return False
+
     def _log_order_failure(self, base, inst_id, side, qty, stage, error):
         """下单失败结构化落库（2026-08-16 用户问"有没有下单失败的日志"——
         此前只有 stdout 文本,无法查询/告警。每次下单/挂单/预检失败必入账）。"""
@@ -1062,6 +1075,14 @@ class DirectionalTrader:
                   "stage, error) VALUES (?,?,?,?,?,?,?)",
                   [time.time(), base, inst_id, side, qty, stage,
                    str(error)[:300]], db_path=self._db_path)
+            # 2026-08-17: 沙盘不可交易符号自动登记——51001(无合约)/51087(退市)
+            # 错误码已由 transport 穿透进 error 文本,解析到即入动态黑名单。
+            err = str(error)
+            if ("51001" in err or "51087" in err) and base:
+                sdb.x("INSERT OR IGNORE INTO untradable_symbols (base, reason, ts) "
+                      "VALUES (?,?,?)",
+                      [base, "51001" if "51001" in err else "51087",
+                       time.time()], db_path=self._db_path)
         except Exception:
             pass
 
