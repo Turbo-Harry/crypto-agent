@@ -723,12 +723,14 @@ class DirectionalTrader:
                                                         abs(float(t["size"])),
                                                         "close", res.message)
                                 continue
-                            self.ledger.release(sym_ledger, "long", "dir",
-                                                float(t["size"]),
-                                                float(t["size"]) * float(t.get("entry_price") or 0))
                         else:
                             # 现货已被外部卖光 → 按当前价记账平仓
                             print(f"  {base} 现货已不在账户（外部平仓），按现价记账")
+                        # 账本认领释放与台账闭环同层(2026-08-17 同合约路径修复:
+                        # 外部已平仓时跳过释放会造成 H2 对账失败)
+                        self.ledger.release(sym_ledger, "long", "dir",
+                                            float(t["size"]),
+                                            float(t["size"]) * float(t.get("entry_price") or 0))
                     except Exception as e:
                         print(f"  现货平仓失败: {e}")
                         self._log_order_failure(base, inst_id, "sell", qty, "close", e)
@@ -758,17 +760,20 @@ class DirectionalTrader:
                             continue
                         # R1-1：平仓成功后取消交易所侧条件停损单（防幽灵单残留）
                         self._cancel_stop_orders(base, "止损/止盈平仓")
-                        # R1-12：释放账本认领
-                        try:
-                            self.ledger.release(sym_ledger, t.get("direction") or "long", "dir",
-                                                float(t["size"]),
-                                                float(t["size"]) * float(t.get("entry_price") or 0))
-                        except Exception:
-                            pass
                     except Exception as e:
                         print(f"平仓失败: {e}")
                         self._log_order_failure(base, inst_id, "close", 0, "close", e)
                         continue
+                # R1-12：释放账本认领（2026-08-17 修复: 此前只在 `if pos` 分支内
+                # 释放,交易所侧条件单已平仓时 pos=None → 跳过分支 → 认领永存 →
+                # H2 对账失败(ADA/LTC 双双中招)。台账闭环就必须释放,与谁执行
+                # 平仓无关——引擎平仓成功 or 交易所条件单已平,都要释放)。
+                try:
+                    self.ledger.release(sym_ledger, t.get("direction") or "long", "dir",
+                                        float(t["size"]),
+                                        float(t["size"]) * float(t.get("entry_price") or 0))
+                except Exception:
+                    pass
                 closed = self.journal.log_exit(t["id"], price, "止损/止盈")
                 if closed:
                     self._post_close_review(closed, t)
@@ -1008,7 +1013,8 @@ class DirectionalTrader:
                                             f"信号分 {gate_score} < 阈值 {self.threshold_learner.threshold}")
                     continue
                 # 决策（经验库，统一 ScoredExperience — B6）
-                dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0)
+                dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0,
+                                          journal=self.journal)
                 if dec["trade"]:
                     self._log_scan_decision(base, True, sig["dir"], "open",
                                             "; ".join(dec.get("reason") or ["信号达标"]))

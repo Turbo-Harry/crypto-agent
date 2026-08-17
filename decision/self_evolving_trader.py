@@ -22,11 +22,15 @@ class SelfEvolvingTrader:
         self.bank = ExperienceBank()
 
     def decide(self, symbol, signal_score, signal_name, signal_price, entry_price,
-               stop_dist, tp_dist, atr_value):
+               stop_dist, tp_dist, atr_value, journal=None):
         """
         决策层：综合信号 + 历史经验 → 是否交易、仓位、止损修正。
         这是"进化"的关键：不是机械执行信号，而是参考经验库调整。
+        journal: 调用方显式传入(2026-08-17)——本类自建 TradeJournal 是启动
+        时快照,不随交易更新,连亏检查读陈旧数据;且测试换掉 trader.journal
+        后这里仍读生产库(隔离泄漏)。单一事实源 = 调用方的 journal。
         """
+        journal = journal or self.journal
         decision = {"trade": True, "reason": [], "stop_adj": 0, "size_factor": 1.0,
                     "adopted_lesson_ids": []}   # R2-3：恒初始化，无采纳也返回空列表
 
@@ -68,8 +72,8 @@ class SelfEvolvingTrader:
                 decision["reason"].append(f"该信号模式历史 {cats_d['信号']} 次失效，拒绝")
                 return decision
 
-        # 3. 连亏检查
-        closed = [t for t in self.journal.trades if t["status"] == "closed"]
+        # 3. 连亏检查（journal 用调用方传入的实时台账，2026-08-17）
+        closed = [t for t in journal.trades if t["status"] == "closed"]
         recent_losses = [t for t in closed[-5:] if t["pnl"] is not None and t["pnl"] < 0]
         if len(recent_losses) >= 3:
             decision["trade"] = False

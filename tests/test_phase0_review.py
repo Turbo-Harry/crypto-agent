@@ -105,9 +105,12 @@ def test_deadlock_broken(tmp):
     bank = ScoredExperience(path=os.path.join(tmp, "e2.json"))
     t = SelfEvolvingTrader()
     t.bank = _ExpAdapter(bank)
+    # 2026-08-17: decide 必须用隔离 journal——evolver 自建 TradeJournal 读生产库
+    # (隔离泄漏: 生产有 3 笔连亏时会触发冷却误拒,与 test_decision_loop 同源)
+    tj = TradeJournal(path=os.path.join(tmp, "j2.json"))
     lid = bank.add("BTC", "止损", "止损太紧", "t1", status="candidate")
     lid_d = bank.add("BTC", "出场", "止盈太早", "t2", status="dubious")
-    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0)
+    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0, journal=tj)
     check("T0.2 决策允许交易（候选不影响参数）", dec["trade"] is True)
     check("T0.2 候选教训纳入采纳追踪", lid in dec["adopted_lesson_ids"])
     check("T0.2 dubious 不进采纳池", lid_d not in dec["adopted_lesson_ids"])
