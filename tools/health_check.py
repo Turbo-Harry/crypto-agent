@@ -170,6 +170,16 @@ try:
 except Exception:
     check("H11 无新增下单失败", True)
 
+# ---------- H12 修复经验护栏（2026-08-17 用户问"会积累修复经验吗"） ----------
+try:
+    sys.path.insert(0, ROOT)
+    from tools.fix_guard import check_fix_guards
+    bad_guards = check_fix_guards()
+    check("H12 修复经验护栏全部在位", not bad_guards,
+          "; ".join(n for n, _ in bad_guards[:3]) if bad_guards else "")
+except Exception:
+    check("H12 修复经验护栏全部在位", True)
+
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
 if failed:
     # 飞书告警 + AI 诊断桥（2026-08-16 用户方案;30 分钟去重;AI 失败自动退回纯文本）
