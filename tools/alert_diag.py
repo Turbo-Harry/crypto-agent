@@ -148,14 +148,30 @@ def _plain(text):
 
 
 def send_feishu(text):
-    """复用 .lark CLI 发飞书;失败静默(与 notify 同策略)。
-    2026-08-17: 用 --markdown 通道(CLI 自动包装为 post 富文本格式,加粗/
-    列表可正常渲染),替代 --text 纯文本(用户反馈星号不渲染)。"""
+    """飞书发告警——interactive 卡片 + lark_md 元素。
+    2026-08-17 三版演进: --text 纯文本不渲染;--markdown 包装为 post 的 md
+    标签,飞书 post 同样不解析星号(dry-run 实证);只有卡片 lark_md 元素
+    真正渲染 **加粗/列表/代码。"""
     try:
+        body_text = text
+        if body_text.startswith("🚨 统一异常中心:"):
+            # 标题进卡片 header,正文去掉首行避免重复
+            body_text = body_text.split("\n", 1)[1] if "\n" in body_text else body_text
+            header_title = "🚨 统一异常中心"
+        else:
+            header_title = "📢 交易系统告警"
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {"template": "blue",
+                       "title": {"tag": "plain_text", "content": header_title}},
+            "elements": [{"tag": "div",
+                          "text": {"tag": "lark_md", "content": body_text}}],
+        }
         subprocess.run([os.path.join(ROOT, ".lark"), "im", "+messages-send",
                         "--as", "bot", "--user-id", FEISHU_USER_ID,
-                        "--markdown", text], capture_output=True,
-                       timeout=20)
+                        "--msg-type", "interactive",
+                        "--content", json.dumps(card, ensure_ascii=False)],
+                       capture_output=True, timeout=20)
     except Exception:
         pass
 
