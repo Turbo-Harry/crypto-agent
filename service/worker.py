@@ -162,17 +162,25 @@ class TraderWorker:
                     tb = traceback.format_exc(limit=3)
                     t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{tb}"
                     print(f"方向性引擎异常: {e}")
+                    # 2026-08-17: 同文本错误 5 分钟节流——SSL 抖动时每请求一
+                    # 行会灌爆 engine_errors/anomalies(今晚 6 条 blip 触发
+                    # H6 假告警)。首条落库+注册,同文本窗口内只打印不落库。
+                    err_key = str(e)[:120]
                     try:
                         import storage.db as sdb
                         sdb.init_db()
-                        sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
-                              [time.time(), "directional", str(e), tb])
-                        try:
-                            from tools.anomalies import register as _reg
-                            _reg("engine_error", f"方向性引擎异常: {e}",
-                                 str(e)[:200], severity="error")
-                        except Exception:
-                            pass
+                        dup = sdb.q1("SELECT id FROM engine_errors WHERE error LIKE ? "
+                                     "AND ts > ? ORDER BY id DESC LIMIT 1",
+                                     [err_key + "%", time.time() - 300])
+                        if not dup:
+                            sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
+                                  [time.time(), "directional", str(e), tb])
+                            try:
+                                from tools.anomalies import register as _reg
+                                _reg("engine_error", f"方向性引擎异常: {e}",
+                                     str(e)[:200], severity="error")
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                 time.sleep(1)   # 2026-08-17 提速: 1s 节拍止损监控(持仓快照仍 2s 节流)

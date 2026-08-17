@@ -92,6 +92,12 @@ class OKXTransport:
                     continue
                 raise ExchangeError(f"HTTP {e.code}: {e.read()[:200]}")
             except Exception as e:
+                # 2026-08-17: SSL EOF/握手超时是瞬时网络抖动(今晚 6 连 blip),
+                # 退避重试一次;POST 重试安全由 clOrdId 幂等键保证(同单重复
+                # 提交返回原单,配合 _recover_order 反查无歧义)。
+                if attempt == 1:
+                    time.sleep(1.0)
+                    continue
                 raise ExchangeError(f"网络错误: {e}")
             if resp.get("code") != "0":
                 # 2026-08-17: 沙盘 code=1 "All operations failed" 会掩盖真实原因
