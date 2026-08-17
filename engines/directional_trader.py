@@ -561,7 +561,9 @@ class DirectionalTrader:
                     print(f"  🛡️ 已挂交易所侧止损单（原生 slTriggerPx） @ {sig['stop']:.2f}")
                 else:
                     print(f"  ⚠️ 交易所侧止损单挂单失败（本地 tick 监控兜底）: {sl_res.message}")
-                self._log_order_failure(base, inst_id, stop_side, qty, "stop_order", sl_res.message)
+                    # 只在失败时落失败台账(2026-08-17: 此前无条件落账,成功也记
+                    # 一条空 error 的失败行 → H11 假告警,KAITO 首单即中招)
+                    self._log_order_failure(base, inst_id, stop_side, qty, "stop_order", sl_res.message)
             except ExchangeError as e:
                 print(f"  ⚠️ 交易所侧止损单挂单失败（本地 tick 监控兜底）: {e}")
                 self._log_order_failure(base, inst_id, stop_side, qty, "stop_order", e)
