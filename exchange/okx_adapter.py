@@ -27,6 +27,15 @@ ALGO_ORD_TYPES = ("conditional", "oco", "trigger", "move_order_stop",
                   "iceberg", "twap")
 
 
+def make_cl_ord_id() -> str:
+    """统一幂等键生成器(2026-08-17 根因修复收尾):
+    OKX clOrdId 只允许字母数字,禁止连字符——旧格式 "ca-...-..." 触发
+    51000 Parameter clOrdId error。此前引擎层自拼连字符格式并显式传入,
+    覆盖适配器已修好的默认生成器,导致修复后所有开仓仍全灭(KAITO 复现)。
+    全项目只允许这一处生成 clOrdId(字面量单点原则)。"""
+    return f"ca{int(time.time()*1000)}{uuid.uuid4().hex[:8]}"
+
+
 class OKXAdapter(ExchangeAdapter):
     name = "okx"
 
@@ -193,7 +202,7 @@ class OKXAdapter(ExchangeAdapter):
         # 2026-08-17 根因修复: OKX clOrdId 只允许字母数字,禁止连字符——
         # 旧格式 "ca-...-..." 触发 51000 Parameter clOrdId error,被沙盘
         # 通用 code=1 "All operations failed" 掩盖,导致所有新订单失败。
-        cl_ord_id = cl_ord_id or f"ca{int(time.time()*1000)}{uuid.uuid4().hex[:8]}"
+        cl_ord_id = cl_ord_id or make_cl_ord_id()
         if venue == "spot":
             sz = floor_to_lot(qty, inst.lot_sz)
             if inst.min_sz > 0 and sz < inst.min_sz:

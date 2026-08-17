@@ -34,6 +34,7 @@ from execution.trade_journal import TradeJournal
 from decision.review_engine import deep_review
 from exchange.base import ExchangeAdapter, ExchangeError
 from exchange.models import floor_to_lot, OrderResult
+from exchange.okx_adapter import make_cl_ord_id
 
 LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
 FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
@@ -443,7 +444,7 @@ class DirectionalTrader:
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
                 return None
-            cl_ord_id = f"ca-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
+            cl_ord_id = make_cl_ord_id()
             try:
                 res = self.exchange.place_market_order(inst_id, "buy", qty, venue="spot",
                                                        cl_ord_id=cl_ord_id)
@@ -527,7 +528,7 @@ class DirectionalTrader:
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
                 return None
-            cl_ord_id = f"ca-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
+            cl_ord_id = make_cl_ord_id()
             try:
                 res = self.exchange.place_market_order(inst_id, side, qty, venue="swap",
                                                        pos_side=sig["dir"],

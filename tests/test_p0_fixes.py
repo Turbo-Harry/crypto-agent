@@ -93,8 +93,10 @@ def test_open_position_e2e():
     sig = {"dir": "long", "entry": 100.0, "stop": 95.0, "tp": 110.0, "atr": 5.0}
     tid = trader.open_position("ANTHROPIC", sig, score=80)
     check("开仓成功返回 tid", bool(tid), f"实际 {tid}")
-    check("订单带 clOrdId", fake.orders and fake.orders[-1].get("cl_ord_id", "").startswith("ca-"),
-          f"实际 {fake.orders[-1] if fake.orders else None}")
+    cid = fake.orders[-1].get("cl_ord_id", "") if fake.orders else ""
+    check("订单带 clOrdId(纯字母数字,禁连字符)",
+          bool(cid) and cid.startswith("ca") and "-" not in cid,
+          f"实际 {cid}")
     open_trades = [t for t in trader.journal.trades if t["status"] == "open"]
     check("journal 有未平仓记录", len(open_trades) == 1, f"实际 {len(open_trades)}")
     if open_trades:
