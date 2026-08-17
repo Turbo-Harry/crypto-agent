@@ -79,11 +79,12 @@ def build_diagnostics(db=None):
             f"（{now - r['ts']:.0f}s 前）" for r in of))
     # 2026-08-17: 异常处置状态进诊断材料——已 resolved 的项不得再被当成
     # 新故障(此前 AI 拿过期失败记录反复报'通道全灭',造成恐慌式误诊)。
-    an = _q(db, "SELECT source, title, status FROM anomalies "
-                "ORDER BY id DESC LIMIT 8")
+    an = _q(db, "SELECT source, title, status, substr(detail,1,120) detail "
+                "FROM anomalies ORDER BY id DESC LIMIT 8")
     if an:
-        parts.append("异常中心最新状态:\n" + "\n".join(
-            f"- [{r['status']}] {r['source']}: {r['title']}" for r in an))
+        parts.append("异常中心最新状态(含处置说明):\n" + "\n".join(
+            f"- [{r['status']}] {r['source']}: {r['title']} → {r['detail']}"
+            for r in an))
     ee = _q(db, "SELECT engine, error FROM engine_errors "
                 "ORDER BY ts DESC LIMIT 3")
     if ee:
