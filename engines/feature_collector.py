@@ -177,8 +177,15 @@ def collect_close_features(trade_id, t, closed, klines_1m, post_rev=None,
         cur = sdb.q1("SELECT features_missing FROM trade_features "
                      "WHERE trade_id=?", [trade_id], db_path=db_path)
         old_missing = (cur["features_missing"] if cur else "")
+        # 2026-08-17: 缺失标记必须可撤销——补算成功(如 K 线修复后重跑)要把
+        # 该项从缺失清单移除,否则"一旦缺失永远缺失"(H10 永久红)。
+        computed = []
+        if mfe_r is not None:
+            computed.append("mfe_r")
+        if mae_r is not None:
+            computed.append("mae_r")
         merged = sorted(set((old_missing.split(",") if old_missing else [])
-                            + missing))
+                            + missing) - set(computed))
         sets = ", ".join(f"{k}=?" for k in fields) + ", features_missing=?"
         params = list(fields.values()) + [",".join(merged), trade_id]
         sdb.x(f"UPDATE trade_features SET {sets} WHERE trade_id=?",

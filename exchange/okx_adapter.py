@@ -102,8 +102,14 @@ class OKXAdapter(ExchangeAdapter):
 
     # ---------- 行情 ----------
     def fetch_candles(self, inst_id: str, bar: str, limit: int = 100) -> List[Candle]:
-        resp = self.t.public("/api/v5/market/history-candles",
-                             {"instId": inst_id, "bar": str(bar).upper(),
+        # 2026-08-17 双根因修复:
+        #  1) bar 大小写敏感——.upper() 把 "1m" 变成 "1M"(月线),导致返回的是
+        #     最近 N 个月的月K(最新一根=当月1日),平仓特征 MFE/MAE 窗口零根分钟K;
+        #  2) 近期行情用 market/candles(新→旧,limit 上限 300);history-candles
+        #     留给 data/fetch_okx.py 分页回溯,职责分离。
+        limit = min(int(limit), 300)
+        resp = self.t.public("/api/v5/market/candles",
+                             {"instId": inst_id, "bar": str(bar),
                               "limit": limit})
         rows = resp.get("data", [])
         out = []
