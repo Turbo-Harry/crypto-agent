@@ -148,11 +148,13 @@ def _plain(text):
 
 
 def send_feishu(text):
-    """复用 .lark CLI 发飞书;失败静默(与 notify 同策略)。"""
+    """复用 .lark CLI 发飞书;失败静默(与 notify 同策略)。
+    2026-08-17: 用 --markdown 通道(CLI 自动包装为 post 富文本格式,加粗/
+    列表可正常渲染),替代 --text 纯文本(用户反馈星号不渲染)。"""
     try:
         subprocess.run([os.path.join(ROOT, ".lark"), "im", "+messages-send",
                         "--as", "bot", "--user-id", FEISHU_USER_ID,
-                        "--text", _plain(text)], capture_output=True,
+                        "--markdown", text], capture_output=True,
                        timeout=20)
     except Exception:
         pass
