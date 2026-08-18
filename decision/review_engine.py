@@ -113,11 +113,28 @@ def deep_review(trade, atr_value=None, post_exit_reverse=None, signal_price=None
             "lesson": f"信号失效（亏损 {pnl*100:.1f}%），复盘：入场时是否满足全部共振条件？是否在震荡市错误入场？"})
 
     # ---- 5. 盈亏比 ----
+    # 2026-08-17: 名义 2:1(TP_ATR_MULT/STOP_ATR_MULT)会被入场滑点侵蚀——
+    # 止损/止盈按信号参考价挂出,而成交价偏离参考价 → 实际 R:R < 2。
+    # 教训区分滑点归因,提示改限价单而非笼统"不该入场"。
     if rr < 2.0:
-        lessons.append({
-            "category": "盈亏比",
-            "implies": "loss",
-            "lesson": f"盈亏比 {rr:.1f} < 2，这笔交易本就不该入场，下次入场前先算 R:R"})
+        if signal_price and entry:
+            slip_rr = abs((entry - signal_price) / signal_price) if entry != signal_price else 0
+            if slip_rr > 0.001:
+                lessons.append({
+                    "category": "盈亏比",
+                    "implies": "loss",
+                    "lesson": f"盈亏比 {rr:.1f} < 2（名义 2:1 被入场滑点 {slip_rr*100:.2f}% 侵蚀），"
+                              f"下次用限价单挂信号价附近，成交价偏离超 0.5% 放弃追单"})
+            else:
+                lessons.append({
+                    "category": "盈亏比",
+                    "implies": "loss",
+                    "lesson": f"盈亏比 {rr:.1f} < 2，这笔交易本就不该入场，下次入场前先算 R:R"})
+        else:
+            lessons.append({
+                "category": "盈亏比",
+                "implies": "loss",
+                "lesson": f"盈亏比 {rr:.1f} < 2，这笔交易本就不该入场，下次入场前先算 R:R"})
 
     # Phase 1 T1.2 双轨输出: 文字教训给人看,数值 metrics 供统计(MFE/MAE 等
     # 由 feature_collector 另行采集,R 倍数/止损距离等基础量随复盘报告落盘)。

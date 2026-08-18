@@ -46,11 +46,10 @@ PULLBACK_BREAK = 0.99        # 收盘跌破箱体上沿的 99% 判假突破
 ENTRY_PREMIUM = 0.01         # 限价买单挂在箱体上沿上方 X%（回踩触及才成交）
 
 # ============ 出场 ============
-STOP_LOSS = 0.03             # 止损 -3%（固定百分比，旧版）
-STOP_ATR_MULT = 1.5          # ATR 动态止损倍数（止损 = 入场价 - 1.5×ATR(14)）
-TAKE_PROFIT_1 = 0.03         # 第一止盈 +3%（平 1/2）
-TAKE_PROFIT_2 = 0.05         # 第二止盈 +5%（清仓）
-TIME_STOP_DAYS = 10          # 时间止损：入场后 N 日无方向退出
+# （2026-08-17 清理: 旧版固定百分比出场参数 STOP_LOSS/TAKE_PROFIT_1/2/
+# TIME_STOP_DAYS 已无引擎引用;ATR 出场参数统一在下方"日内短线"区
+# STOP_ATR_MULT=1.0 / TP_ATR_MULT=2.0(2:1 盈亏比),此处曾残留重复定义
+# STOP_ATR_MULT=1.5 造成误导——params_lint 已加重复赋值检测防复发。）
 
 # ============ 风控（激进档） ============
 MAX_DRAWDOWN_SOFT = 0.12     # 回撤 12% 减仓

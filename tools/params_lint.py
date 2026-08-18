@@ -52,15 +52,38 @@ def scan() -> list:
     return problems
 
 
+def check_config_dupes():
+    """config.py 内重复赋值检测(2026-08-17): STOP_ATR_MULT 曾同时定义
+    1.5(旧版残留)与 1.0(生效)——Python 取后者,但文件误导读者。"""
+    seen = {}
+    dups = []
+    path = os.path.join(ROOT, "config.py")
+    for i, line in enumerate(open(path, encoding="utf-8"), 1):
+        m = ASSIGN.match(line.rstrip("\n"))
+        if m:
+            name = m.group(1)
+            if name in seen:
+                dups.append((name, seen[name], i))
+            else:
+                seen[name] = i
+    return dups
+
+
 def main():
     problems = scan()
+    dups = check_config_dupes()
     if problems:
         for f, i, name, rhs in problems:
             print(f"❌ {f}:{i} {name} = {rhs} —— 策略参数必须定义在 config.py")
         print(f"\n发现 {len(problems)} 处私藏参数。修复: 移入 config.py 并在此处改为 "
               f"`{problems[0][2]} = config.{problems[0][2]}` 形式。")
         sys.exit(1)
-    print("✅ 全部策略参数已集中于 config.py（无模块级私藏）")
+    if dups:
+        for name, first, second in dups:
+            print(f"❌ config.py 重复定义 {name}: 第 {first} 行与第 {second} 行 "
+                  f"——后者生效,前者误导,删除旧定义")
+        sys.exit(1)
+    print("✅ 全部策略参数已集中于 config.py（无模块级私藏/无重复定义）")
     sys.exit(0)
 
 
