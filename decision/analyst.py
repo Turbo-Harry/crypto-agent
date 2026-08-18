@@ -142,6 +142,13 @@ def run_daily():
                     ["*", it["category"], it["lesson"], 50, 0, "unverified",
                      f"analyst:{time.strftime('%Y-%m-%d')}", time.time(), time.time()])
         lesson_ids.append(lid)
+    # 场景归纳(2026-08-17 用户要求'多维度经验总结'): 同 symbol+类别+场景
+    # 条件的 trusted 教训 ≥ROLLUP_MIN_MEMBERS 时沉淀归纳结论(只读汇总)。
+    try:
+        from decision.experience_scoring import rollup_lessons
+        report["lesson_rollups"] = rollup_lessons()
+    except Exception:
+        report["lesson_rollups"] = []
     # 飞书反馈
     lines = [f"📊 系统每日看账 [{time.strftime('%m-%d %H:%M')}]",
              f"交易 {report['closed']}/{report['trades_total']} 笔 | 胜率 "

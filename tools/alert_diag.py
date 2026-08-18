@@ -85,6 +85,12 @@ def build_diagnostics(db=None):
         parts.append("异常中心最新状态(含处置说明):\n" + "\n".join(
             f"- [{r['status']}] {r['source']}: {r['title']} → {r['detail']}"
             for r in an))
+    ru = _q(db, "SELECT symbol, category, conditions, strength, member_count "
+                "FROM lesson_rollups ORDER BY strength DESC LIMIT 5")
+    if ru:
+        parts.append("场景归纳经验(教训聚合层):\n" + "\n".join(
+            f"- {r['symbol']} {r['category']} {r['conditions']} "
+            f"强度{r['strength']} 成员{r['member_count']}" for r in ru))
     ee = _q(db, "SELECT engine, error FROM engine_errors "
                 "ORDER BY ts DESC LIMIT 3")
     if ee:

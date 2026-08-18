@@ -54,6 +54,20 @@ CREATE TABLE IF NOT EXISTS lessons (
 CREATE INDEX IF NOT EXISTS idx_lessons_symbol ON lessons(symbol);
 CREATE INDEX IF NOT EXISTS idx_lessons_status ON lessons(status);
 
+-- 场景归纳教训(2026-08-17 用户要求'多维度经验总结'): 同 symbol+类别+场景
+-- 条件的 trusted 教训 ≥ROLLUP_MIN_MEMBERS 时,日度沉淀一条归纳结论。
+-- 归纳层只读汇总(不参与 ±10 验证循环,防'归纳验证归纳'回声)。
+CREATE TABLE IF NOT EXISTS lesson_rollups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT, category TEXT,
+    conditions TEXT,             -- 场景条件向量 JSON(成员教训的公共条件)
+    strength REAL DEFAULT 0,     -- 验证强度加权和
+    member_count INTEGER DEFAULT 0,
+    member_ids TEXT,             -- 成员教训 id JSON 数组
+    ts REAL, last_update REAL
+);
+CREATE INDEX IF NOT EXISTS idx_rollups_key ON lesson_rollups(symbol, category);
+
 CREATE TABLE IF NOT EXISTS thresholds (
     key TEXT PRIMARY KEY,          -- "dir" / "arb"
     threshold REAL, records TEXT,  -- records: JSON 数组（score→pnl 样本）

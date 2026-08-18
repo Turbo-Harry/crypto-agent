@@ -134,6 +134,7 @@ WIN_RATE_FLOOR = 0.30         # 胜率下限（样本≥5 时）
 EVIDENCE_CAP_PER_LESSON = 2   # 单条教训最大贡献权重（good-bad 净验证钳制,防独裁）
 STOP_ADJ_TIERS = [(1, 0.2), (3, 0.4), (5, 0.5)]
 # 止损放宽分档: (聚合强度门槛, 放宽 ATR 数);硬顶 0.5 ATR,越界即封顶
+ROLLUP_MIN_MEMBERS = 3        # 场景归纳教训最少成员数(同 symbol+类别+条件 ≥3 才沉淀)
 
 # ---- 试验注册表（experiments） ----
 DSR_ACCEPT = 1.0              # Deflated Sharpe 接受线（LdP）

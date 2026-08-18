@@ -78,6 +78,10 @@ GUARDS = [
     # 无订单发出,落 order_failures 会触发 H11 假告警(BTC 名义不足复现)
     ("G10 预检拒绝不污染失败台账",
      lambda: '"preflight"' not in _read("engines/directional_trader.py")),
+    # G11 场景归纳层(2026-08-17): 只读汇总,决策数学不依赖它
+    ("G11 场景归纳 rollup_lessons 存在且表已建",
+     lambda: "def rollup_lessons" in _read("decision/experience_scoring.py")
+             and "lesson_rollups" in _read("storage/db.py")),
 ]
 
 

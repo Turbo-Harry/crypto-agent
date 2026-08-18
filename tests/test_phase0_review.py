@@ -22,7 +22,7 @@ from exchange.models import PositionInfo
 from engines.directional_trader import DirectionalTrader, _ExpAdapter
 import engines.directional_trader as dt_mod
 from decision.self_evolving_trader import SelfEvolvingTrader
-from decision.experience_scoring import ScoredExperience
+from decision.experience_scoring import ScoredExperience, rollup_lessons
 from execution.trade_journal import TradeJournal
 from execution.position_ownership import PositionLedger
 from decision.threshold_learning import ThresholdLearner
@@ -351,6 +351,42 @@ def test_aggregation_and_regime(tmp):
           f"实际 {dec['stop_adj']}")
 
 
+def test_rollup(tmp):
+    print("== 2026-08-17 场景归纳教训(多维经验总结层) ==")
+    tmp = os.path.join(tmp, "ru")
+    os.makedirs(tmp, exist_ok=True)
+    bank = ScoredExperience(path=os.path.join(tmp, "e6.json"))
+    t = SelfEvolvingTrader()
+    t.bank = _ExpAdapter(bank)
+    tj = TradeJournal(path=os.path.join(tmp, "j6.json"))
+    cond = {"direction": "long", "vol_band": "high_vol"}
+
+    def _add(good):
+        lid = bank.add("BTC", "止损", "插针", f"r{good}", status="candidate",
+                       conditions=cond)
+        for _ in range(good):
+            bank.validate(lid, 0.02)
+        return lid
+
+    # 2 条成员 → 不足 ROLLUP_MIN_MEMBERS,不归纳
+    _add(3)
+    _add(3)
+    ru = rollup_lessons(bank, db_path=os.path.join(tmp, "e6.json"))
+    check("成员不足 3 条不归纳", len(ru) == 0, f"实际 {len(ru)}")
+    # 第 3 条成员 → 归纳成立,强度 2+2+2=6
+    _add(3)
+    ru = rollup_lessons(bank, db_path=os.path.join(tmp, "e6.json"))
+    check("3 条同场景 trusted → 1 条归纳", len(ru) == 1 and ru[0]["member_count"] == 3,
+          f"实际 {ru}")
+    check("归纳强度 = 成员权重和", ru and ru[0]["strength"] == 6,
+          f"实际 {ru and ru[0]['strength']}")
+    # 决策层理由带归纳审计注释
+    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
+                   journal=tj, conditions=cond)
+    check("决策理由含场景归纳注释",
+          any("场景归纳经验" in r for r in dec["reason"]), dec["reason"])
+
+
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_p0_review_")
     test_liquidate_runs_review(tmp)
@@ -361,6 +397,6 @@ if __name__ == "__main__":
     test_ws_subscribe_dedup()
     test_monitor_pos_throttle(os.path.join(tmp, "thr2"))
     test_aggregation_and_regime(tmp)
+    test_rollup(tmp)
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
-

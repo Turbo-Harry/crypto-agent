@@ -60,6 +60,18 @@ class SelfEvolvingTrader:
             from decision.experience_scoring import evidence_strength
             _raw_bank = getattr(self.bank, "bank", self.bank)  # _ExpAdapter 透传
             stop_strength = evidence_strength(_raw_bank, symbol, "止损", conditions=conditions)
+            # 场景归纳层(只读审计注释): 若有 ≥ROLLUP_MIN_MEMBERS 条的归纳
+            # 结论,写入理由供事后审计——决策数学仍以 evidence_strength 为准。
+            try:
+                from decision.experience_scoring import get_rollup
+                rollup = get_rollup(getattr(_raw_bank, "db_path", None),
+                                    symbol, "止损", conditions)
+                if rollup:
+                    decision["reason"].append(
+                        f"场景归纳经验(成员 {rollup['member_count']} 条,"
+                        f"强度 {rollup['strength']})")
+            except Exception:
+                pass
             for tier_min, tier_adj in reversed(config.STOP_ADJ_TIERS):
                 if stop_strength >= tier_min:
                     decision["stop_adj"] = tier_adj

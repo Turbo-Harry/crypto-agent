@@ -274,6 +274,83 @@ def evidence_strength(bank, symbol, category, conditions=None):
     return total
 
 
+def rollup_lessons(bank=None, db_path=None):
+    """场景归纳(2026-08-17 用户要求'多维度经验总结'):
+    同 symbol+类别+场景条件的 trusted 教训 ≥ config.ROLLUP_MIN_MEMBERS 时,
+    沉淀一条归纳教训(lesson_rollups 表)。归纳层【只读汇总】——strength 是
+    成员权重的和,成员各自仍走 ±10 验证循环,归纳不参与验证(防回声)。
+    返回本轮归纳列表。"""
+    import storage.db as sdb
+    sdb.init_db(db_path)
+    if bank is None:
+        bank = ScoredExperience(db_path or "experience_scored.json")
+    groups = {}
+    for l in bank.trusted():
+        cond = l.get("conditions")
+        if isinstance(cond, str):
+            try:
+                cond = json.loads(cond) if cond else {}
+            except Exception:
+                cond = {}
+        key = (l.get("symbol"), l.get("category"),
+               json.dumps(cond, ensure_ascii=False, sort_keys=True))
+        g = groups.setdefault(key, {"lessons": [], "conditions": cond})
+        g["lessons"].append(l)
+    now = time.time()
+    out = []
+    live_keys = set()
+    for (symbol, category, _), g in groups.items():
+        members = g["lessons"]
+        if len(members) < config.ROLLUP_MIN_MEMBERS:
+            continue
+        strength = sum(max(0, min(config.EVIDENCE_CAP_PER_LESSON,
+                                  int(l.get("good", 0) or 0) - int(l.get("bad", 0) or 0)))
+                       for l in members)
+        cond_s = json.dumps(g["conditions"], ensure_ascii=False, sort_keys=True)
+        live_keys.add((symbol, category, cond_s))
+        sdb.x("INSERT OR REPLACE INTO lesson_rollups "
+              "(symbol, category, conditions, strength, member_count, member_ids, ts, last_update) "
+              "SELECT ?,?,?,?,?,?,COALESCE((SELECT ts FROM lesson_rollups WHERE symbol=? "
+              "AND category=? AND conditions=?), ?), ?",
+              [symbol, category, cond_s, strength, len(members),
+               json.dumps([m["id"] for m in members]),
+               symbol, category, cond_s, now, now], db_path=db_path)
+        out.append({"symbol": symbol, "category": category,
+                    "conditions": g["conditions"], "strength": strength,
+                    "member_count": len(members)})
+    # 清理: 成员掉到门槛以下的旧归纳行删除
+    for r in sdb.q("SELECT id, symbol, category, conditions FROM lesson_rollups",
+                   db_path=db_path):
+        if (r["symbol"], r["category"], r["conditions"]) not in live_keys:
+            sdb.x("DELETE FROM lesson_rollups WHERE id=?", [r["id"]], db_path=db_path)
+    return out
+
+
+def get_rollup(db_path, symbol, category, conditions=None):
+    """查场景归纳教训(决策层审计注释用;数学不依赖它,evidence_strength 才是权威)。"""
+    import storage.db as sdb
+    sdb.init_db(db_path)
+    if conditions:
+        cond_s = json.dumps(conditions, ensure_ascii=False, sort_keys=True)
+        row = sdb.q1("SELECT * FROM lesson_rollups WHERE symbol=? AND category=? "
+                     "AND conditions=?", [symbol, category, cond_s], db_path=db_path)
+        if row:
+            return row
+    rows = sdb.q("SELECT * FROM lesson_rollups WHERE symbol=? AND category=?",
+                 [symbol, category], db_path=db_path)
+    if not rows:
+        return None
+    for r in rows:
+        cond = {}
+        try:
+            cond = json.loads(r["conditions"]) if r["conditions"] else {}
+        except Exception:
+            cond = {}
+        if conditions_match({"conditions": cond}, conditions):
+            return r
+    return None
+
+
 if __name__ == "__main__":
     bank = ScoredExperience("experience_scored_demo.json")
     # 模拟：一条经验从"未验证"到"可信"或"弃用"的过程
