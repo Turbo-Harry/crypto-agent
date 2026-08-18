@@ -83,10 +83,10 @@ def test_decision_rules(tmp):
     check(f"信号分 {config.DECIDE_MIN_SCORE+10} ≥ {config.DECIDE_MIN_SCORE} → 放行",
           dec["trade"] is True)
 
-    # 2. 连亏 3 笔 → 冷却拒绝
+    # 2. 连亏 3 笔 → 冷却已移除(2026-08-17 用户指示),仍放行
     _closed_trades(t.journal, [-0.03, -0.04, -0.02])
     dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0)
-    check("连亏 3 笔 → 冷却拒绝", dec["trade"] is False)
+    check("连亏 3 笔 → 冷却已移除,仍放行", dec["trade"] is True)
 
     # 3. 连亏 2 笔 → 半仓
     t.journal.trades = t.journal.trades[:-1]   # 剩 2 笔亏损

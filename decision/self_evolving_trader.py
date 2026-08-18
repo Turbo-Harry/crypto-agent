@@ -84,12 +84,10 @@ class SelfEvolvingTrader:
                 return decision
 
         # 3. 连亏检查（journal 用调用方传入的实时台账，2026-08-17）
+        # 2026-08-17 用户指示: 连亏 3 笔冷却【移除】(激进采集期,净盈亏为正时
+        # 刮损不应锁死开仓;该决定的护栏见 tools/fix_guard.py G9)。
         closed = [t for t in journal.trades if t["status"] == "closed"]
         recent_losses = [t for t in closed[-5:] if t["pnl"] is not None and t["pnl"] < 0]
-        if len(recent_losses) >= 3:
-            decision["trade"] = False
-            decision["reason"].append(f"连亏 {len(recent_losses)} 笔，冷却")
-            return decision
         if len(recent_losses) == 2:
             decision["size_factor"] = 0.5
             decision["reason"].append("近期连亏 2 笔，半仓")
