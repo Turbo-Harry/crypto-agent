@@ -75,21 +75,26 @@ class ScoredExperience:
     def _save(self):
         import storage.db as sdb
         for l in self.lessons:
+            cond = l.get("conditions")
+            cond_s = cond if isinstance(cond, str) else \
+                json.dumps(cond or {}, ensure_ascii=False)
             sdb.x("INSERT OR REPLACE INTO lessons (id,symbol,category,content,score,"
-                  "adoptions,good,bad,status,source_trade,regime,ts,last_update) "
-                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "adoptions,good,bad,status,source_trade,regime,conditions,ts,last_update) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   [l.get("id"), l.get("symbol"), l.get("category"), l.get("content"),
                    l.get("score", 50), l.get("adoptions", 0), l.get("good", 0),
                    l.get("bad", 0), l.get("status", "unverified"), l.get("source_trade"),
-                   l.get("regime"), l.get("ts"), l.get("last_update")],
+                   l.get("regime"), cond_s, l.get("ts"), l.get("last_update")],
                   db_path=self.db_path)
 
     # ---------- 经验生命周期 ----------
     def add(self, symbol, category, content, source_trade, status="unverified",
-            regime=None):
+            regime=None, conditions=None):
         """新增经验（初始分 50）。status 默认 unverified；平仓复盘链按一致性初筛
         传入 candidate/dubious（Phase0 T0.2，见 directional_trader._post_close_review）。
-        regime: 教训产生的市场环境标签（Phase 4 结构化匹配）。"""
+        regime: 教训产生的市场环境标签（Phase 4，兼容旧字段）。
+        conditions: 场景条件向量 dict（2026-08-17，direction/vol_band/trend/
+        signal_type），JSON 落库;无则空(全维度通配)。"""
         now = time.time()
         lesson = {
             "id": len(self.lessons) + 1,
@@ -103,6 +108,8 @@ class ScoredExperience:
             "status": status,
             "source_trade": source_trade,
             "regime": regime,
+            "conditions": json.dumps(conditions, ensure_ascii=False)
+                          if conditions else "",
             "ts": now,
             "last_update": now,
         }
@@ -132,17 +139,19 @@ class ScoredExperience:
         return None
 
     # ---------- 查询 ----------
-    def trusted(self, symbol=None, min_score=60, regime=None):
+    def trusted(self, symbol=None, min_score=60, regime=None, conditions=None):
         """可信经验（分数达标，正常参考）。
-        regime(2026-08-17): 给定当前环境标签时只匹配同环境教训;教训自身无
-        regime 标签(旧数据/analyst 系统级)视为通配,仍适用——宁多勿漏但可审计。"""
+        regime(兼容旧调用): 给定标签时只匹配同环境教训。
+        conditions(2026-08-17): 场景条件向量匹配,逐维比对(见 conditions_match);
+        教训无标签维度 = 通配。"""
         out = [l for l in self.lessons
                if l["status"] == "trusted" and l["score"] >= min_score]
         if symbol:
             out = [l for l in out if l["symbol"] == symbol]
-        if regime:
-            out = [l for l in out
-                   if not l.get("regime") or l["regime"] == regime]
+        if regime and not conditions:
+            conditions = {"vol_band": regime}
+        if conditions:
+            out = [l for l in out if conditions_match(l, conditions)]
         return out
 
     def unverified(self, symbol=None):
@@ -167,14 +176,15 @@ class ScoredExperience:
             out = [l for l in out if l["symbol"] == symbol]
         return out
 
-    def discarded(self, symbol=None, regime=None):
-        """已弃用经验（证明是错的，不参考）。regime 过滤语义同 trusted()。"""
+    def discarded(self, symbol=None, regime=None, conditions=None):
+        """已弃用经验（证明是错的，不参考）。regime/conditions 过滤语义同 trusted()。"""
         out = [l for l in self.lessons if l["status"] == "discarded"]
         if symbol:
             out = [l for l in out if l["symbol"] == symbol]
-        if regime:
-            out = [l for l in out
-                   if not l.get("regime") or l["regime"] == regime]
+        if regime and not conditions:
+            conditions = {"vol_band": regime}
+        if conditions:
+            out = [l for l in out if conditions_match(l, conditions)]
         return out
 
     def summary(self):
@@ -199,13 +209,64 @@ def experience_score_for_decision(bank, symbol):
     return max(20, score)
 
 
-def evidence_strength(bank, symbol, category, regime=None):
+def build_conditions(direction=None, regime_dict=None, signal_type="pullback"):
+    """教训/信号的【场景条件向量】(2026-08-17 用户要求'经验要有适用场景维度'):
+    - direction: long/short
+    - vol_band: regime tag(low_vol/mid_vol/high_vol)
+    - trend: trend_slope 符号 → up/down/flat
+    - signal_type: pullback/breakout
+    所有维度可选;有值的维度才参与匹配。纯数据,中文不参与。"""
+    cond = {}
+    if direction:
+        cond["direction"] = direction
+    if signal_type:
+        cond["signal_type"] = signal_type
+    if regime_dict:
+        tag = regime_dict.get("tag")
+        if tag:
+            cond["vol_band"] = tag
+        ts = regime_dict.get("trend_slope")
+        if ts is not None:
+            cond["trend"] = ("up" if ts > 0.0005
+                             else "down" if ts < -0.0005 else "flat")
+    return cond
+
+
+def conditions_match(lesson, conditions):
+    """教训与当前场景是否匹配: conditions 中每个【有值】维度都必须一致;
+    教训缺失该维度 = 通配(旧数据)。旧教训无 conditions 仅有 regime 时,
+    按 vol_band 迁移匹配。"""
+    if not conditions:
+        return True
+    lc = None
+    raw = lesson.get("conditions")
+    if isinstance(raw, str) and raw:
+        try:
+            lc = json.loads(raw)
+        except Exception:
+            lc = None
+    elif isinstance(raw, dict):
+        lc = raw
+    if not lc and lesson.get("regime"):
+        lc = {"vol_band": lesson.get("regime")}
+    if not lc:
+        return True
+    for k, v in conditions.items():
+        if not v:
+            continue
+        if lc.get(k) and lc[k] != v:
+            return False
+    return True
+
+
+def evidence_strength(bank, symbol, category, conditions=None):
     """教训的【数据验证强度】聚合(2026-08-17 用户要求'教训聚合生效'):
     只聚合 trusted;每条教训的权重 = 净验证次数(good - bad),钳制在
     [0, config.EVIDENCE_CAP_PER_LESSON]——单条教训再强也有上限(防独裁),
-    多条独立验证的教训线性叠加。中文 content 完全不参与计算。"""
+    多条独立验证的教训线性叠加。中文 content 完全不参与计算。
+    conditions: 场景条件向量,只聚合匹配当前场景的教训。"""
     total = 0
-    for l in bank.trusted(symbol, regime=regime):
+    for l in bank.trusted(symbol, conditions=conditions):
         if l.get("category") != category:
             continue
         net = int(l.get("good", 0) or 0) - int(l.get("bad", 0) or 0)

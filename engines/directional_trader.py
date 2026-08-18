@@ -95,6 +95,15 @@ def acquire_instance_lock(timeout=300.0):
             time.sleep(2)
 
 
+def _build_trade_conditions(sig):
+    """信号/交易的场景条件向量(2026-08-17): direction + vol_band + trend +
+    signal_type。regime 是 compute_regime 输出的 dict(含 tag/trend_slope)。"""
+    from decision.experience_scoring import build_conditions
+    return build_conditions(direction=sig.get("dir"),
+                            regime_dict=sig.get("regime"),
+                            signal_type="pullback")
+
+
 class _ExpAdapter:
     """把 ScoredExperience 适配成 SelfEvolvingTrader 期望的 ExperienceBank 接口。
     （审计 B6：此前两套经验库并存，evolver 用旧库、交易记录用新库，闭环断裂）"""
@@ -102,29 +111,31 @@ class _ExpAdapter:
     def __init__(self, bank):
         self.bank = bank
 
-    def relevant(self, symbol=None, category=None, regime=None):
+    def relevant(self, symbol=None, category=None, conditions=None):
         # R2-3：只返回 trusted（带 id，供采纳追踪）；discarded 走 discarded() 单独查
         # Phase 4：system 级教训（symbol='*'，analyst 日度看账产出）也进入决策参考
-        # 2026-08-17: regime 环境标签匹配 + 验证计数透传(聚合强度计算用)
+        # 2026-08-17: 场景条件向量匹配 + 验证计数透传(聚合强度计算用)
         out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
                 "lesson": l["content"], "good": l.get("good", 0),
-                "bad": l.get("bad", 0), "regime": l.get("regime")}
-               for l in self.bank.trusted(symbol, regime=regime)]
+                "bad": l.get("bad", 0), "regime": l.get("regime"),
+                "conditions": l.get("conditions")}
+               for l in self.bank.trusted(symbol, conditions=conditions)]
         out += [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
                  "lesson": l["content"], "good": l.get("good", 0),
-                 "bad": l.get("bad", 0), "regime": l.get("regime")}
-                for l in self.bank.trusted(None, regime=regime)
+                 "bad": l.get("bad", 0), "regime": l.get("regime"),
+                 "conditions": l.get("conditions")}
+                for l in self.bank.trusted(None, conditions=conditions)
                 if l.get("symbol") == "*"]
         if category:
             out = [l for l in out if l["category"] == category]
         return out
 
-    def discarded(self, symbol=None, category=None, regime=None):
+    def discarded(self, symbol=None, category=None, conditions=None):
         """被证伪的经验（3 次验证且 <40 分）。信号模式失效检查必须读这里——
         trusted 语义是'证明有用'，信号失效教训经亏损验证后只会进 discarded。"""
         out = [{"id": l["id"], "symbol": l["symbol"], "category": l["category"],
                 "lesson": l["content"]}
-               for l in self.bank.discarded(symbol, regime=regime)]
+               for l in self.bank.discarded(symbol, conditions=conditions)]
         if category:
             out = [l for l in out if l["category"] == category]
         return out
@@ -821,13 +832,26 @@ class DirectionalTrader:
         pnl = closed.get("pnl")
         # Phase 4: 教训带 regime 标签(取自本笔入场特征),供同环境结构化匹配
         regime_tag = None
+        trend_slope = None
         try:
             import storage.db as sdb
-            row = sdb.q1("SELECT regime_tag FROM trade_features WHERE trade_id=?",
-                         [t["id"]], db_path=self._db_path)
-            regime_tag = row["regime_tag"] if row else None
+            row = sdb.q1("SELECT regime_tag, trend_slope FROM trade_features "
+                         "WHERE trade_id=?", [t["id"]], db_path=self._db_path)
+            if row:
+                regime_tag = row["regime_tag"]
+                trend_slope = row.get("trend_slope")
         except Exception:
             regime_tag = None
+        # 2026-08-17 场景条件向量: 方向+波动带+趋势+信号类型,与决策层逐维
+        # 匹配(缺失维度通配)。regime 字段保留兼容旧数据。
+        lesson_conditions = {
+            "direction": t.get("direction") or "long",
+            "vol_band": regime_tag or "",
+            "trend": ("" if trend_slope is None
+                      else "up" if trend_slope > 0.0005
+                      else "down" if trend_slope < -0.0005 else "flat"),
+            "signal_type": "pullback",
+        }
         for l in lessons:
             # Phase0 T0.2 一级·一致性初筛：教训的归因方向（implies）与本笔结果一致
             # → candidate（可被决策层低权重采纳）；不一致 → dubious（不进采纳池）。
@@ -840,7 +864,8 @@ class DirectionalTrader:
             else:
                 status = "unverified"
             self.exp_bank.add(base, l["category"], l["lesson"], t["id"],
-                              status=status, regime=regime_tag)
+                              status=status, regime=regime_tag,
+                              conditions=lesson_conditions)
         # R2-3：只 validate 本笔实际采纳的经验（替换全量 trusted validate 回声）
         for lid in t.get("adopted_lesson_ids") or []:
             self.exp_bank.validate(lid, closed["pnl"])
@@ -1014,7 +1039,7 @@ class DirectionalTrader:
                 # 决策（经验库，统一 ScoredExperience — B6）
                 dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0,
                                           journal=self.journal,
-                                          regime=sig.get("regime"))
+                                          conditions=_build_trade_conditions(sig))
                 if dec["trade"]:
                     self._log_scan_decision(base, True, sig["dir"], "open",
                                             "; ".join(dec.get("reason") or ["信号达标"]))

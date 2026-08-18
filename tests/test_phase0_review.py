@@ -279,7 +279,7 @@ def test_monitor_pos_throttle(tmp):
 
 
 def test_aggregation_and_regime(tmp):
-    print("== 2026-08-17 教训聚合生效 + regime 环境匹配 ==")
+    print("== 2026-08-17 教训聚合生效 + 场景条件向量匹配 ==")
     tmp = os.path.join(tmp, "agg")
     os.makedirs(tmp, exist_ok=True)
     bank = ScoredExperience(path=os.path.join(tmp, "e3.json"))
@@ -287,56 +287,69 @@ def test_aggregation_and_regime(tmp):
     t.bank = _ExpAdapter(bank)
     tj = TradeJournal(path=os.path.join(tmp, "j3.json"))
 
-    def _trusted_lesson(category, regime, good, bad):
-        lid = bank.add("BTC", category, f"{category}教训", f"t{category}{good}{bad}",
-                       status="candidate", regime=regime)
+    def _trusted_lesson(category, conds, good, bad):
+        lid = bank.add("BTC", category, f"{category}教训",
+                       f"t{category}{good}{bad}{conds.get('direction','')}",
+                       status="candidate", conditions=conds)
         for _ in range(good):
             bank.validate(lid, 0.02)
         for _ in range(bad):
             bank.validate(lid, -0.02)
         return lid
 
-    # 两条同类别教训,不同 regime: good=3 各验证 3 次 → trusted
-    lid_hi = _trusted_lesson("止损", "high_vol", 3, 0)
-    lid_lo = _trusted_lesson("止损", "low_vol", 3, 0)
-    # regime 匹配: high_vol 场景只聚合 high_vol 教训 → 强度 3 → +0.2 ATR
+    # 两条同类别教训,不同波动带: good=3 各验证 3 次 → trusted
+    lid_hi = _trusted_lesson("止损",
+                             {"direction": "long", "vol_band": "high_vol"}, 3, 0)
+    lid_lo = _trusted_lesson("止损",
+                             {"direction": "long", "vol_band": "low_vol"}, 3, 0)
+    # 场景匹配: high_vol 只聚合 high_vol 教训 → 强度 2 → +0.2 ATR
+    cond_hi = {"direction": "long", "vol_band": "high_vol"}
     dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
-                   journal=tj, regime="high_vol")
-    check("同环境单条强教训 → +0.2 ATR", dec["stop_adj"] == 0.2,
+                   journal=tj, conditions=cond_hi)
+    check("同场景单条强教训 → +0.2 ATR", dec["stop_adj"] == 0.2,
           f"实际 {dec['stop_adj']}")
-    check("只采纳同环境教训", lid_hi in dec["adopted_lesson_ids"]
+    check("只采纳同场景教训", lid_hi in dec["adopted_lesson_ids"]
           and lid_lo not in dec["adopted_lesson_ids"])
-    # 两条同环境教训聚合: 强度 3+3=6 → +0.4 ATR(封顶档)
-    _trusted_lesson("止损", "high_vol", 3, 0)
+    # 方向维度: 做空场景不匹配做多教训 → 强度 0
     dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
-                   journal=tj, regime="high_vol")
+                   journal=tj, conditions={"direction": "short",
+                                           "vol_band": "high_vol"})
+    check("方向不匹配 → 教训不生效", dec["stop_adj"] == 0,
+          f"实际 {dec['stop_adj']}")
+    # 两条同场景教训聚合: 强度 2+2=4 → +0.4 ATR
+    _trusted_lesson("止损",
+                    {"direction": "long", "vol_band": "high_vol"}, 3, 0)
+    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
+                   journal=tj, conditions=cond_hi)
     check("两条强教训聚合 → +0.4 ATR", dec["stop_adj"] == 0.4,
           f"实际 {dec['stop_adj']}")
-    # 坏验证抵消: 新教训 good=3 bad=3 → 净 0 权重,不影响强度
+    # 坏验证抵消: good=3 bad=3 → 净 0 权重
     bank2 = ScoredExperience(path=os.path.join(tmp, "e4.json"))
     t2 = SelfEvolvingTrader()
     t2.bank = _ExpAdapter(bank2)
     lid = bank2.add("BTC", "止损", "被抵消", "tx", status="candidate",
-                    regime="high_vol")
+                    conditions={"direction": "long", "vol_band": "high_vol"})
     for _ in range(3):
         bank2.validate(lid, 0.02)
     for _ in range(3):
         bank2.validate(lid, -0.02)
     dec = t2.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
-                    journal=tj, regime="high_vol")
+                    journal=tj, conditions=cond_hi)
     check("净验证为 0 的教训不产生效果", dec["stop_adj"] == 0,
           f"实际 {dec['stop_adj']}")
-    # 无 regime 标签的教训 = 通配,任何环境都适用
+    # 无 conditions 的旧教训(仅 regime 标签) → vol_band 迁移匹配,视为通配其余维度
     bank3 = ScoredExperience(path=os.path.join(tmp, "e5.json"))
     t3 = SelfEvolvingTrader()
     t3.bank = _ExpAdapter(bank3)
-    lid_w = bank3.add("BTC", "止损", "通配", "tw", status="candidate")
+    lid_w = bank3.add("BTC", "止损", "通配", "tw", status="candidate",
+                      regime="high_vol")
     for _ in range(3):
         bank3.validate(lid_w, 0.02)
     dec = t3.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0,
-                    journal=tj, regime="high_vol")
-    check("无 regime 标签教训视为通配 → +0.2 ATR", dec["stop_adj"] == 0.2,
+                    journal=tj, conditions=cond_hi)
+    check("旧教训(regime→vol_band)仍匹配 → +0.2 ATR", dec["stop_adj"] == 0.2,
           f"实际 {dec['stop_adj']}")
+
 
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_p0_review_")

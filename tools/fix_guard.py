@@ -66,8 +66,10 @@ GUARDS = [
      lambda: "progress_cb" in _read("engines/daily_scan.py")
              and "_long_scan_progress" in _read("engines/directional_trader.py")),
     # G8 教训聚合由数据验证强度驱动(2026-08-17 8af6f43)
-    ("G8 教训聚合 evidence_strength 存在",
-     lambda: "def evidence_strength" in _read("decision/experience_scoring.py")),
+    ("G8 教训聚合+场景匹配 evidence_strength/conditions_match 存在",
+     lambda: "def evidence_strength" in _read("decision/experience_scoring.py")
+             and "def conditions_match" in _read("decision/experience_scoring.py")
+             and "conditions" in _read("storage/db.py")),
     # G9 连亏冷却已按用户指示移除(2026-08-17)——激进采集期刮损不锁死开仓;
     # 若未来有人把"连亏 N 笔，冷却"拒单逻辑加回来,此处立即报警
     ("G9 连亏 3 笔冷却已移除(用户指示)",

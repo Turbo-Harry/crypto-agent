@@ -22,15 +22,16 @@ class SelfEvolvingTrader:
         self.bank = ExperienceBank()
 
     def decide(self, symbol, signal_score, signal_name, signal_price, entry_price,
-               stop_dist, tp_dist, atr_value, journal=None, regime=None):
+               stop_dist, tp_dist, atr_value, journal=None, conditions=None):
         """
         决策层：综合信号 + 历史经验 → 是否交易、仓位、止损修正。
         这是"进化"的关键：不是机械执行信号，而是参考经验库调整。
         journal: 调用方显式传入(2026-08-17)——本类自建 TradeJournal 是启动
         时快照,不随交易更新,连亏检查读陈旧数据;且测试换掉 trader.journal
         后这里仍读生产库(隔离泄漏)。单一事实源 = 调用方的 journal。
-        regime: 当前市场环境标签(2026-08-17)——教训匹配只认同环境,教训无
-        regime 标签(旧数据)视为通配;经验效果按验证强度聚合(见下)。
+        conditions: 场景条件向量(2026-08-17,direction/vol_band/trend/
+        signal_type)——教训匹配逐维比对,教训缺失维度视为通配;经验效果按
+        验证强度聚合(见下)。旧调用传 regime 已废弃。
         """
         journal = journal or self.journal
         decision = {"trade": True, "reason": [], "stop_adj": 0, "size_factor": 1.0,
@@ -44,7 +45,7 @@ class SelfEvolvingTrader:
             return decision
 
         # 2. 查经验库：该币种【同环境】历史教训（regime 匹配,2026-08-17）
-        relevant = self.bank.relevant(symbol=symbol, regime=regime)
+        relevant = self.bank.relevant(symbol=symbol, conditions=conditions)
         if relevant:
             # 统计主要错误类别 + 收集采纳经验 id（R2-3）
             from collections import Counter
@@ -58,7 +59,7 @@ class SelfEvolvingTrader:
             # 分档表 config.STOP_ADJ_TIERS(硬顶 0.5 ATR)。
             from decision.experience_scoring import evidence_strength
             _raw_bank = getattr(self.bank, "bank", self.bank)  # _ExpAdapter 透传
-            stop_strength = evidence_strength(_raw_bank, symbol, "止损", regime=regime)
+            stop_strength = evidence_strength(_raw_bank, symbol, "止损", conditions=conditions)
             for tier_min, tier_adj in reversed(config.STOP_ADJ_TIERS):
                 if stop_strength >= tier_min:
                     decision["stop_adj"] = tier_adj
@@ -73,7 +74,7 @@ class SelfEvolvingTrader:
         # 信号失效检查：读【被证伪】的经验（discarded），不是 trusted——
         # 失效教训经亏损验证后只会进 discarded，此前读 trusted 使该分支恒不可达
         discarded = getattr(self.bank, "discarded", lambda s, c=None: [])(symbol=symbol,
-                                                                          regime=regime)
+                                                                          conditions=conditions)
         if discarded:
             cats_d = Counter(l["category"] for l in discarded)
             if cats_d.get("信号", 0) >= 3:

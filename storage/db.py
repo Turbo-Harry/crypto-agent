@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS lessons (
     good INTEGER DEFAULT 0, bad INTEGER DEFAULT 0,
     status TEXT DEFAULT 'unverified',
     source_trade TEXT,
-    regime TEXT,                        -- Phase 4: 教训产生的市场环境标签
+    regime TEXT,                        -- Phase 4: 教训产生的市场环境标签(兼容旧数据)
+    conditions TEXT DEFAULT '',         -- 2026-08-17 场景条件向量 JSON(direction/vol_band/trend/signal_type)
     ts REAL, last_update REAL
 );
 CREATE INDEX IF NOT EXISTS idx_lessons_symbol ON lessons(symbol);
@@ -257,6 +258,9 @@ def _add_missing_columns(conn):
     cols = {r[1] for r in conn.execute("PRAGMA table_info(lessons)")}
     if "regime" not in cols:
         conn.execute("ALTER TABLE lessons ADD COLUMN regime TEXT")
+    if "conditions" not in cols:
+        # 2026-08-17 场景条件向量(direction/vol_band/trend/signal_type,JSON)
+        conn.execute("ALTER TABLE lessons ADD COLUMN conditions TEXT DEFAULT ''")
     cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_features)")}
     # trade_features 为本次新增表,无需补列;此处仅示例 future 增量迁移入口
 
