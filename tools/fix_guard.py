@@ -72,6 +72,10 @@ GUARDS = [
     # 若未来有人把"连亏 N 笔，冷却"拒单逻辑加回来,此处立即报警
     ("G9 连亏 3 笔冷却已移除(用户指示)",
      lambda: "笔，冷却" not in _read("decision/self_evolving_trader.py")),
+    # G10 预检拒绝(黑名单/最小张数)不落失败台账(2026-08-17)——正常运营拒绝
+    # 无订单发出,落 order_failures 会触发 H11 假告警(BTC 名义不足复现)
+    ("G10 预检拒绝不污染失败台账",
+     lambda: '"preflight"' not in _read("engines/directional_trader.py")),
 ]
 
 

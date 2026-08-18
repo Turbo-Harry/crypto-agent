@@ -437,7 +437,9 @@ class DirectionalTrader:
             qty = floor_to_lot(config.MAX_NOTIONAL_PER_TRADE / price, inst.lot_sz)
             if qty <= 0 or (inst.min_sz > 0 and qty < inst.min_sz):
                 print(f"⛔ 拒绝开仓 {base}: 数量 {qty} 无效（最小 {inst.min_sz}）")
-                self._log_order_failure(base, inst_id, "buy", qty, "preflight", "数量无效(最小下单量)")
+                # 预检拒绝=正常运营(无订单发出),记决策日志,不污染失败台账
+                self._log_scan_decision(base, True, sig["dir"], "reject_min_size",
+                                        f"数量 {qty} 无效(最小 {inst.min_sz})")
                 return None
             try:
                 usdt_free = self.exchange.fetch_balance().usdt_free
@@ -514,8 +516,9 @@ class DirectionalTrader:
         if qty < min_qty:
             print(f"⛔ 拒绝开仓 {base}: 名义 {config.MAX_NOTIONAL_PER_TRADE} USDT 只够 {qty} 币 < 最小 {min_qty} 币"
                   f"（宁可错过，不放大仓位）")
-            self._log_order_failure(base, inst_id, side, qty, "preflight",
-                                    "名义不足最小张数")
+            # 预检拒绝=正常运营(无订单发出),记决策日志,不污染失败台账
+            self._log_scan_decision(base, True, sig["dir"], "reject_min_size",
+                                    f"名义不足最小张数(需 {min_qty} 币)")
             return None
         # 余额检查（曾发生 USDT 耗尽事故）
         try:
