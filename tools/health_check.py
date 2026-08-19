@@ -46,11 +46,16 @@ def q(db, sql, params=()):
 
 
 # ---------- H1 复盘覆盖率（修复上线后新平仓必须 100% 复盘） ----------
+# 2026-08-19: 加 15 分钟宽限——log_exit 先写 exit_time,复盘链随后要拉 K 线
+# 算 MFE/MAE 等特征(网络慢时数秒~数十秒),体检恰好卡进这个窗口会误报
+# (txn_021 平仓后 4.7 秒被 H1 抓到)。exit_time 超过宽限仍无 review 才是
+# 真漏复盘(复盘链崩溃)。
 rows = q(DB, "SELECT id, symbol, review FROM trades WHERE status='closed' "
-             "AND exit_time IS NOT NULL AND exit_time > ?", [FIX_DEPLOY_TS])
+             "AND exit_time IS NOT NULL AND exit_time > ? AND exit_time < ?",
+         [FIX_DEPLOY_TS, time.time() - 900])
 miss = [r["id"] for r in rows if not r["review"]]
 check("H1 复盘覆盖率=100%（修复后新平仓）", not miss,
-      f"未复盘: {miss}" if miss else "自修复上线后尚无新平仓")
+      f"未复盘: {miss}" if miss else "修复后平仓全部已复盘")
 
 # ---------- H2 组合敞口对账（账本 vs journal，DEF-11） ----------
 owns = q(DB, "SELECT COALESCE(SUM(notional),0) s FROM ownership")
