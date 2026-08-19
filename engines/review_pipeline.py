@@ -113,6 +113,16 @@ class ReviewMixin:
                f"复盘 {len(lessons)} 条新经验（待验证）· "
                f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条\n"
                f"当前阈值 {self.threshold_learner.threshold}")
+        try:
+            from service.events import log_event
+            log_event("close", {"tid": t.get("id"), "symbol": base,
+                                "dir": t.get("direction"),
+                                "pnl_usdt": pnl_usdt,
+                                "pnl_pct": closed.get("pnl"),
+                                "reason": exit_reason_short,
+                                "lessons": len(lessons)})
+        except Exception:
+            pass
         print(msg)
         self._notify(msg)
 

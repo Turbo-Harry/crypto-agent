@@ -329,6 +329,12 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                     self._halt_notified = True
                     msg = (f"⛔ 风控熔断: {self.risk.halt_reason}\n"
                            f"正在强制平掉本策略全部持仓…")
+                    try:
+                        from service.events import log_event
+                        log_event("halt", {"reason": self.risk.halt_reason,
+                                           "equity": eq})
+                    except Exception:
+                        pass
                     print(msg)
                     self._notify(msg)
                     self._log_risk_event("halt", self.risk.halt_reason, eq)

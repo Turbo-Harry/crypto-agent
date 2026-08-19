@@ -166,8 +166,10 @@ class TraderWorker:
                         pass
                 stop_mon.wait(1)
 
-        threading.Thread(target=_mon_loop, name="engine-monitor",
-                         daemon=True).start()
+        _mon_thread = threading.Thread(target=_mon_loop, name="engine-monitor",
+                                       daemon=True)
+        self._threads.append(_mon_thread)   # 优雅停机 join 时一起收
+        _mon_thread.start()
         try:
             while not self._stop.is_set():
                 try:

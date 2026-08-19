@@ -40,6 +40,22 @@ app = FastAPI(
     version="2.1.0")
 
 
+@app.on_event("shutdown")
+def _graceful_shutdown():
+    """优雅停机(2026-08-20 框架健全性缺口之二):
+    顺序 = 停开仓→停监控→停心跳→join(超时 6s)。线程是 daemon,
+    join 不到就随进程消亡,但台账/账本在每次突变时已即时落盘,
+    不会因停机丢失状态。"""
+    try:
+        w = getattr(app.state, "worker", None)
+        if w is not None:
+            print("[shutdown] 停方向性引擎…")
+            w.stop()
+            print("[shutdown] 引擎线程已停止")
+    except Exception as e:
+        print(f"[shutdown] 停机异常(忽略): {e}")
+
+
 def require_control(request: Request):
     """控制面最小防护(审计 B-H1):
     1) Host 白名单:只允许回环(防 DNS rebinding / localhost CSRF);

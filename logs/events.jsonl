@@ -1,0 +1,11 @@
+{"ts": 1787169860.289, "type": "test", "payload": {"x": 1}}
+{"ts": 1787169871.87, "type": "open", "payload": {"tid": "txn_1787169871_1b1a", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.65942857142858, "tp": 112.23428571428572, "qty": 0.68, "lev": 3, "notional": 74.80000000000001}}
+{"ts": 1787169872.032, "type": "open", "payload": {"tid": "txn_1787169872_3a2d", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
+{"ts": 1787169872.191, "type": "open", "payload": {"tid": "txn_1787169872_8312", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
+{"ts": 1787169872.353, "type": "order_fail", "payload": {"base": "BTC", "inst_id": "BTC-USDT-SWAP", "side": "buy", "qty": 1.36, "stage": "open", "error": "模拟下单失败"}}
+{"ts": 1787169872.613, "type": "close", "payload": {"tid": "txn_1787169872_2b06", "symbol": "ANTHROPIC", "dir": "long", "pnl_usdt": -10.0, "pnl_pct": -0.05555555555555555, "reason": "熔断强平: 测试熔断", "lessons": 2}}
+{"ts": 1787169872.802, "type": "close", "payload": {"tid": "txn_1787169872_8b62", "symbol": "BTC", "dir": "long", "pnl_usdt": -10.1, "pnl_pct": -0.016031746031746032, "reason": "止损", "lessons": 3}}
+{"ts": 1787169872.911, "type": "open", "payload": {"tid": "txn_1787169872_e9f7", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 0.68, "lev": 3, "notional": 74.80000000000001}}
+{"ts": 1787169873.186, "type": "close", "payload": {"tid": "txn_1787169873_2adc", "symbol": "BTC", "dir": "long", "pnl_usdt": -0.03, "pnl_pct": -0.03, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787169873.901, "type": "open", "payload": {"tid": "txn_1787169873_c3e0", "symbol": "ANTHROPIC", "dir": "long", "entry": 180.0, "stop": 175.0, "tp": 190.0, "qty": 1.0, "lev": 3, "notional": 180.0}}
+{"ts": 1787169875.247, "type": "open", "payload": {"tid": "txn_1787169875_041b", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}

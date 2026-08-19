@@ -198,6 +198,18 @@ try:
 except Exception:
     check("H13 本地时钟与 OKX 服务器偏差 <5s", True)
 
+# ---------- H14 HTTP 控制面守护（2026-08-20 用户要求'框架健全性'缺口之一） ----------
+# 引擎线程活着但 FastAPI/uvicorn 挂掉时,此前无检查报警——控制面
+# (pause/resume/scan) 静默失联。/health 不可达 = HTTP 层故障。
+try:
+    import urllib.request as _ur2
+    with _ur2.urlopen("http://127.0.0.1:8090/health", timeout=5) as _r2:
+        _h_ok = _r2.status == 200
+    check("H14 HTTP 控制面 /health 可达", _h_ok,
+          "HTTP OK" if _h_ok else "HTTP 层无响应")
+except Exception:
+    check("H14 HTTP 控制面 /health 可达", False, "HTTP 层无响应")
+
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
 if failed:
     # 飞书告警 + AI 诊断桥（2026-08-16 用户方案;30 分钟去重;AI 失败自动退回纯文本）
