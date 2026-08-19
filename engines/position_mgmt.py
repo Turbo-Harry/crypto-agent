@@ -168,7 +168,9 @@ class PositionMixin:
             return tid
 
         # ===== 合约路径（原有） =====
-        lev = LEVERAGE_MAP.get(base, 2)
+        # 2026-08-20 用户指示: 合约倍数限制 3x~5x(低于 3x 拉回,高于 5x 压回)
+        lev = min(max(LEVERAGE_MAP.get(base, config.LEVERAGE_MIN),
+                      config.LEVERAGE_MIN), config.LEVERAGE_MAX)
         inst = self.exchange.instrument(inst_id)
         for side in ["long", "short"]:
             try:

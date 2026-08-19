@@ -110,6 +110,9 @@ SWAP_ONLY = True             # 只做合约(2026-08-20 用户拍板"我们不做
 # (改回 False 即恢复美股现货只多路径,不删代码保可逆)。
 LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3,
                 "LINK": 3, "ADA": 3, "AVAX": 3, "BNB": 3, "LTC": 3}
+# 2026-08-20 用户指示: 合约倍数限制 3x~5x(低于 3x 拉回 3x,高于 5x 压到 5x)
+LEVERAGE_MIN = 3
+LEVERAGE_MAX = 5
 # 2026-08-19 沙盘实测: tpTriggerPx 条件单开/挂/取消全链路 sCode=0,开启。
 # 意义: 引擎死机时止盈照常成交(此前仅本地 monitor,崩溃窗口利润会跑)。
 FLAG_ENABLE_EXCHANGE_TP = True           # 止盈挂交易所侧
