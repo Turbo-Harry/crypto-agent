@@ -122,7 +122,9 @@ CREATE INDEX IF NOT EXISTS idx_scan_ts ON scan_decisions(ts);
 
 CREATE TABLE IF NOT EXISTS engine_errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts REAL, engine TEXT, error TEXT, traceback TEXT
+    ts REAL, engine TEXT, error TEXT, traceback TEXT,
+    archived INTEGER DEFAULT 0   -- 2026-08-20: 根因已修的行归档(保留证据,
+                                 -- 但不占 H6 滚动窗口——否则修复后红灯挂 24h)
 );
 CREATE INDEX IF NOT EXISTS idx_errors_ts ON engine_errors(ts);
 
@@ -317,11 +319,17 @@ def _migrate_v3_shadow_settle(conn):
     _add_column_if_missing(conn, "shadow_signals", "settled_ts", "REAL")
 
 
+def _migrate_v4_engine_errors_archived(conn):
+    """v4: 引擎错误归档标记(2026-08-20)——根因已修的行不占 H6 滚动窗口。"""
+    _add_column_if_missing(conn, "engine_errors", "archived", "INTEGER DEFAULT 0")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
     (2, _migrate_v2_indexes),
     (3, _migrate_v3_shadow_settle),
+    (4, _migrate_v4_engine_errors_archived),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

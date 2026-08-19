@@ -99,9 +99,11 @@ check("H5 行情数据新鲜(<60min)", mage < 3600,
 # 今晚 6 条 blip 99.99% 成功率仍被报"真实告警")。新口径:
 #   - 24h 总量 ≤12(噪音上限,过滤零星单请求失败)
 #   - 30 分钟内 ≥4 条 = 突发降级(今晚 20:07-20:22 的爆发窗口正是此类)
-errs24 = q(DB, "SELECT COUNT(*) c FROM engine_errors WHERE ts > ?",
+errs24 = q(DB, "SELECT COUNT(*) c FROM engine_errors WHERE ts > ? "
+                "AND COALESCE(archived,0)=0",
            [time.time() - 86400])
-burst = q(DB, "SELECT COUNT(*) c FROM engine_errors WHERE ts > ?",
+burst = q(DB, "SELECT COUNT(*) c FROM engine_errors WHERE ts > ? "
+             "AND COALESCE(archived,0)=0",
           [time.time() - 1800])
 check("H6 引擎错误(24h≤12 且 30min 突发<4)",
       errs24[0]["c"] <= 12 and burst[0]["c"] < 4,
