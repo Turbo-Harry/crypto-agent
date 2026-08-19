@@ -1133,14 +1133,16 @@ class DirectionalTrader:
                   "stage, error) VALUES (?,?,?,?,?,?,?)",
                   [time.time(), base, inst_id, side, qty, stage,
                    str(error)[:300]], db_path=self._db_path)
-            # 2026-08-17: 沙盘不可交易符号自动登记——51001(无合约)/51087(退市)
-            # 错误码已由 transport 穿透进 error 文本,解析到即入动态黑名单。
+            # 2026-08-17: 沙盘永久不可交易符号自动登记——错误码已由 transport
+            # 穿透进 error 文本,解析到即入动态黑名单。覆盖永久类错误码:
+            #   51001 无合约 / 51087 已退市 / 51155 本地合规限制(RE 案例)
+            # 明确排除 51000(clOrdId 等参数错误——可修复,不是符号问题)。
             err = str(error)
-            if ("51001" in err or "51087" in err) and base:
+            perm_codes = [c for c in ("51001", "51087", "51155") if c in err]
+            if perm_codes and base:
                 sdb.x("INSERT OR IGNORE INTO untradable_symbols (base, reason, ts) "
                       "VALUES (?,?,?)",
-                      [base, "51001" if "51001" in err else "51087",
-                       time.time()], db_path=self._db_path)
+                      [base, perm_codes[0], time.time()], db_path=self._db_path)
         except Exception:
             pass
 
