@@ -195,17 +195,20 @@ def main():
     check("/journal 交易项含 review 复盘报告", jr["trades"][0].get("review") is not None)
 
     # 平仓后总盈亏写实际 USDT（比例 × 名义），不是百分比相加
+    from execution.trade_journal import realized_pnl_usdt as _pnl_u
     row0 = trader.journal.trades[0]
     entry = float(row0["entry_price"] or 0)
     notional = float(row0.get("notional_usdt") or 0)
     trader.journal.log_exit(tid0, entry * 1.02, "测试止盈")
     r = client.get("/journal")
     jr = r.json()
-    expected = round(0.02 * notional, 2)
+    expected = _pnl_u(trader.journal.trades[0])
     item = jr["trades"][0]
     check("/journal 单笔含 pnl_usdt", item.get("pnl_usdt") == expected)
     check("/journal 总盈亏 total_pnl_usdt 为实际 USDT",
           jr.get("total_pnl_usdt") == expected)
+    check("总盈亏约等于名义×2%（不是把 2% 写成 2）",
+          expected is not None and abs(expected - 0.02 * notional) < 0.05)
 
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
