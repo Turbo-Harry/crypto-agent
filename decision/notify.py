@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
 FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
@@ -113,25 +114,48 @@ def build_card(msg, title=None, template=None):
     }
 
 
+def _stat(kind):
+    """卡片发送成功率计数落盘(kv 表),体检可观测飞书通道健康度。"""
+    try:
+        import storage.db as sdb
+        sdb.init_db()
+        row = sdb.q1("SELECT value FROM kv WHERE key=?", [f"feishu_notify_{kind}_n"])
+        n = int(row["value"]) + 1 if row else 1
+        sdb.x("INSERT OR REPLACE INTO kv (key, value) VALUES (?,?)",
+              [f"feishu_notify_{kind}", str(time.time())])
+        sdb.x("INSERT OR REPLACE INTO kv (key, value) VALUES (?,?)",
+              [f"feishu_notify_{kind}_n", str(n)])
+    except Exception:
+        pass
+
+
 def notify(msg, title=None, template=None):
-    """发飞书。优先 interactive + lark_md；失败则 --text 纯文本兜底。"""
+    """发飞书。优先 interactive + lark_md;3 次重试后 --text 纯文本兜底。
+    2026-08-20 用户反馈'时好时坏': 卡片接口偶发瞬时失败回退纯文本 →
+    部分消息不渲染。重试大幅压缩回退概率,计数供体检观测。"""
     if not msg:
         return
     card = build_card(msg, title=title, template=template)
-    try:
-        r = subprocess.run(
-            [LARK, "im", "+messages-send", "--as", "bot",
-             "--user-id", FEISHU_USER_ID, "--msg-type", "interactive",
-             "--content", json.dumps(card, ensure_ascii=False)],
-            capture_output=True, timeout=20)
-        if getattr(r, "returncode", 0) == 0:
-            return
-    except Exception:
-        pass
+    for attempt in range(3):
+        try:
+            r = subprocess.run(
+                [LARK, "im", "+messages-send", "--as", "bot",
+                 "--user-id", FEISHU_USER_ID, "--msg-type", "interactive",
+                 "--content", json.dumps(card, ensure_ascii=False)],
+                capture_output=True, timeout=30)
+            if getattr(r, "returncode", 0) == 0:
+                _stat("card_ok")
+                return
+            _stat("card_fail")
+        except Exception:
+            _stat("card_fail")
+        if attempt < 2:
+            time.sleep(1 + attempt)
     try:
         subprocess.run(
             [LARK, "im", "+messages-send", "--as", "bot",
              "--user-id", FEISHU_USER_ID, "--text", plain(msg)],
             capture_output=True, timeout=20)
+        _stat("fallback_plain")
     except Exception:
-        pass
+        _stat("fallback_plain")
