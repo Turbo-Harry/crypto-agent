@@ -19,6 +19,24 @@ RISK_PER_TRADE = config.RISK_PER_TRADE
 FLAG_ENABLE_EXCHANGE_TP = config.FLAG_ENABLE_EXCHANGE_TP
 
 
+def leverage_for(base, score, journal_trades):
+    """B+C 杠杆分档(2026-08-20 用户拍板,纯函数可单测):
+      B 信号分 ≥ config.LEVERAGE_HIGH_SCORE
+      C 该币平仓样本 ≥ LEVERAGE_HIGH_MIN_TRADES 且胜率 ≥ LEVERAGE_HIGH_MIN_WINRATE
+    双条件同时满足 → LEVERAGE_HIGH(5x),否则 LEVERAGE_NORMAL(3x);
+    最终钳制 [LEVERAGE_MIN, LEVERAGE_MAX]。"""
+    lev = LEVERAGE_MAP.get(base, config.LEVERAGE_MIN)
+    recent = [t for t in (journal_trades or [])
+              if t.get("symbol") == base and t.get("status") == "closed"]
+    wins = [t for t in recent if (t.get("pnl") or 0) > 0]
+    score_ok = (score or 0) >= config.LEVERAGE_HIGH_SCORE
+    track_ok = (len(recent) >= config.LEVERAGE_HIGH_MIN_TRADES
+                and len(wins) / len(recent) >= config.LEVERAGE_HIGH_MIN_WINRATE)
+    if score_ok and track_ok:
+        lev = config.LEVERAGE_HIGH
+    return min(max(lev, config.LEVERAGE_MIN), config.LEVERAGE_MAX)
+
+
 class PositionMixin:
     """仓位/订单管理功能块。"""
 
@@ -168,9 +186,10 @@ class PositionMixin:
             return tid
 
         # ===== 合约路径（原有） =====
-        # 2026-08-20 用户指示: 合约倍数限制 3x~5x(低于 3x 拉回,高于 5x 压回)
-        lev = min(max(LEVERAGE_MAP.get(base, config.LEVERAGE_MIN),
-                      config.LEVERAGE_MIN), config.LEVERAGE_MAX)
+        # 2026-08-20 用户指示: 合约倍数 3x~5x + B+C 分档——B 信号分 ≥
+        # LEVERAGE_HIGH_SCORE 且 C 该币战绩数据验证(≥N 笔平仓且胜率≥阈值)
+        # → 5x;否则 3x;最终钳制 [LEVERAGE_MIN, LEVERAGE_MAX]。
+        lev = leverage_for(base, score, self.journal.trades)
         inst = self.exchange.instrument(inst_id)
         for side in ["long", "short"]:
             try:

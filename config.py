@@ -113,6 +113,12 @@ LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3,
 # 2026-08-20 用户指示: 合约倍数限制 3x~5x(低于 3x 拉回 3x,高于 5x 压到 5x)
 LEVERAGE_MIN = 3
 LEVERAGE_MAX = 5
+# B+C 分档(用户拍板): 信号分≥门槛【且】该币战绩数据验证达标 → 5x,否则 3x
+LEVERAGE_NORMAL = 3            # 基础杠杆
+LEVERAGE_HIGH = 5              # B+C 双条件满足时的杠杆
+LEVERAGE_HIGH_SCORE = 70       # B: 信号分门槛
+LEVERAGE_HIGH_MIN_TRADES = 2   # C: 该币最少平仓样本数
+LEVERAGE_HIGH_MIN_WINRATE = 0.5  # C: 该币近期胜率下限
 # 2026-08-19 沙盘实测: tpTriggerPx 条件单开/挂/取消全链路 sCode=0,开启。
 # 意义: 引擎死机时止盈照常成交(此前仅本地 monitor,崩溃窗口利润会跑)。
 FLAG_ENABLE_EXCHANGE_TP = True           # 止盈挂交易所侧
