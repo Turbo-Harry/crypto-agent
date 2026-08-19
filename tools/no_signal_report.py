@@ -18,6 +18,8 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+import config
 DB = os.path.join(ROOT, "crypto_agent.db")
 
 
@@ -97,8 +99,8 @@ def generate_feedback(rows):
       R4 主瓶颈=vol → 量能确认条件观察(策略 B 的量能门槛关联)
     返回 [(rule, action, evidence, triggered)]。"""
     n = len(rows)
-    if n < 20:
-        return [("R0", "样本不足(<20),反哺提案搁置——等待画像积累",
+    if n < config.FB_MIN_PROFILES:
+        return [("R0", f"样本不足(<{config.FB_MIN_PROFILES}),反哺提案搁置——等待画像积累",
                  f"n={n}", False)]
     from collections import Counter
     bn = Counter(r["bottleneck"] for r in rows)
@@ -106,18 +108,19 @@ def generate_feedback(rows):
     top_pct = top_n / n
     near = sum(r["near_miss"] for r in rows) / n
     out = []
-    out.append(("R1", "REJECT_WICK_RATIO 微调候选(×0.9,下限 0.8)",
+    out.append(("R1", f"REJECT_WICK_RATIO 微调候选(×{config.SCAN_EVOLVE_WICK_STEP},"
+                f"下限 {config.SCAN_EVOLVE_WICK_FLOOR})",
                 f"近失率 {near:.0%}, 主瓶颈 {top} {top_pct:.0%}",
-                near >= 0.2 and top == "wick"))
+                near >= config.FB_NEAR_MISS_RATE and top == "wick"))
     out.append(("R2", "策略 B(突破)转正评估启动",
-                f"主瓶颈 {top} {top_pct:.0%}(≥60% 才触发)",
-                top == "trend" and top_pct >= 0.6))
+                f"主瓶颈 {top} {top_pct:.0%}(≥{config.FB_R2_TREND_PCT:.0%} 才触发)",
+                top == "trend" and top_pct >= config.FB_R2_TREND_PCT))
     out.append(("R3", "纪律性等待(显式抑制调参)——回踩是策略纪律",
-                f"主瓶颈 {top} {top_pct:.0%}(≥70% 才触发)",
-                top == "touch" and top_pct >= 0.7))
+                f"主瓶颈 {top} {top_pct:.0%}(≥{config.FB_R3_TOUCH_PCT:.0%} 才触发)",
+                top == "touch" and top_pct >= config.FB_R3_TOUCH_PCT))
     out.append(("R4", "量能确认条件观察(与策略 B 量能门槛关联)",
                 f"主瓶颈 {top} {top_pct:.0%}",
-                top == "vol" and top_pct >= 0.4))
+                top == "vol" and top_pct >= config.FB_R4_VOL_PCT))
     return out
 
 

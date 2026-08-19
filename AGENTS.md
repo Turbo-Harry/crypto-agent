@@ -37,7 +37,8 @@ decision/          决策与进化层
   ├─ experience_scoring.py    经验评分库
   ├─ threshold_learning.py    阈值自适应
   ├─ review_engine.py         复盘引擎
-  └─ evolution_gate.py        进化验证门
+  ├─ evolution_gate.py        进化验证门
+  └─ scan_evolve.py           扫描尺子进化（影线比：影子→验证门→人工批准）
 
 execution/         执行与台账层
   ├─ quantity.py              名义→数量换算（lotSz 对齐）
@@ -97,6 +98,9 @@ HTTP 接口（127.0.0.1，Swagger 文档在 `GET /docs`）：
 | GET | /realtime/{base} | WS 实时行情快照 |
 | POST | /pause /resume | 暂停/恢复方向性开仓 |
 | POST | /scan/daily | 手动触发全市场扫描 |
+| GET | /scan/evolve | 扫描尺子进化状态（影线比影子/是否待批准） |
+| POST | /scan/evolve/approve | 批准已通过验证门的扫描尺子（不改 config） |
+| POST | /scan/evolve/rollback | 回滚活体影线比到 config 基线 |
 | GET | /error | 引擎最近异常堆栈 |
 
 独立调试模式仍可用（不改交易逻辑）：`python3 engines/directional_trader.py --once`。

@@ -34,10 +34,11 @@ class SignalScanMixin:
     """信号扫描功能块。"""
 
     # ---------- 信号：回踩确认（1 小时线 · 真日内短线） ----------
-    def scan_signal(self, base):
+    def scan_signal(self, base, wick_ratio=None):
         """检查某币的回踩确认信号（1 小时 K 线，日内短线）。
         多周期共振过滤（MTF）：1h 信号方向必须与 4h 趋势同向——顺大势做小势，
-        只抓高概率时点，不频繁交易。返回信号 dict 或 None。"""
+        只抓高概率时点，不频繁交易。返回信号 dict 或 None。
+        wick_ratio: 覆盖影线门槛（扫描影子用候选值）；默认读批准后的活体值。"""
         try:
             kl = self._fetch_klines_any(base, "1H", 100)
             if not kl:
@@ -96,9 +97,17 @@ class SignalScanMixin:
             except Exception:
                 return None, None
 
+        from decision.scan_evolve import effective_wick_ratio
+        ratio = (wick_ratio if wick_ratio is not None
+                 else effective_wick_ratio(getattr(self, "_db_path", None)))
+        kline_ts = last.get("ts") if isinstance(last, dict) else None
+        # last 来自 klines dict 无 ts；用原始 kl 最后一根
+        if kline_ts is None and kl:
+            kline_ts = kl[-1][0]
+
         # 做多信号：多头趋势 + 回踩 EMA20 不破 + 拒绝K线（下影线）
         if ema20[-1] > ema50[-1] and last["low"] <= ema20[-1] and last["close"] > ema20[-1]:
-            if lower_wick >= body * config.REJECT_WICK_RATIO:  # 拒绝K线（下影线）
+            if lower_wick >= body * ratio:  # 拒绝K线（下影线）
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != 1:
                     return None
@@ -107,10 +116,11 @@ class SignalScanMixin:
                         "stop": entry_ref - config.STOP_ATR_MULT * atr_val,
                         "tp": entry_ref + config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
-                        "shadow_score": score, "regime": regime}  # Phase1 影子
+                        "shadow_score": score, "regime": regime,
+                        "kline_ts": kline_ts}
         # 做空信号：空头趋势 + 反弹 EMA20 不破 + 拒绝K线（上影线）
         if ema20[-1] < ema50[-1] and last["high"] >= ema20[-1] and last["close"] < ema20[-1]:
-            if upper_wick >= body * config.REJECT_WICK_RATIO:
+            if upper_wick >= body * ratio:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != -1:
                     return None
@@ -119,7 +129,8 @@ class SignalScanMixin:
                         "stop": entry_ref + config.STOP_ATR_MULT * atr_val,
                         "tp": entry_ref - config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
-                        "shadow_score": score, "regime": regime}  # Phase1 影子
+                        "shadow_score": score, "regime": regime,
+                        "kline_ts": kline_ts}
         return None
 
     # ---------- 主循环 ----------
@@ -160,8 +171,21 @@ class SignalScanMixin:
         # （10 个主流币始终参与信号扫描,额度/冷却约束照常适用）
         scan_pool = list(dict.fromkeys(
             self.watchlist + [s for s in SYMBOLS if s not in self.watchlist]))
+        # 2026-08-20: 黑名单币不进信号扫描(旧 watchlist 残留或回退池误入时
+        # 省掉 K 线请求;名额过滤在 daily_scan,这里是第二道)。
+        from engines.daily_scan import untradable_bases
+        _blocked = untradable_bases(self._db_path)
+        if _blocked:
+            scan_pool = [b for b in scan_pool if b not in _blocked]
+        n_from_watch = sum(1 for b in scan_pool if b in self.watchlist)
         print(f"\n=== 方向性信号扫描 [{time.strftime('%H:%M:%S')}] "
-              f"候选池 {len(self.watchlist)} 个 + 回退池 {len(scan_pool) - len(self.watchlist)} 个 ===")
+              f"候选池 {n_from_watch} 个 + 回退池 {len(scan_pool) - n_from_watch} 个 ===")
+        if config.SCAN_EVOLVE_ENABLED:
+            try:
+                from decision.scan_evolve import tick as scan_evolve_tick
+                scan_evolve_tick(self)
+            except Exception as e:
+                print(f"扫描进化步进异常(不影响扫描): {e}")
         today = time.strftime("%Y-%m-%d")
         for base in scan_pool:
             # 2026-08-16: 长扫描期间每币刷新心跳——18 币扫描需数分钟,
@@ -227,6 +251,7 @@ class SignalScanMixin:
             else:
                 print(f"{base}: 无回踩确认信号")
                 self._log_scan_decision(base, False, "", "no_signal", "")
+                self._maybe_wick_shadow(base)
             # Phase 4 T3.3 策略 B 影子（突破/动量确认）: 只记录假设性交易、
             # 绝不下单/不发飞书/不占额度——与策略 A 真实样本分表对照。
             if config.STRATEGY_B_SHADOW_ENABLED:
@@ -248,12 +273,32 @@ class SignalScanMixin:
                         if sig is None:
                             from engines.strategy_b import profile_from_klines, \
                                 record_profile
-                            prof = profile_from_klines(kl_b)
+                            prof = profile_from_klines(kl_b, db_path=self._db_path)
                             if prof:
                                 record_profile(base, prof,
                                                db_path=self._db_path)
                 except Exception:
                     pass
+
+    def _maybe_wick_shadow(self, base):
+        """现役没信号时用候选影线比再扫一次；命中只记影子，绝不下单/不占冷却。"""
+        if not config.SCAN_EVOLVE_ENABLED:
+            return
+        try:
+            from decision.scan_evolve import active_candidate
+            from engines.strategy_b import record_shadow
+            cand = active_candidate(self._db_path)
+            if not cand:
+                return
+            sig = self.scan_signal(base, wick_ratio=cand["wick"])
+            if not sig:
+                return
+            if record_shadow(base, config.SCAN_EVOLVE_STRATEGY, sig,
+                             db_path=self._db_path):
+                print(f"  👻 扫描影子 A_wick {base} {sig['dir']} "
+                      f"@ {sig['entry']:.4f}（候选影线比 {cand['wick']}，不下单）")
+        except Exception:
+            pass
 
     def _is_auto_untradable(self, base):
         """查动态黑名单(untradable_symbols 表)——下单失败 51001/51087 自动登记,

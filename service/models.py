@@ -81,6 +81,7 @@ class TradeItem(BaseModel):
     entry_price: Optional[float]
     exit_price: Optional[float]
     pnl_pct: Optional[float]
+    pnl_usdt: Optional[float] = None   # 实际盈亏 USDT（比例 × 名义）
     status: str
     entry_time: Optional[float]
     exit_time: Optional[float]
@@ -93,6 +94,7 @@ class JournalOut(BaseModel):
     total: int
     closed: int
     win_rate: Optional[float]
+    total_pnl_usdt: Optional[float] = None  # 已平仓合计实际盈亏 USDT
     trades: List[TradeItem]
 
 
@@ -137,3 +139,19 @@ class ReconcileOut(BaseModel):
     per_symbol: List[dict]           # {symbol, journal_base, exchange_base, diff}
     balanced: bool                   # 全部一致？
     notes: List[str]                 # 差异说明（如 legacy 单位换算）
+
+
+class ScanEvolveOut(BaseModel):
+    """扫描尺子进化状态（只动影线比；影子验证通过后须人工批准）。"""
+    enabled: bool
+    incumbent_wick: float
+    effective_wick: float
+    candidate_wick: Optional[float] = None
+    change_id: Optional[str] = None
+    status: Optional[str] = None
+    evidence: str = ""
+    shadow_open: int = 0
+    shadow_settled: int = 0
+    settled_mean_pnl: Optional[float] = None
+    needs_approval: bool = False
+    message: str = ""

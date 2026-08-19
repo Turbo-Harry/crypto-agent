@@ -122,8 +122,14 @@ class OKXAdapter(ExchangeAdapter):
         rows = resp.get("data", [])
         out = []
         for r in reversed(rows):   # OKX 倒序（新→旧）→ 反转为升序
-            out.append(Candle(ts=int(r[0]), open=float(r[1]), high=float(r[2]),
-                              low=float(r[3]), close=float(r[4]), volume=float(r[5])))
+            # 2026-08-20 防御解析: OKX 偶发返回空字符串字段(新上市/退市边缘
+            # 合约)→ float('') 崩溃(03:28 事故,引擎 tick 中断)。坏行直接跳过。
+            try:
+                out.append(Candle(ts=int(r[0]), open=float(r[1]), high=float(r[2]),
+                                  low=float(r[3]), close=float(r[4]),
+                                  volume=float(r[5] or 0)))
+            except (TypeError, ValueError, IndexError):
+                continue
         return out
 
     def fetch_ticker_last(self, inst_id: str) -> float:

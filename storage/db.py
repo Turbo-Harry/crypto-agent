@@ -174,8 +174,8 @@ CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, change_id TEXT, kind TEXT, params TEXT,
     n_samples INTEGER, dsr REAL, pbo REAL,
-    status TEXT,                -- proposed / shadow / accepted / rejected /
-                                -- insufficient_data
+    status TEXT,                -- proposed / insufficient_data / accepted /
+                                -- rejected / applied / rolled_back
     decided_by TEXT, notes TEXT
 );
 
@@ -186,7 +186,10 @@ CREATE TABLE IF NOT EXISTS shadow_signals (
     ts REAL, base TEXT, strategy TEXT, dir TEXT,
     entry REAL, stop REAL, tp REAL, atr REAL,
     signal_score REAL, regime_tag TEXT,
-    kline_ts INTEGER, status TEXT DEFAULT 'hypothetical'
+    kline_ts INTEGER, status TEXT DEFAULT 'hypothetical',
+    pnl REAL,                   -- 结算后的假设盈亏比例（扫描影子 A_wick）
+    exit_reason TEXT,           -- stop / tp / timeout
+    settled_ts REAL
 );
 CREATE INDEX IF NOT EXISTS idx_shadow_ts ON shadow_signals(ts);
 CREATE INDEX IF NOT EXISTS idx_shadow_base_strategy_kline
@@ -307,10 +310,18 @@ def _migrate_v2_indexes(conn):
         "ON shadow_signals(base, strategy, kline_ts)")
 
 
+def _migrate_v3_shadow_settle(conn):
+    """v3: 扫描影子可结算——旧库 CREATE TABLE IF NOT EXISTS 不会加列。"""
+    _add_column_if_missing(conn, "shadow_signals", "pnl", "REAL")
+    _add_column_if_missing(conn, "shadow_signals", "exit_reason", "TEXT")
+    _add_column_if_missing(conn, "shadow_signals", "settled_ts", "REAL")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
     (2, _migrate_v2_indexes),
+    (3, _migrate_v3_shadow_settle),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

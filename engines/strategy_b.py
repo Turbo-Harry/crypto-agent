@@ -88,10 +88,11 @@ def record_shadow(base, strategy, sig, db_path=None, klines_1h=None):
         return False
 
 
-def profile_from_klines(klines):
+def profile_from_klines(klines, db_path=None):
     """未触发信号复盘(2026-08-17): 从 1H K 线计算四环节条件画像。
     复用策略 A 的同款条件(趋势/触线/影线),量能环节为突破确认的均量比。
-    返回 dict; 任何异常返回 None。"""
+    返回 dict; 任何异常返回 None。
+    db_path: 活体影线比可能已被批准覆盖,画像口径与扫描一致。"""
     import config
     try:
         kd = [{"open": k[1], "high": k[2], "low": k[3], "close": k[4],
@@ -106,7 +107,8 @@ def profile_from_klines(klines):
         body = abs(last["close"] - last["open"])
         lower_wick = min(last["open"], last["close"]) - last["low"]
         upper_wick = last["high"] - max(last["open"], last["close"])
-        ratio = config.REJECT_WICK_RATIO
+        from decision.scan_evolve import effective_wick_ratio
+        ratio = effective_wick_ratio(db_path)
         trend_up = e20[-1] > e50[-1]
         trend_down = e20[-1] < e50[-1]
         touch_long = last["low"] <= e20[-1] and last["close"] > e20[-1]
@@ -132,7 +134,7 @@ def profile_from_klines(klines):
             if body > 0:
                 wl = lower_wick / body
                 ws = upper_wick / body
-                if max(wl, ws) >= ratio * 0.8:
+                if max(wl, ws) >= ratio * config.NEAR_MISS_WICK_FRAC:
                     near_miss = 1
         return {"trend_up": 1 if trend_up else 0,
                 "trend_down": 1 if trend_down else 0,

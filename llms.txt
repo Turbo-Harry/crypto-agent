@@ -39,7 +39,8 @@
 
 ## 代码
 
-- [service/main.py](service/main.py): 服务端进程入口（FastAPI + 双引擎线程）
+- [service/main.py](service/main.py): 服务端进程入口（FastAPI + 引擎线程）
+- [decision/scan_evolve.py](decision/scan_evolve.py): 扫描尺子进化（REJECT_WICK_RATIO 提案→影子→DSR 门→人工批准）
 - [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎核心壳（入口/组装/tick 主循环；功能块 2026-08-20 拆分）
 - [engines/signal_scan.py](engines/signal_scan.py): 信号扫描功能块（SignalScanMixin）
 - [engines/position_mgmt.py](engines/position_mgmt.py): 仓位管理功能块（PositionMixin）

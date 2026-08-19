@@ -82,7 +82,7 @@ def main():
     print("== 聚合冒烟（全部只读端点一次遍历）==")
     smoke_ok, smoke_detail = True, []
     for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
-                 "/error", "/analysis/latest", "/reconcile"):
+                 "/error", "/analysis/latest", "/reconcile", "/scan/evolve"):
         r = client.get(path)
         try:
             r.json()
@@ -92,7 +92,16 @@ def main():
         if not ok:
             smoke_ok = False
             smoke_detail.append(f"{path}→{r.status_code}")
-    check("8 个只读端点全部 200+JSON 可解析", smoke_ok)
+    check("9 个只读端点全部 200+JSON 可解析", smoke_ok)
+    if smoke_detail:
+        print(f"    失败明细: {smoke_detail}")
+    r = client.get("/scan/evolve")
+    check("/scan/evolve 含 effective_wick 且 needs_approval=false",
+          r.status_code == 200 and "effective_wick" in r.json()
+          and r.json()["needs_approval"] is False)
+    r = client.post("/scan/evolve/approve")
+    check("无验证通过提案时 /scan/evolve/approve → 409",
+          r.status_code == 409)
     if smoke_detail:
         print(f"    失败明细: {smoke_detail}")
 
@@ -184,6 +193,19 @@ def main():
     r = client.get("/journal")
     jr = r.json()
     check("/journal 交易项含 review 复盘报告", jr["trades"][0].get("review") is not None)
+
+    # 平仓后总盈亏写实际 USDT（比例 × 名义），不是百分比相加
+    row0 = trader.journal.trades[0]
+    entry = float(row0["entry_price"] or 0)
+    notional = float(row0.get("notional_usdt") or 0)
+    trader.journal.log_exit(tid0, entry * 1.02, "测试止盈")
+    r = client.get("/journal")
+    jr = r.json()
+    expected = round(0.02 * notional, 2)
+    item = jr["trades"][0]
+    check("/journal 单笔含 pnl_usdt", item.get("pnl_usdt") == expected)
+    check("/journal 总盈亏 total_pnl_usdt 为实际 USDT",
+          jr.get("total_pnl_usdt") == expected)
 
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)

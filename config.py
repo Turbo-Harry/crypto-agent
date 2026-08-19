@@ -158,6 +158,25 @@ DSR_ACCEPT = 1.0              # Deflated Sharpe 接受线（LdP）
 PBO_ACCEPT = 0.3              # PBO 接受线（LdP）
 MIN_SAMPLES = 30              # Tharp 最低样本门槛（S2）
 
+# ---- 扫描尺子进化（2026-08-20：提案→影子→验证门→人工批准，永不自动改尺子）----
+# 只动一根尺子：REJECT_WICK_RATIO（拒绝K线影线/实体比）。放宽方向先影子记账，
+# 用随后 1H K 线走止盈/止损路径算假设盈亏；DSR 达标后仍须 HTTP 批准才写 kv 覆盖。
+# config.REJECT_WICK_RATIO 永远是基线/回滚值，机器不得改这个文件。
+SCAN_EVOLVE_ENABLED = True
+SCAN_EVOLVE_KV_KEY = "scan_evolve.REJECT_WICK_RATIO"
+SCAN_EVOLVE_WICK_STEP = 0.9   # 候选 = 现役 × 0.9
+SCAN_EVOLVE_WICK_FLOOR = 0.8  # 影线比下限（再低形态太松，与既有 R1 下限一致）
+SCAN_EVOLVE_PROFILE_HOURS = 24
+SCAN_EVOLVE_SETTLE_BARS = 24  # 影子用随后 24 根 1H 判定止盈/止损/超时
+SCAN_EVOLVE_STRATEGY = "A_wick"
+# 未触发归因反哺门槛（generate_feedback，原写死在 tools/no_signal_report.py）
+FB_MIN_PROFILES = 20          # 画像样本不足则搁置提案
+FB_NEAR_MISS_RATE = 0.2       # R1：近失率 ≥20% 且主瓶颈=wick → 影线候选
+FB_R2_TREND_PCT = 0.6         # R2：主瓶颈 trend 占比
+FB_R3_TOUCH_PCT = 0.7         # R3：主瓶颈 touch 占比（纪律等待，抑制调参）
+FB_R4_VOL_PCT = 0.4           # R4：主瓶颈 vol 占比
+NEAR_MISS_WICK_FRAC = 0.8     # 影线 ≥ 门槛×0.8 记近失（profile_from_klines）
+
 LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0,
                  "LINK": 1.0, "ADA": 1.0, "AVAX": 1.0, "BNB": 0.01, "LTC": 1.0}
     # 旧台账回填用合约面值表（legacy size 单位换算,见 trade_journal）

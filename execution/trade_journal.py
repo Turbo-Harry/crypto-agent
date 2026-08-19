@@ -26,6 +26,37 @@ from storage.db import _TRADE_COLS
 LEGACY_CT_VAL = config.LEGACY_CT_VAL
 
 
+def realized_pnl_usdt(trade):
+    """已实现盈亏（账户实际 USDT）。
+
+    journal.pnl 存的是价格变动比例（多:(出-入)/入; 空:(入-出)/入），
+    乘名义投注额才是这笔单真正赚/亏了多少 USDT。
+    把各笔百分比直接相加会失真（150 名义 +2% 和 50 名义 +2% 不是 +4%）。
+    未平仓或没有 pnl 时返回 None。
+    """
+    if not trade or trade.get("pnl") is None:
+        return None
+    notional = trade.get("notional_usdt")
+    if notional is None:
+        notional = float(trade.get("size") or 0) * float(trade.get("entry_price") or 0)
+    try:
+        return round(float(trade["pnl"]) * float(notional or 0), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def total_realized_pnl_usdt(trades):
+    """已平仓合计实际盈亏（USDT）。无已平仓记录时返回 0.0。"""
+    total = 0.0
+    for t in trades or []:
+        if t.get("status") != "closed":
+            continue
+        v = realized_pnl_usdt(t)
+        if v is not None:
+            total += v
+    return round(total, 2)
+
+
 class TradeJournal:
     def __init__(self, path="trade_journal.json", db_path=None):
         # path 兼容保留：默认值走共享库 crypto_agent.db；显式传路径（测试隔离）时

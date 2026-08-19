@@ -172,7 +172,13 @@ def screen_daily(pool_top=60, watch_n=None, progress_cb=None,
         pool = kept
 
     # 阶段1：流动性与价格硬门槛（用 ticker 数据，无额外请求）
+    # 2026-08-20: 观察池构建(全市场 ticker)+仪器探测是网络重活,此前无插拍,
+    # 心跳/tick 在此段停更(03:11/03:15 两次启动均在此段无进展)。前后各插拍一次。
+    if progress_cb:
+        progress_cb()
     stage1 = [p for p in pool if p["vol24h"] >= MIN_VOL]
+    if progress_cb:
+        progress_cb()
     print(f"  阶段1 流动性/价格门槛: {len(pool)} → {len(stage1)} 个")
 
     # 阶段2：1h 趋势 + ATR（每个候选 1 次 K线请求）

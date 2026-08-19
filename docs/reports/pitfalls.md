@@ -288,9 +288,21 @@
 - 修复：① 成交入账（`log_entry` 返回 tid）之后才记 `open`；失败记 `open_failed` 或既有 `reject_*`。② 看账改报「成交 N 笔（已平 M）」，不再把扫描意图叫开仓。
 - 预防：「开仓」只等于台账成交；扫描日志的 open 必须后置于成交。计数类文案禁止混用意图和成交。
 
+### 2026-08-20 看账「总盈亏」把百分比加总会失真
+- 现象：每日看账写「总盈亏 +4.00%」。两笔都是 +2%，一笔名义 150、一笔名义 50，账户实际只赚 4 USDT，不是账户涨了 4%。
+- 根因：`pnl` 存的是价格变动比例，看账用 `sum(pnl)*100` 当总盈亏。比例不能跨笔直接相加。
+- 修复：总盈亏 = 各笔 `pnl × notional_usdt` 之和，飞书看账和 `/journal` 都写实际 USDT。
+- 预防：凡对外展示的「盈亏/盈利」默认是 USDT 金额；百分比只作为单笔括号备注，禁止把多笔百分比加总当总收益。
+
 ### 2026-08-20 user_version 已升到最新后,旧索引可能被活体旧进程建回来
 - 现象：只读看活体 `crypto_agent.db`，`PRAGMA user_version=2` 且新索引已在，但旧 `idx_anom_status` 仍在。按"version 已最新就跳过迁移"的逻辑，下次重启也不会 DROP。
 - 根因：① HTTP 层 `sdb.init_db()` 不带 db_path，TestClient 回归会把新迁移跑到活体库（version 被升到 2、新索引建上）；② 活体进程仍跑旧代码，旧 SCHEMA 里有 `CREATE INDEX IF NOT EXISTS idx_anom_status`，会把刚删掉的旧索引建回来；③ v2 迁移因 version 已是 2 不再执行。
 - 修复：SCHEMA 每次 `executescript` 都 `DROP INDEX IF EXISTS idx_anom_status`（幂等），不依赖"迁移还没跑过"。v2 里仍保留同款 DROP。
 - 预防：改名/替换索引时，DROP 旧名必须进 SCHEMA（每次 init_db 都跑），不能只放在"只跑一次"的迁移函数里；测试 init_db 必须传隔离 db_path，HTTP 只读端点的 init_db() 默认路径会碰到活体库。
+
+### 2026-08-20 扫描尺子放宽不得自动生效
+- 现象：未触发复盘能看出「影线差一点就能出信号」，若机器直接把 REJECT_WICK_RATIO 调低，会用同一批近失样本自我证明，过拟合后交易变多、质量变差。
+- 根因：放宽门槛产生的是「以前没做过的新交易」，用提案窗口的画像当效果等于用训练数据当考试。
+- 修复：提案只进 experiments；候选影线比只记 A_wick 影子；满 30 笔且 DSR 达标才标 accepted；必须 POST /scan/evolve/approve 才写 kv。config 基线不改，可 rollback。
+- 预防：扫描参数的唯一活体写入口是 approve()；fix_guard G13 锁「永不自动改尺子」。新扫描尺子沿用同一闭环，禁止在 scan_signal 里直接改 config 常量。
 

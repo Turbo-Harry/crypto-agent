@@ -21,6 +21,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
+from execution.trade_journal import realized_pnl_usdt, total_realized_pnl_usdt
 
 WINDOW_DAYS = config.WINDOW_DAYS
 MIN_TRADES_FOR_STATS = config.MIN_TRADES_FOR_STATS
@@ -61,6 +62,8 @@ def analyze():
         "closed": len(closed),
         "open": sum(1 for t in trades if t["status"] == "open"),
         "win_rate": round(len(wins) / len(closed), 3) if closed else None,
+        # 总盈亏必须用实际 USDT（名义×比例）。百分比相加会失真。
+        "total_pnl_usdt": total_realized_pnl_usdt(closed),
         "total_pnl_pct": round(sum(t.get("pnl") or 0 for t in closed) * 100, 2),
         "avg_risk_usdt": round(sum(t.get("risk_usdt") or 0 for t in trades) /
                                len(trades), 2) if trades else 0,
@@ -94,7 +97,7 @@ def analyze():
         risk = t.get("risk_usdt") or 0
         if risk <= 0 or t.get("pnl") is None:
             continue
-        actual_loss = abs(t["pnl"]) * (t.get("notional_usdt") or 0)
+        actual_loss = abs(realized_pnl_usdt(t) or 0)
         if t["pnl"] < 0 and actual_loss > risk * STOP_BREACH_RATIO:
             breaches.append(t["symbol"])
     if len(breaches) >= MIN_SAMPLES_FOR_ISSUE:
@@ -155,10 +158,11 @@ def run_daily():
     # 飞书反馈
     wr = report['win_rate']
     wr_s = f"{wr:.0%}" if isinstance(wr, (int, float)) else "—"
-    pnl = report['total_pnl_pct']
+    pnl_u = report['total_pnl_usdt']
+    sign = "+" if pnl_u >= 0 else ""
     lines = [f"📊 系统每日看账 [{time.strftime('%m-%d %H:%M')}]",
              f"成交 {report['trades_total']} 笔（已平 {report['closed']}）  ·  "
-             f"胜率 {wr_s}  ·  总盈亏 **{pnl:+.2f}%**",
+             f"胜率 {wr_s}  ·  总盈亏 **{sign}{pnl_u:.2f} USDT**",
              f"扫描 {report['scan_rounds']} 轮  ·  信号 {report['scan_signals']}  ·  "
              f"熔断 {report['risk_halt_count']}  ·  "
              f"异常 {report['engine_errors']}"]

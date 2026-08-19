@@ -22,7 +22,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from decision.self_evolving_trader import SelfEvolvingTrader
 from decision.experience_scoring import ScoredExperience
-from execution.trade_journal import TradeJournal
+from execution.trade_journal import (
+    TradeJournal, realized_pnl_usdt, total_realized_pnl_usdt,
+)
 from exchange.fake_adapter import FakeAdapter
 from engines.directional_trader import DirectionalTrader, _ExpAdapter
 
@@ -66,6 +68,23 @@ def _closed_trades(journal, pnls):
             "size_unit": "base", "notional_usdt": 100.0, "risk_usdt": 2.0,
         })
     journal._save()
+
+
+def test_realized_pnl_usdt():
+    """总盈亏必须是实际 USDT，不能把各笔百分比加起来。"""
+    print("== 已实现盈亏按实际 USDT ==")
+    a = {"status": "closed", "pnl": 0.02, "notional_usdt": 150.0}
+    b = {"status": "closed", "pnl": 0.02, "notional_usdt": 50.0}
+    open_t = {"status": "open", "pnl": None, "notional_usdt": 150.0}
+    loss = {"status": "closed", "pnl": -0.03, "notional_usdt": 100.0}
+    check("150 名义 +2% = +3.00 USDT", realized_pnl_usdt(a) == 3.0)
+    check("50 名义 +2% = +1.00 USDT", realized_pnl_usdt(b) == 1.0)
+    check("未平仓无盈亏", realized_pnl_usdt(open_t) is None)
+    check("缺名义时用 size×价",
+          realized_pnl_usdt({"pnl": 0.01, "size": 2, "entry_price": 100}) == 2.0)
+    check("两笔同 +2% 合计是 4 USDT 不是 4%",
+          total_realized_pnl_usdt([a, b, open_t]) == 4.0)
+    check("含亏损合计 4-3=1 USDT", total_realized_pnl_usdt([a, b, loss]) == 1.0)
 
 
 def test_decision_rules(tmp):
@@ -259,6 +278,7 @@ def _make_candles(n=100, base=100.0, drift=0.1):
 
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_dec_")
+    test_realized_pnl_usdt()
     test_decision_rules(tmp)
     test_experience_gate(tmp)
     test_stop_adj_effect(tmp)

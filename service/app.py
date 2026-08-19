@@ -4,7 +4,7 @@ HTTP 接口层 — FastAPI 应用（完整功能的服务端外壳）。
 暴露三大类接口：
   观测：/health /status /watchlist /signals/{base} /journal /realtime/{base}
   控制：/pause /resume（暂停/恢复方向性开仓；止损监控永不暂停）
-  运维：/scan/daily（手动触发全市场候选扫描）/error
+    运维：/scan/daily（手动触发全市场候选扫描）/scan/evolve（扫描尺子进化）/error
 （2026-08-16 用户决定：套利引擎移除，/arb/status 已下线，代码归档 legacy/。）
 
 【禁止】暴露"下单"类接口：交易决策只由后台引擎的既定策略做出，
@@ -26,7 +26,8 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             StatusOut, WatchItem, WatchlistOut, SignalOut,
                             TradeItem, JournalOut, ControlOut,
-                            RealtimeOut, ScanOut, ReconcileOut, RiskEventOut)
+                            RealtimeOut, ScanOut, ReconcileOut, RiskEventOut,
+                            ScanEvolveOut)
 
 app = FastAPI(
     title="Crypto Agent 交易服务",
@@ -147,6 +148,7 @@ def signal_for(base: str):
 @app.get("/journal", response_model=JournalOut, tags=["观测"])
 def journal(limit: int = 20):
     """最近交易台账（含盈亏）。"""
+    from execution.trade_journal import realized_pnl_usdt, total_realized_pnl_usdt
     t = _trader()
     trades = t.journal.trades[-limit:]
     closed = [x for x in t.journal.trades if x["status"] == "closed"]
@@ -154,11 +156,13 @@ def journal(limit: int = 20):
     return JournalOut(
         total=len(t.journal.trades), closed=len(closed),
         win_rate=round(len(wins) / len(closed), 3) if closed else None,
+        total_pnl_usdt=total_realized_pnl_usdt(closed),
         trades=[TradeItem(id=x["id"], symbol=x["symbol"],
                           direction=x.get("direction") or "long",
                           entry_price=x.get("entry_price"),
                           exit_price=x.get("exit_price"),
                           pnl_pct=round(x["pnl"] * 100, 2) if x.get("pnl") is not None else None,
+                          pnl_usdt=realized_pnl_usdt(x),
                           status=x["status"],
                           entry_time=x.get("entry_time"),
                           exit_time=x.get("exit_time"),
@@ -215,6 +219,41 @@ def scan_daily():
                                 "score": round(c.get("score", 0), 3),
                                 "atr_pct": round(c.get("atr_pct", 0), 4),
                                 "price": c.get("price")} for c in w])
+
+
+@app.get("/scan/evolve", response_model=ScanEvolveOut, tags=["观测"])
+def scan_evolve_status():
+    """扫描尺子进化状态：现役/活体/候选影线比、影子样本、是否待批准。
+    只读；不下单、不改尺子。落库走引擎 db_path（测试隔离、防写活体库）。"""
+    from decision.scan_evolve import snapshot
+    return ScanEvolveOut(**snapshot(_trader()._db_path))
+
+
+@app.post("/scan/evolve/approve", response_model=ScanEvolveOut, tags=["控制"],
+           dependencies=[Depends(require_control)])
+def scan_evolve_approve():
+    """批准已通过影子验证门的扫描尺子（目前仅 REJECT_WICK_RATIO）。
+    未通过验证门的提案一律拒绝。不改 config.py，覆盖写在 kv，可回滚。"""
+    from decision.scan_evolve import approve, snapshot
+    db = _trader()._db_path
+    ok, msg = approve(db_path=db)
+    if not ok:
+        raise HTTPException(409, msg)
+    out = ScanEvolveOut(**snapshot(db))
+    out.message = msg
+    return out
+
+
+@app.post("/scan/evolve/rollback", response_model=ScanEvolveOut, tags=["控制"],
+           dependencies=[Depends(require_control)])
+def scan_evolve_rollback():
+    """撤销活体影线比覆盖，回到 config.REJECT_WICK_RATIO。"""
+    from decision.scan_evolve import rollback, snapshot
+    db = _trader()._db_path
+    _, msg = rollback(db_path=db)
+    out = ScanEvolveOut(**snapshot(db))
+    out.message = msg
+    return out
 
 
 @app.post("/pause", response_model=ControlOut, tags=["控制"],

@@ -10,6 +10,7 @@ import time
 
 import config
 from decision.review_engine import deep_review
+from execution.trade_journal import realized_pnl_usdt
 
 # 参数别名（统一维护于 config.py,本模块不私藏数值）
 SIGNAL_SCORE = config.SIGNAL_SCORE
@@ -103,10 +104,7 @@ class ReviewMixin:
         except Exception:
             pass
         # 2026-08-18 用户要求: 平仓通知展示具体收益金额(USDT),不是只有百分比。
-        # pnl 为比例(多:(出-入)/入;空:(入-出)/入),× 名义 = USDT 盈亏。
-        notional = t.get("notional_usdt") or (float(t.get("size") or 0)
-                                              * float(t.get("entry_price") or 0))
-        pnl_usdt = (closed.get("pnl") or 0) * notional
+        pnl_usdt = realized_pnl_usdt(closed) or 0.0
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
         sign = "+" if pnl_usdt >= 0 else ""
         msg = (f"📊 平仓 {base} {self._dir_cn(t.get('direction') or 'long')}\n"

@@ -94,6 +94,11 @@ GUARDS = [
     ("G12 止损止盈锚定成交价(2:1 恒定)",
      lambda: "锚定真实成交价" in _read("engines/position_mgmt.py")
              and "fill_px - stop_off" in _read("engines/position_mgmt.py")),
+    # G13 扫描尺子进化：只人工 approve 写 kv，机器不得自动改 REJECT_WICK_RATIO
+    ("G13 扫描尺子永不自动改（只人工 approve）",
+     lambda: "永不自动改尺子" in _read("decision/scan_evolve.py")
+             and "def approve" in _read("decision/scan_evolve.py")
+             and "/scan/evolve/approve" in _read("service/app.py")),
 ]
 
 

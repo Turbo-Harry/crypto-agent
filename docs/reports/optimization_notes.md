@@ -473,8 +473,12 @@
 ## 2026-08-20 凌晨 沙盘不可交易币预过滤（用户拍板清遗留：BICO/WLD/ZEC/HYPE 占候选名额）
 - 落地: `untradable_bases()` = DEMO_UNTRADABLE ∪ untradable_symbols；
   screen_daily 阶段1 前剔除(连 K 线都不拉)；回退池同步过滤；scan_signals
-  第二道跳过旧池残留。开仓层 reject_untradable 闸门保留。
+  第二道跳过旧池残留。  开仓层 reject_untradable 闸门保留。
+  另: 公开接口也打 x-simulated-trading(此前只打签名请求)——instruments/tickers
+  与沙盘账户一致,INTC/SOXL 等生产有、沙盘无的合约不再凭生产流动性占席。
 - 测试: test_daily_scan_drops_untradable(BICO 静态 + ZEC 动态,BTC/SOL 仍入选)。
+- 活体: 重扫后候选 12 = ETH/SOL/BTC/HBAR/AI16Z/XRP/AAOI/CRWV/CRCL/LINK/AAVE/MET,
+  黑名单与沙盘缺口(BICO/ZEC/HYPE/WLD/INTC/SOXL/MSTR)残留 0;KAITO 持仓衔接。
 
 ## 2026-08-17 凌晨 未触发归因反哺决策系统（用户问:归因如何反哺决策）
 - 落地 tools/no_signal_report.py: generate_feedback() 把画像分布转成四条反哺规则提案——R1 影线门槛微调候选(近失≥20%+主瓶颈wick)/R2 策略B转正评估启动(trend≥60%)/R3 纪律性等待显式抑制调参(touch≥70%)/R4 量能观察(vol≥40%)。
@@ -600,5 +604,33 @@
 - 未重启活体进程。
 - 证据: tests/test_decision_loop.py `test_open_logged_only_on_fill`
   (成交 open=台账; 失败 0 open + open_failed)。
+
+## 2026-08-20 扫描尺子自进化（影线比：提案→影子→验证门→人工批准）
+- 背景: 扫描层规则写死；未触发画像只会出建议、不改尺子。用户要求扫描也能
+  自进化，但必须先影子验证、证明更好，再由人批准改一根尺子。
+- 落地（只动 REJECT_WICK_RATIO）:
+  ① 近窗 signal_profiles 触发 R1（近失≥20% 且主瓶颈=wick）→ experiments
+     kind=scan_wick 提案（候选=现役×0.9，下限 0.8）。
+  ② 现役没信号、候选影线比会出信号 → shadow_signals(A_wick) 只记账、不下单。
+  ③ 随后 24 根 1H 按止盈/止损路径结算（同根两边都打按止损，影子不美化）。
+  ④ 满 30 笔且均盈>GATE_MIN_EDGE 且 DSR≥1 → accepted；**仍不改尺子**。
+  ⑤ POST /scan/evolve/approve 才写 kv 覆盖；config 基线不变；rollback 恢复。
+- 红线: 机器不得自动放宽扫描门槛；风控 1%/150/600/交易所止损未动。
+- 测试: tests/test_scan_evolve.py；test_service_api 增 /scan/evolve 观测与
+  未过门批准 409。
+
+## 2026-08-20 看账总盈亏改实际 USDT
+- 背景: 用户要求「总盈利写实际 usdt」。原先飞书每日看账写 `总盈亏 +x.xx%`，
+  是把各笔价格变动比例加总，名义不同的两笔同 +2% 会被写成 +4%，不是账户真赚了多少钱。
+- 落地:
+  ① `execution/trade_journal.py` 增加 `realized_pnl_usdt` / `total_realized_pnl_usdt`
+     （pnl 比例 × notional_usdt）。
+  ② 每日看账飞书文案改「总盈亏 **±N.NN USDT**」；报告 JSON 增加 total_pnl_usdt。
+  ③ `/journal` 增加 `total_pnl_usdt` 与单笔 `pnl_usdt`。
+  ④ 平仓通知复用同一换算，避免两套公式。
+- 未重启活体进程（下次看账/服务起来后新格式才发出）。
+- 证据: tests/test_decision_loop.py「已实现盈亏按实际 USDT」；
+  test_service_api `/journal` 单笔与合计 USDT。
+
 
 
