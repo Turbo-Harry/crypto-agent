@@ -21,10 +21,14 @@ LEVERAGED_SUFFIX = ("UP", "DOWN", "BULL", "BEAR")
 OBSERVE_POOL_SIZE = 80
 
 # ============ 美股/公司代币（tokenized stocks） ============
-# 用户确认：美股代币也有永续合约（如 ANTHROPIC-USDT-SWAP，实测 live，ctVal=1）。
-# 这类币只有合约、没有现货，无法走"现货代币"路径，单独列进扫描范围。
-# 有现货+合约的（XIAOMI 等）已在 X 前缀现货代币清单里；此表只放"仅合约"的。
-STOCK_SWAP_TOKENS = ["ANTHROPIC"]
+# 2026-08-20 用户拍板: 只做合约、不做现货。OKX 生产实测 19 个美股/公司代币
+# 永续合约(NVDA/TSLA/AAPL/MSTR/COIN/HOOD/META/GOOGL/AMZN/MSFT/INTC/SNDK/
+# SOXL/LITE/CRCL/AMD/PLTR/ANTHROPIC/OPENAI),24h 成交额全部 ≥100 万 USDT。
+# 本表只放【沙盘(demo)实测有合约的】——AAPL/MSTR/COIN/META/AMZN/INTC/SNDK/
+# SOXL/LITE/AMD 生产有但沙盘暂缺(XIAOMI 同类缺口),沙盘补上后再扩表。
+# 旧 X 前缀清单(XNVDA 等)是现货版,已随"只做合约"决策弃用。
+STOCK_SWAP_TOKENS = ["NVDA", "TSLA", "HOOD", "GOOGL", "MSFT",
+                     "CRCL", "PLTR", "ANTHROPIC", "OPENAI"]
 
 # ============ 关卡 1：大盘环境 ============
 BTC_EMA_FAST = 20
@@ -101,6 +105,9 @@ MAX_NOTIONAL_PER_TRADE = 150 # 单笔名义上限 USDT（红线）
 MAX_TOTAL_NOTIONAL = 600     # 组合总敞口上限 USDT（红线,PositionLedger 共用）
 SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
            "LINK", "ADA", "AVAX", "BNB", "LTC"]   # 回退主流池（采集加速扩到 10 个）
+SWAP_ONLY = True             # 只做合约(2026-08-20 用户拍板"我们不做现货,只做合约")：
+# 开仓层硬闸门——无合约场所的标的一律拒绝;现货路径代码保留但不可达
+# (改回 False 即恢复美股现货只多路径,不删代码保可逆)。
 LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3,
                 "LINK": 3, "ADA": 3, "AVAX": 3, "BNB": 3, "LTC": 3}
 # 2026-08-19 沙盘实测: tpTriggerPx 条件单开/挂/取消全链路 sCode=0,开启。
@@ -159,6 +166,17 @@ LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0
 STRATEGY_B_SHADOW_ENABLED = True   # 只记录假设性交易,绝不下单
 BREAKOUT_LOOKBACK = 20             # 突破前 N 根 1H K 线的高低点
 BREAKOUT_VOL_RATIO = 1.2           # 突破 K 线量能 ≥ 均量 × 1.2 才确认
+
+# ---- 库维护（storage/db.py prune_old_rows）----
+DB_RETENTION_DAYS = 90
+# 流水日志保留天数。每日候选扫描结束后 prune_old_rows 删除 ts 早于
+# 该窗口的 scan_decisions / position_snapshots / signal_profiles /
+# engine_errors / shadow_signals / order_failures / analyses(kind='daily'),
+# 以及已 resolved 的 alerts / anomalies（按 resolved_ts, 缺则回退 ts）。
+# status='new' 的未处理告警即使过期也保留——不能把还没人看的异常清掉。
+# 永不清理（台账/经验/研究资产）: trades / lessons / lesson_rollups /
+# trade_features / experiments / factor_trials / thresholds / watchlist /
+# ownership / untradable_symbols / kv。改此值只影响以后的清理,不恢复已删行。
 
 # ---- 沙盘可交易范围（2026-08-17 实测: 沙盘 demo 缺少部分生产合约）----
 DEMO_UNTRADABLE = ["BICO", "GRVT", "AEON", "WLD", "WLFI"]

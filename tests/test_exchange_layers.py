@@ -21,14 +21,15 @@ from engines.directional_trader import DirectionalTrader
 passed = failed = 0
 
 
-def check(name, cond):
+def check(name, cond, detail=""):
     global passed, failed
     if cond:
         passed += 1
         print(f"  ✅ {name}")
     else:
         failed += 1
-        print(f"  ❌ {name}")
+        extra = f" ({detail})" if detail else ""
+        print(f"  ❌ {name}{extra}")
 
 
 def make_candles(n=100, base=100.0, drift=0.1):
@@ -131,9 +132,125 @@ def test_min_size_reject():
     check("1.0 币（=1 张）可下单", res.ok)
 
 
+def test_51121_lot_self_heal():
+    """2026-08-20 沙盘实测: ANTHROPIC 元数据 lotSz=0.001,真实撮合粒度 0.01,
+    非 0.01 整数倍的 sz 全部 51121。适配器应粗化粒度自愈重试并缓存有效粒度。"""
+    print("== 51121 撮合粒度自愈（桩传输层） ==")
+    from exchange.okx_adapter import OKXAdapter
+    from exchange.models import Instrument
+
+    class _StubTransport:
+        """模拟'元数据 0.001/真实 0.01'的沙盘: sz 非 0.01 倍 → 51121。"""
+        def __init__(self):
+            self.posts = []
+
+        def private_post(self, path, body):
+            self.posts.append(dict(body))
+            sz = float(body["sz"])
+            if abs(sz / 0.01 - round(sz / 0.01)) > 1e-9:
+                raise ExchangeError("code=1 All operations failed | "
+                                    "sCode=51121 Order quantity must be a "
+                                    "multiple of the lot size.")
+            return {"data": [{"sCode": "0", "ordId": "stub1"}]}
+
+    ad = OKXAdapter.__new__(OKXAdapter)   # 跳过 __init__ 的真实 Transport
+    ad.t = _StubTransport()
+    ad._lot_eff = {}
+    inst = Instrument("ANTHROPIC-USDT-SWAP", "ANTHROPIC", "swap",
+                      ct_val=1.0, lot_sz=0.001, min_sz=0.001)
+    ad._instruments = {"ANTHROPIC-USDT-SWAP": inst}
+    ad._inst_ts = time.time() + 3600      # 缓存视为新鲜,不触发网络刷新
+
+    res = ad.place_market_order("ANTHROPIC-USDT-SWAP", "buy", 0.831,
+                                venue="swap", pos_side="long")
+    check("0.831 币经自愈后下单成功", res.ok)
+    check("最终 sz 为真实粒度整数倍(0.83)",
+          ad.t.posts[-1]["sz"] == "0.83")
+    check("有效粒度已缓存为 0.01",
+          ad._lot_eff.get("ANTHROPIC-USDT-SWAP") == 0.01)
+    check("重试换了新 clOrdId(51121 干净拒绝,无重复成交风险)",
+          ad.t.posts[0]["clOrdId"] != ad.t.posts[-1]["clOrdId"])
+    # 条件单沿用缓存粒度,一次成功
+    n_before = len(ad.t.posts)
+    sl = ad.place_conditional_stop("ANTHROPIC-USDT-SWAP", "sell", 0.831,
+                                   "long", 170.0)
+    check("止损条件单沿用缓存粒度一次成功",
+          sl.ok and len(ad.t.posts) == n_before + 1)
+
+
+def test_ticker_usdt_normalization():
+    """SWAP volCcy24h 是币本位，适配层必须 × last 才给策略层。"""
+    print("== ticker 成交额归一（桩传输层） ==")
+    from exchange.okx_adapter import OKXAdapter
+
+    class _StubT:
+        def public(self, path, params=None):
+            return {"data": [
+                {"instId": "ANTHROPIC-USDT-SWAP", "last": "180",
+                 "volCcy24h": "9257"},
+                {"instId": "ETH-USDT", "last": "3000", "volCcy24h": "5000000"},
+            ]}
+
+    ad = OKXAdapter.__new__(OKXAdapter)
+    ad.t = _StubT()
+    swap = {t.base: t for t in ad.fetch_tickers("swap")}
+    check("ANTHROPIC 合约成交额 = 币数×last（1666260）",
+          abs(swap["ANTHROPIC"].vol_usdt_24h - 9257 * 180) < 1)
+    check("非 SWAP 后缀的 ticker 被丢掉", "ETH" not in swap)
+    spot = {t.base: t for t in ad.fetch_tickers("spot")}
+    check("现货成交额不乘 last（volCcy24h 已是 USDT）",
+          abs(spot["ETH"].vol_usdt_24h - 5_000_000) < 1)
+
+
+def test_daily_scan_offline_fallback():
+    """daily_scan 必须可注入 FakeAdapter，零网络；成交额为 0 时回退主流合约池。"""
+    print("== daily_scan 离线回退（FakeAdapter） ==")
+    import tempfile
+    from engines.daily_scan import screen_daily, load_watchlist
+    fake = FakeAdapter()
+    tmp = tempfile.mkdtemp(prefix="tst_scan_")
+    db = os.path.join(tmp, "scan.db")
+    w = screen_daily(exchange=fake, db_path=db, pool_top=5, watch_n=5)
+    bases = [c["base"] for c in w]
+    check("回退池是主流 5 币",
+          bases == ["BTC", "ETH", "SOL", "XRP", "DOGE"])
+    check("回退 instId 走合约",
+          all(c["instId"].endswith("-USDT-SWAP") for c in w))
+    loaded = load_watchlist(db_path=db)
+    check("隔离库可读回退池", set(loaded) == set(bases),
+          f"实际 {list(loaded)}")
+
+
+def test_trading_layers_no_okx_url():
+    """交易路径（engines/service/decision/execution）禁止裸打 OKX URL。"""
+    print("== 交易路径无 OKX URL ==")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    banned = ("okx.com", "/api/v5/")
+    leaks = []
+    for layer in ("engines", "service", "decision", "execution"):
+        d = os.path.join(root, layer)
+        if not os.path.isdir(d):
+            continue
+        for dirpath, _, files in os.walk(d):
+            for fn in files:
+                if not fn.endswith(".py"):
+                    continue
+                path = os.path.join(dirpath, fn)
+                text = open(path, encoding="utf-8").read()
+                for b in banned:
+                    if b in text:
+                        leaks.append(f"{os.path.relpath(path, root)}:{b}")
+    check("engines/service/decision/execution 无 okx.com /api/v5/",
+          not leaks, "; ".join(leaks[:4]))
+
+
 if __name__ == "__main__":
     test_quantity_helpers()
     test_min_size_reject()
+    test_51121_lot_self_heal()
+    test_ticker_usdt_normalization()
+    test_daily_scan_offline_fallback()
+    test_trading_layers_no_okx_url()
     test_full_trade_flow()
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)

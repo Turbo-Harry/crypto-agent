@@ -23,9 +23,14 @@ service/            服务端外壳（FastAPI + uvicorn，完整功能唯一入�
   ├─ models.py      Pydantic 响应模型（AI 可读 schema，自动进 /docs）
   └─ worker.py      引擎托管：后台线程 + 共享 WS + watchdog 心跳
 
-engines/           交易引擎层
-  ├─ directional_trader.py  方向性引擎（回踩确认 + 2:1 盈亏比 + tick 止损）
-  └─ daily_scan.py          每日全市场候选扫描 → watchlist.json
+engines/           交易引擎层（2026-08-20 按功能拆分,方法逐行搬移、行为零变化）
+  ├─ directional_trader.py  方向性引擎核心壳（入口/__init__ 组装/启动对账/
+  │                         行情辅助/tick/run 主循环,Mixin 组装宿主）
+  ├─ signal_scan.py         SignalScanMixin   信号扫描/候选池/额度/冷却
+  ├─ position_mgmt.py       PositionMixin     开仓全链路/条件单/失败落库
+  ├─ risk_monitor.py        RiskMonitorMixin  止损监控/熔断强平/51169 判定
+  ├─ review_pipeline.py     ReviewMixin       平仓复盘链/阈值进化门接线
+  └─ daily_scan.py          每日全市场候选扫描 → watchlist（走 ExchangeAdapter）
 
 decision/          决策与进化层
   ├─ self_evolving_trader.py  决策进化（综合经验库做开仓决策）
@@ -47,9 +52,9 @@ storage/           数据持久化层（SQLite，全仓数据唯一落点）
 
 exchange/          交易所访问四层（见 docs/architecture/exchange_layers.md）
   transport.py     OKX 原生 REST：HMAC 签名/模拟盘/限速/错误归一
-  okx_adapter.py   单位换算(ctVal/lotSz)/场所探测/响应翻译
+  okx_adapter.py   单位换算(ctVal/lotSz/成交额)/场所探测/响应翻译
   base.py          抽象接口 ExchangeAdapter + ExchangeError
-  models.py        领域模型 + floor_to_lot
+  models.py        领域模型（含 TickerInfo）+ floor_to_lot
   fake_adapter.py  内存假交易所（单测注入）
 
 factors/           因子挖掘研究层（factor_discovery/evolution/mining）
@@ -173,8 +178,12 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 ## 11. 已知边界（诚实声明）
 
 - 方向性策略历史回测未证明正期望；系统只承诺"亏损有界"（止损+小仓位），不承诺收益。
-- 美股代币仅现货者（XNVDA 等）只做多、无杠杆、本地止损；ANTHROPIC-USDT-SWAP 有合约走合约路径。
-- 沙盘市场清单可能与生产有差异（如 XIAOMI-USDT-SWAP 沙盘暂缺）。
+- **只做合约（SWAP_ONLY=True，2026-08-20 用户拍板"我们不做现货，只做合约"）**：
+  无合约场所的标的开仓层一律拒绝；现货路径代码保留但不可达（可逆）。
+  美股/公司代币走合约（config.STOCK_SWAP_TOKENS，沙盘实测 9 个：NVDA/TSLA/
+  HOOD/GOOGL/MSFT/CRCL/PLTR/ANTHROPIC/OPENAI）；旧 X 前缀现货清单弃用。
+- 沙盘市场清单可能与生产有差异（如 XIAOMI/AAPL/MSTR/SOXL 等合约沙盘暂缺）；
+  沙盘元数据 lotSz 可能与真实撮合粒度不一致（51121），适配器自愈粗化重试。
 
 ## 12. 完成声明 = 证据包（M7，收敛保证机制）
 

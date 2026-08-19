@@ -6,8 +6,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ 应用/策略层  directional_trader.py · trading_main.py     │
-│             trading_agent.py · funding_arb.py           │
+│ 应用/策略层  directional_trader.py · daily_scan.py       │
 │             ── 只 import exchange.base.ExchangeAdapter   │
 ├─────────────────────────────────────────────────────────┤
 │ 接口层       exchange/base.py                           │
@@ -23,8 +22,8 @@
 │             模拟盘 header、限速、429 退避、错误归一        │
 ├─────────────────────────────────────────────────────────┤
 │ 领域模型     exchange/models.py                         │
-│             Instrument/Candle/BalanceInfo/PositionInfo/  │
-│             OrderResult + floor_to_lot/lot_decimals      │
+│             Instrument/Candle/TickerInfo/BalanceInfo/    │
+│             PositionInfo/OrderResult + floor_to_lot      │
 ├─────────────────────────────────────────────────────────┤
 │ 测试替身     exchange/fake_adapter.py                   │
 │             FakeAdapter —— 内存交易所，单测注入           │
@@ -36,8 +35,9 @@
 ## 关键设计决策
 
 1. **单位统一在适配层**：策略层永远说"基础币数量、USDT 价格"。
-   张数换算（qty ÷ ct_val）、lotSz 对齐（向下取整，绝不超发）、minSz 校验
-   全部在 OKXAdapter 内完成。策略层不出现 `ctVal`、`lotSz` 字样。
+   张数换算（qty ÷ ct_val）、lotSz 对齐（向下取整，绝不超发）、minSz 校验、
+   **24h 成交额归一**（SWAP `volCcy24h` 是币本位 → × last 才是 USDT）
+   全部在 OKXAdapter 内完成。策略层不出现 `ctVal`、`lotSz`、`volCcy24h` 字样。
 
 2. **场所探测**：`venue_for(base)` 优先合约、回退现货。ANTHROPIC 这类
    "只有永续"的代币自动走合约路径（杠杆+交易所侧止损）；XNVDA 这类
@@ -55,7 +55,14 @@
    - funding bills 金额在 `balChg` 字段
 
 5. **可测试性**：`DirectionalTrader(exchange=FakeAdapter())` 离线跑通
-   信号→开仓→止损→平仓全链路（`test_exchange_layers.py`，18 断言）。
+   信号→开仓→止损→平仓全链路；`screen_daily(exchange=FakeAdapter())` 离线回退。
+
+6. **交易路径 REST 只走本层**（2026-08-20 收敛）：
+   `engines/` `service/` `decision/` `execution/` 禁止出现 `okx.com` 或 `/api/v5/`。
+   清单/ticker/K 线/下单/条件单/对时一律经 ExchangeAdapter 或（工具脚本）OKXTransport。
+   `data/fetch_okx.py` 只给研究/回测做 history-candles 分页，不进交易路径。
+   WebSocket 仍在 `data/realtime_okx.py`（data 不得 import exchange）；
+   REST 预热由调用方注入 `fetch_candles`。
 
 ## 换交易所的成本
 
@@ -66,5 +73,5 @@
 
 - 2026-08-16 沙盘实测：开多 0.01 ANTHROPIC → 挂 slTriggerPx 止损 →
   pending 查询 → 撤单 → reduceOnly 平仓 → 持仓归零，全链路 ✅
-- `test_exchange_layers.py`：18 通过 0 失败（含最小下单量拒绝、账本释放）
+- `test_exchange_layers.py`：分层单测（含 ticker 归一、daily_scan 离线回退、交易路径无 OKX URL）
 - 活体 directional_trader 重启后心跳正常、3 笔 ETH 持仓衔接 ✅

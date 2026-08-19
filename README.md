@@ -41,9 +41,13 @@ crypto-agent/
 │   ├── app.py              #   HTTP 接口层（只读观测 + 暂停/恢复，禁止下单）
 │   ├── models.py           #   Pydantic 响应模型（AI 可读 schema）
 │   └── worker.py           #   引擎托管：后台线程 + 共享 WS + 心跳
-├── engines/                # 交易引擎层
-│   ├── directional_trader.py   # 方向性引擎（回踩确认 + 2:1 盈亏比 + tick 止损）
-│   └── daily_scan.py           # 每日全市场候选扫描 → watchlist.json
+├── engines/                # 交易引擎层（2026-08-20 按功能拆分，行为零变化）
+│   ├── directional_trader.py   # 方向性引擎核心壳（入口/组装/对账/tick 主循环）
+│   ├── signal_scan.py          #   信号扫描/候选池/额度/冷却（SignalScanMixin）
+│   ├── position_mgmt.py        #   开仓全链路/条件单/失败落库（PositionMixin）
+│   ├── risk_monitor.py         #   止损监控/熔断强平（RiskMonitorMixin）
+│   ├── review_pipeline.py      #   平仓复盘链/阈值进化门（ReviewMixin）
+│   └── daily_scan.py           # 每日全市场候选扫描 → watchlist（走 ExchangeAdapter）
 ├── decision/               # 决策与进化层（self_evolving/experience/threshold/review/evolution_gate）
 ├── execution/              # 执行与台账层（quantity/trade_journal/position_ownership）
 ├── exchange/               # 交易所访问四层（transport/okx_adapter/base/models/fake）
@@ -62,8 +66,8 @@ crypto-agent/
 ## 测试
 
 ```bash
-PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（18 断言，离线）
-PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（14 断言，离线）
+PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（FakeAdapter 离线）
+PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（TestClient 离线）
 python3 -m py_compile <改动的文件>
 ```
 
@@ -72,8 +76,10 @@ python3 -m py_compile <改动的文件>
 ## 数据源与交易所
 
 - 交易所：OKX 模拟盘（sandbox，虚拟资金），原生 REST 直连（无 ccxt）
-- 行情：OKX 原生 WebSocket（tickers/funding-rate/trades）+ REST 兜底
-- 历史数据：OKX `/market/history-candles`（约 6 年）
+- 交易路径 REST：一律走 `exchange/`（适配层 `fetch_tickers`/`fetch_candles`/下单）；`engines/` 禁止裸打 OKX URL
+- 行情：OKX 原生 WebSocket（tickers/funding-rate/trades）+ 适配层 REST 预热
+- 历史数据（研究/回测）：`data/fetch_okx.py` 的 `/market/history-candles`（约 6 年）
+- 本地库：`crypto_agent.db`（SQLite）。流水日志保留 90 天（`config.DB_RETENTION_DAYS`），每天扫完候选池后自动清理；交易台账、经验库、研究表永久保留。未处理的告警不会被清掉。
 
 ## 已知边界（诚实声明）
 

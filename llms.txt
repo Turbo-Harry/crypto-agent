@@ -40,9 +40,13 @@
 ## 代码
 
 - [service/main.py](service/main.py): 服务端进程入口（FastAPI + 双引擎线程）
-- [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎（回踩确认信号 + tick 止损）
+- [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎核心壳（入口/组装/tick 主循环；功能块 2026-08-20 拆分）
+- [engines/signal_scan.py](engines/signal_scan.py): 信号扫描功能块（SignalScanMixin）
+- [engines/position_mgmt.py](engines/position_mgmt.py): 仓位管理功能块（PositionMixin）
+- [engines/risk_monitor.py](engines/risk_monitor.py): 风控监控功能块（RiskMonitorMixin）
+- [engines/review_pipeline.py](engines/review_pipeline.py): 复盘管道功能块（ReviewMixin）
 - [engines/trading_main.py](engines/trading_main.py): 套利引擎（事件驱动，ENABLE_FUNDING_ARB=False 停用）
-- [engines/daily_scan.py](engines/daily_scan.py): 每日全市场候选扫描
+- [engines/daily_scan.py](engines/daily_scan.py): 每日全市场候选扫描（走 ExchangeAdapter，禁止裸打 OKX）
 - [exchange/okx_adapter.py](exchange/okx_adapter.py): OKX 原生 REST 适配器
 - [tests/test_exchange_layers.py](tests/test_exchange_layers.py): 分层单测（FakeAdapter 离线）
 - [tests/test_service_api.py](tests/test_service_api.py): 服务端接口单测（TestClient 离线）

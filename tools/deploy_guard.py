@@ -52,16 +52,9 @@ def smoke():
         return 1
     print("  ✅ SL/TP 条件单 sCode=0")
     time.sleep(0.5)
-    # 3. 取消挂单
-    for ot in ("conditional", "oco", "trigger", "move_order_stop"):
-        try:
-            pend = ex.t.private_get("/api/v5/trade/orders-algo-pending",
-                                    {"instType": "SWAP", "ordType": ot})
-            for p in pend.get("data") or []:
-                ex.t.private_post("/api/v5/trade/cancel-algos",
-                                  [{"algoId": p["algoId"], "instId": p["instId"]}])
-        except Exception:
-            pass
+    # 3. 取消挂单（走适配层，不穿透 transport 私有端点）
+    if not ex.cancel_algos(inst):
+        print("⚠️ 冒烟: 取消条件单未全部成功（继续平仓）")
     print("  ✅ 取消挂单完成")
     time.sleep(0.5)
     # 4. 平仓

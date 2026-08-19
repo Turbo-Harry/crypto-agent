@@ -15,7 +15,6 @@ import os
 import json
 import threading
 import time
-import urllib.request
 from collections import deque
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
@@ -32,9 +31,12 @@ class OKXRealtime:
     """OKX 实时行情观测器（价格 + 资金费率 + 成交）。
     内置监督线程：断线/僵死自动重连；K线按 ts 去重；冷启动 REST 预热。"""
 
-    def __init__(self, symbols=None):
+    def __init__(self, symbols=None, fetch_candles=None):
         # symbols: 如 ["BTC", "ETH", "SOL"]
+        # fetch_candles(inst_id, bar, limit) → List[Candle]：REST 预热走交易所适配层，
+        # 禁止本文件裸打 OKX URL（data 层不 import exchange，由调用方注入）。
         self.symbols = symbols or ["BTC", "ETH", "SOL"]
+        self._fetch_candles = fetch_candles
         self.subscribed = set(self.symbols)   # 动态订阅去重(2026-08-17)
         self.ws = None
         self.latest = {}  # {base: {"price":..., "funding":..., "taker_buy":...}}
@@ -185,16 +187,15 @@ class OKXRealtime:
                         self._restart_lock.release()
 
     def _refresh_candles_from_rest(self, base):
-        """REST 拉某币最近 15 根 1m K线并更新 vol_15m。返回 True/False。"""
+        """REST 拉某币最近 15 根 1m K线并更新 vol_15m。返回 True/False。
+        必须走注入的 fetch_candles（适配层），本文件不再 urllib 打 OKX。"""
+        fetcher = self._fetch_candles
+        if fetcher is None:
+            return False
         try:
-            url = ("https://www.okx.com/api/v5/market/candles"
-                   f"?instId={base}-USDT&bar=1m&limit={CANDLE_KEEP}")
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                d = json.loads(r.read())
-            rows = d.get("data") or []  # 最新在前
-            candles = [{"high": float(x[2]), "low": float(x[3]), "ts": int(x[0])}
-                       for x in reversed(rows)]
+            rows = fetcher(f"{base}-USDT", "1m", CANDLE_KEEP)
+            candles = [{"high": c.high, "low": c.low, "ts": int(c.ts)}
+                       for c in rows]
             entry = self.latest.setdefault(base, {})
             # 与已有窗口按 ts 合并去重（保留较新 15 根）
             old = entry.get("candles_1m", [])

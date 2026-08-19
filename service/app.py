@@ -200,12 +200,12 @@ def scan_daily():
     """手动触发一次全市场候选扫描（刷新 watchlist，覆盖 123 个标的）。
     耗时约 1-2 分钟；调用会阻塞等待完成。"""
     from engines.daily_scan import screen_daily
+    t = _trader()
     try:
-        w = screen_daily()
+        w = screen_daily(exchange=t.exchange)
     except Exception as e:
         raise HTTPException(500, f"扫描失败: {e}")
-    # 同步刷新两引擎的候选池（避免等跨天自动刷新）
-    t = _trader()
+    # 同步刷新引擎的候选池（避免等跨天自动刷新）
     t.watchlist = [c["base"] for c in w]
     t.watch_scores = {c["base"]: c["score"] for c in w}
     t._watch_date = time.strftime("%Y-%m-%d")

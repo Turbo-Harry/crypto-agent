@@ -215,3 +215,63 @@
 - 根因：夹逼保护是为自动校准设计的；进化门写入口的两类值（已夹逼的提案值、用户拍板的基线值）都不该二次夹逼。
 - 修复：apply_threshold 精确写入不夹逼，注释写明两类来源各自的保证。
 - 预防：任何"写入口复用防护逻辑"先枚举全部调用方来源；对"恢复基线"类操作，精确性优先于防护性。
+
+### 2026-08-20 monitor 现货平仓异常分支引用未定义变量（潜伏 NameError）
+- 现象：上帝类拆分逐行搬移时发现（未在生产触发）：monitor 现货路径 `except Exception as e:` 分支调用 `self._log_order_failure(..., qty, ...)`，但 `qty` 在该作用域从未定义——一旦现货平仓抛异常，会二次抛 NameError 吞掉真实错误且失败不落库。
+- 根因：该行从合约路径复制而来，合约路径有局部 `close_qty`/`qty`，现货路径数量在 `t["size"]` 里，复制时没改参数。
+- 修复：改为 `abs(float(t["size"]))`（与该笔台账数量一致）。
+- 预防：异常处理分支里的变量引用必须逐一核对作用域（异常分支平时不执行，py_compile/测试都难覆盖）；复制相似路径代码时把"取数来源"列为必查项。
+
+### 2026-08-20 SWAP ticker 的 volCcy24h 是币本位，被当 USDT 比较（ANTHROPIC 每天被误杀）
+- 现象：唯一配置了合约的美股代币 ANTHROPIC 从未进过候选池（watchlist 历史 0 行、扫描决策 0 条），用户问"为什么没有美股合约交易"才查出。
+- 根因：OKX ticker 字段单位随 instType 变——现货 volCcy24h 是 USDT 计价（口径对），合约 volCcy24h 是币本位。daily_scan._stock_pool 直接拿币数（9,257）与 MIN_VOL=100万比较，实际 USDT 额 168 万达标却每天在阶段 1 被刷掉。
+- 修复：合约成交额 = volCcy24h × last；与"legacy 单位错位"同模板。
+- 预防：任何跨 instType 复用交易所字段前，先查该字段在每种 instType 下的单位定义；新数据源接入时用两个已知标的手工对账一次数量级。
+
+### 2026-08-20 沙盘元数据 lotSz 与真实撮合粒度不一致（51121）
+- 现象：ANTHROPIC 沙盘 instruments 接口报 lotSz=0.001，但实测 sz=0.001/0.831 全被 51121（非 lot 整数倍）拒，0.01/0.83 通过——真实撮合粒度是 0.01，元数据细了 10 倍。
+- 根因：沙盘（demo）的合约元数据与撮合引擎配置漂移；按元数据 floor_to_lot 产出的数量对撮合引擎非法。
+- 修复：okx_adapter 增 51121 自愈——粗化有效粒度 ×10 重试（最多 3 次），学到的粒度按 instId 缓存，止损/平仓单沿用；51121 是干净业务拒绝（未成交），换新 clOrdId 重试无重复成交风险。桩传输层单测 5 项覆盖。
+- 预防：交易所元数据当参考不当真理；对"数量/精度"类错误码设计自愈路径而不是直接失败（沙盘元数据问题生产未必有，但自愈两边都无害）。
+
+### 2026-08-20 引擎数量对齐到整张 ctVal，美股合约（ctVal=1 币）全被误杀
+- 现象：修完成交额单位后美股合约仍不可交易：ctVal=1 的合约（NVDA/ANTHROPIC 等，1 张 ≈180-500 USDT）在 150 USDT 名义上限下 floor 到 0，被 reject_min_size；实测 9 个美股合约旧口径 6 个被拒。
+- 根因：open_position 精度对齐用 `floor_to_lot(qty, ct_val)`（整张），但 OKX 允许小数张（lotSz<1）——真实可交易增量是 lotSz×ctVal（0.01 张 ≈1.8 USDT）。加密币 ctVal 都很小（BTC 0.01），坑一直没暴露。
+- 修复：对齐粒度改为 `inst.lot_sz * inst.ct_val`；最小量校验（min_sz×ct_val）不变，仍只向下取整不超发。
+- 预防："能不能下单"的换算必须用交易所的最小增量字段组合（lotSz×ctVal），不得用单一字段近似；新增标的类别（美股合约）上线前跑一遍名义上限→数量的全清单核算（本次 9 币核算表进优化记录）。
+
+### 2026-08-20 用首字母判类别：XRP 被 startswith("X") 误标成美股代币
+- 现象：watchlist 里 XRP 带 is_stock=1 标记（XLM/XTZ 同样会中招），看账/统计数据被污染。
+- 根因：daily_scan 用 `base.startswith("X")` 兜底判美股——X 前缀只是 OKX 美股现货代币的命名习惯，不是类别判据。
+- 修复：is_stock 只信池来源标记（_stock_pool 显式打标），删除首字母兜底。
+- 预防：类别判定用显式清单/来源标记，禁止用命名模式猜测。
+
+### 2026-08-20 字符串护栏与文件路径耦合：搬代码必须同步搬护栏
+- 现象：上帝类按功能拆分后，fix_guard 的 G5/G7/G10/G12 会立即误报"护栏被破坏"——它们用 `"关键字符串" in 文件` 检查修复是否在位，而字符串随方法搬进了新模块。
+- 根因：字符串护栏天然与文件路径耦合；重构搬移代码时护栏路径不会自己跟上。
+- 修复：拆分同一提交内更新 G1/G5/G7/G10/G12 指向新文件（position_mgmt/risk_monitor/signal_scan），拆分后 `python3 tools/fix_guard.py` 12 条全绿。
+- 预防：任何"方法搬家"类重构，先 `rg 目标文件名 tools/` 找出所有字符串护栏/体检项引用，护栏更新与代码搬移同一提交落地；fix_guard 必须进重构后的验证清单（本仓已在全量回归四件套里）。
+
+### 2026-08-20 交易 ID 基于内存长度生成导致多进程撞号覆盖
+- 现象：`log_entry` 用 `txn_{len(self.trades)+1:03d}` 生成主键；服务进程与 `directional_trader.py --once` 调试进程同时开仓、或重启后内存列表与库不同步时，会产出相同 ID。落库是 `INSERT OR REPLACE INTO trades`（主键 id），撞号会静默覆盖另一笔，台账丢数据。`_save()` 还把全部历史逐笔全量重写，注释写了增量 UPDATE 但从未实现。
+- 根因：ID 绑定进程内列表长度，不是库内唯一键；写库路径把"新增"做成"按主键替换"。
+- 修复：新 ID 改为 `txn_{秒级时间戳}_{4位随机hex}`，与旧 `txn_001` 共存、不迁移旧行（lessons.source_trade / trade_features.trade_id 仍引用旧 ID）。`log_entry` 纯 INSERT（主键冲突抛错不覆盖）；`log_exit` / `save_review` / `review` 只 UPDATE 本笔对应列；`_save()` 全量重写仅留给 JSON 迁移与 legacy 回填。
+- 预防：主键生成禁止依赖内存集合长度；新增行用 INSERT、更新行用 UPDATE，禁止用 REPLACE 当"保存"。多进程共享库的对象必须用临时库做双实例撞号回归。
+
+### 2026-08-20 交易路径仍裸打 OKX URL（未收敛到 exchange 层）
+- 现象：分层架构已有 transport/adapter，但 `engines/daily_scan.py` 自己 urllib 打 `/market/tickers` 和 `/public/instruments`，K 线走 `data/fetch_okx`（history-candles + 24h 文件缓存）；`data/realtime_okx` REST 预热、`tools/deploy_guard` 穿透 `ex.t.private_get`、引擎 `make_cl_ord_id` 直 import okx_adapter。
+- 根因：适配层只覆盖了下单/持仓/单币 ticker，全市场 ticker 与幂等键生成没进 ExchangeAdapter；每日扫描沿用研究数据层，等于交易路径旁路。
+- 修复：Adapter 增 `fetch_tickers`（SWAP 成交额在适配层 × last 归一成 USDT）和 `new_cl_ord_id`；daily_scan / 信号扫描 / HTTP `/scan/daily` 注入同一适配器；WS REST 预热注入 `fetch_candles`；deploy_guard 改 `cancel_algos`；交易四层静态禁止 `okx.com`/`/api/v5/`。
+- 预防：新增 OKX 端点只加在 transport/adapter；`test_trading_layers_no_okx_url` 进分层套件，泄漏立刻红。研究/回测的 history-candles 仍留 `data/fetch_okx.py`（非交易路径）。
+
+### 2026-08-20 watchlist 先删后插非原子，崩溃留半截候选池
+- 现象：每日扫描重建当日 watchlist 时先 `DELETE FROM watchlist WHERE date=?` 再逐条 `INSERT`，每条走独立短连接自动 commit。中途崩溃（进程被杀/异常）会留下空池或半截池；当天所有开仓决策读的就是这份残缺候选。
+- 根因：`storage/db.py` 只有 q/q1/x 三个原语，x() 每条写立刻 commit，没有跨多条语句的事务。DELETE 已落盘后 INSERT 才开始，两步之间没有原子边界。
+- 修复：新增 `tx()` contextmanager（正常退出 commit，异常 rollback 后重抛，finally close）；daily_scan 的 DELETE+全部 INSERT 包进同一个事务。顺手把 worker/signal_scan 一轮仓位快照的多行 INSERT 也包进事务（同一轮 = 同一时刻持仓全集）。
+- 预防：凡"先清空再写全量"或"一轮多行必须同时可见"的落库，必须用 tx() 而不是循环调 x()。tx() 块内只用 conn.execute，禁止再调 x()/q()（那些会另开连接，看不到未提交变更）。
+
+### 2026-08-20 user_version 已升到最新后,旧索引可能被活体旧进程建回来
+- 现象：只读看活体 `crypto_agent.db`，`PRAGMA user_version=2` 且新索引已在，但旧 `idx_anom_status` 仍在。按"version 已最新就跳过迁移"的逻辑，下次重启也不会 DROP。
+- 根因：① HTTP 层 `sdb.init_db()` 不带 db_path，TestClient 回归会把新迁移跑到活体库（version 被升到 2、新索引建上）；② 活体进程仍跑旧代码，旧 SCHEMA 里有 `CREATE INDEX IF NOT EXISTS idx_anom_status`，会把刚删掉的旧索引建回来；③ v2 迁移因 version 已是 2 不再执行。
+- 修复：SCHEMA 每次 `executescript` 都 `DROP INDEX IF EXISTS idx_anom_status`（幂等），不依赖"迁移还没跑过"。v2 里仍保留同款 DROP。
+- 预防：改名/替换索引时，DROP 旧名必须进 SCHEMA（每次 init_db 都跑），不能只放在"只跑一次"的迁移函数里；测试 init_db 必须传隔离 db_path，HTTP 只读端点的 init_db() 默认路径会碰到活体库。

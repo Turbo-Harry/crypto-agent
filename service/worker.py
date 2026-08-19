@@ -60,7 +60,8 @@ class TraderWorker:
         try:
             from data.realtime_okx import OKXRealtime
             # 2026-08-17: WS 覆盖全回退池(此前硬编码 5 币,池外下单无秒级行情)
-            self.rt = OKXRealtime(config.SYMBOLS).start()
+            self.rt = OKXRealtime(
+                config.SYMBOLS, fetch_candles=self.exchange.fetch_candles).start()
             print("共享 WebSocket 实时行情已接入")
         except Exception as e:
             print(f"WebSocket 启动失败，REST 兜底: {e}")
@@ -104,11 +105,13 @@ class TraderWorker:
         try:
             import storage.db as sdb
             sdb.init_db()
-            for p in self.exchange.fetch_positions():
-                sdb.x("INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
-                      "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
-                      [time.time(), p.inst_id, p.side, p.contracts,
-                       round(p.base_qty, 8), p.avg_px])
+            with sdb.tx() as conn:
+                for p in self.exchange.fetch_positions():
+                    conn.execute(
+                        "INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
+                        "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
+                        [time.time(), p.inst_id, p.side, p.contracts,
+                         round(p.base_qty, 8), p.avg_px])
         except Exception as e:
             print(f"仓位快照失败: {e}")
 

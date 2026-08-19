@@ -8,8 +8,8 @@ import itertools
 from typing import Dict, List, Optional
 
 from exchange.base import ExchangeAdapter, ExchangeError
-from exchange.models import (Instrument, Candle, BalanceInfo, PositionInfo,
-                             OrderResult)
+from exchange.models import (Instrument, Candle, TickerInfo, BalanceInfo,
+                             PositionInfo, OrderResult)
 
 
 class FakeAdapter(ExchangeAdapter):
@@ -36,6 +36,8 @@ class FakeAdapter(ExchangeAdapter):
         self.spot_holdings: Dict[str, float] = {}
         self.bills: List[dict] = []
         self._ord_seq = itertools.count(1)
+        # 测试可灌 24h 成交额；默认 0 → daily_scan 阶段1 全灭走回退池（离线安全）
+        self.ticker_vol_usdt: Dict[str, float] = {}
 
     # ---------- 工具/市场 ----------
     def venue_for(self, base: str, prefer_swap: bool = True) -> Optional[str]:
@@ -62,6 +64,20 @@ class FakeAdapter(ExchangeAdapter):
 
     def fetch_funding_rate(self, inst_id: str) -> float:
         return self.funding_rates.get(inst_id, 0.0)
+
+    def fetch_tickers(self, venue: str = "swap") -> List[TickerInfo]:
+        out = []
+        for inst in self._instruments.values():
+            if inst.venue != venue:
+                continue
+            last = self.last_prices.get(inst.inst_id, 0.0)
+            vol = self.ticker_vol_usdt.get(inst.inst_id, 0.0)
+            out.append(TickerInfo(inst_id=inst.inst_id, base=inst.base,
+                                  last=last, vol_ccy_24h=vol, vol_usdt_24h=vol))
+        return out
+
+    def new_cl_ord_id(self) -> str:
+        return f"f{next(self._ord_seq)}"
 
     # ---------- 账户 ----------
     def fetch_balance(self) -> BalanceInfo:

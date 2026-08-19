@@ -417,8 +417,149 @@
   FLAG_ENABLE_EXCHANGE_TP 后开仓挂 2 张条件单,旧断言写死 1 张,见 pitfalls);
   全量回归 15 文件 191 项全绿 0 失败;params_lint/code_graph/fix_guard 全过。
 
+## 2026-08-20 凌晨 交易 API 层加固 + 引擎上帝类按功能拆分（用户指示"顺手修掉,再把上帝类拆了,按功能维护"）
+- 加固(exchange/transport.py 两处小瑕疵):
+  ① 限速器加锁——监控线程(1s)与扫描线程共用同一适配器实例,_last_ts 读写无锁
+  会让两线程同时通过限速检查;threading.Lock 包住比较+更新。
+  ② 重试升级——固定 1 次/1s → 指数退避 MAX_ATTEMPTS=3(1s→2s),覆盖 429 与
+  网络抖动(SSL EOF/握手超时);POST 重试安全依旧由 clOrdId 幂等键保证。
+  (常量属传输层结构参数,exchange 层不在 params_lint 扫描域,留模块头常量。)
+- 拆分(engines/,1383 行上帝类 → 核心壳 391 行 + 四个功能块):
+  signal_scan.py(295) SignalScanMixin — scan_signal/scan_signals/_trade_budget/
+    _is_auto_untradable/_long_scan_progress/_log_scan_decision/_build_trade_conditions;
+  position_mgmt.py(364) PositionMixin — open_position/_recover_order/_place_tp/
+    _cancel_stop_orders/_log_order_failure;
+  risk_monitor.py(254) RiskMonitorMixin — monitor/_liquidate_all/_pos_gone/
+    _log_51169_throttled/_log_risk_event;
+  review_pipeline.py(160) ReviewMixin — _post_close_review/_threshold_gate_step;
+  directional_trader.py 保留 入口/notify/connect/instance_lock/_ExpAdapter/
+    __init__/_reconcile_startup/行情辅助/_dir_cn/run_once/tick/run。
+- 拆分纪律(为什么选 Mixin 而非组合对象): 类名/方法名/self 状态一个不动——
+  测试(dt.open_position 等直呼)、ServiceTrader 子类 override、fix_guard 字符串
+  护栏、活体进程全部无感;方法体逐行搬移(脚本按行段搬,非手抄),行为零变化。
+- 顺手修复: monitor 现货平仓异常分支引用未定义变量 qty(潜伏 NameError,见 pitfalls);
+  fix_guard G1/G5/G7/G10/G12 护栏路径随代码搬家同步更新。
+- 证据: 全量回归 15 文件 191 项全绿 0 失败;params_lint/code_graph --check/
+  fix_guard 12 条全过;MRO 装配自检 26 个方法无缺失。
+
+## 2026-08-20 凌晨 只做合约 + 美股合约接入（用户拍板"我们不做现货,只做合约"）
+- 背景: 用户问"为什么没有美股合约交易"。OKX 生产实测 19 个美股/公司代币永续
+  (NVDA/TSLA/AAPL/MSTR/…/ANTHROPIC/OPENAI),24h 额全部 ≥100 万;沙盘有其中 9 个。
+  阻塞链共四层,全部修复:
+  ① daily_scan 把 SWAP volCcy24h(币本位)当 USDT 比较 → ANTHROPIC(实际 168 万)
+    每天被阶段1误杀(watchlist 历史 0 行);修复 = volCcy24h × last。
+  ② 旧美股池走 X 前缀现货清单 → 与"只做合约"冲突;_stock_pool 收敛为
+    config.STOCK_SWAP_TOKENS 合约口径(沙盘实测 9 个)。
+  ③ 引擎数量对齐 floor(qty, ctVal) 过粗 → ctVal=1 币(≈180-500 USDT/张)的合约
+    在 150 名义上限下 floor 到 0,9 个里 6 个被拒;修复 = floor(qty, lotSz×ctVal),
+    9/9 全部可交易(核算表见当日 session,ANTHROPIC 0.829 币/149.9U 等)。
+  ④ 沙盘元数据 lotSz(0.001) 与真实撮合粒度(0.01)不一致 → 51121;okx_adapter
+    自愈: 粗化 ×10 重试(≤3 次)+有效粒度按 instId 缓存,条件单/平仓沿用。
+- 政策落地: config.SWAP_ONLY=True(参数区,用户拍板)——开仓层硬闸门,无合约
+  场所一律拒绝(reject_spot_only 记决策日志);现货路径代码保留不可达(可逆)。
+  顺手修复 XRP 被 startswith("X") 误标 is_stock 的看账污染。
+  ⑤ 候选池两处收尾: watchlist 同日重扫改"先 DELETE 当日再写"(旧候选残留);
+    screen_daily 增只做合约预过滤(69→51,X 系现货代币曾凭现货成交额从加密
+    观察池混入占 4/12 席;清单获取失败 fail-open,开仓层闸门兜底)。
+- 沙盘实测证据: ANTHROPIC 合约全链路 开多→挂止损(slTriggerPx)→pending→撤单
+  →reduceOnly 平仓 全程 sCode=0 无残留;0.831 币经 51121 自愈成功、0.83 直过。
+- 活体验证: 重启后候选池 12 个 = CRCL(美股合约,全场最高分 0.79)+TSLA 首次
+  入选,X 系现货全部清出;KAITO 持仓/台账衔接,心跳正常。
+- 测试: test_exchange_layers 新增 51121 自愈 5 项(桩传输层),全量 15 文件
+  196 项全绿 0 失败;params_lint/code_graph/fix_guard 全过。
+- 已知边界更新: AAPL/MSTR/COIN/META/AMZN/INTC/SNDK/SOXL/LITE/AMD 生产有合约
+  但沙盘暂缺(XIAOMI 同类),沙盘补上后扩 STOCK_SWAP_TOKENS 即可。
+
 ## 2026-08-17 凌晨 未触发归因反哺决策系统（用户问:归因如何反哺决策）
 - 落地 tools/no_signal_report.py: generate_feedback() 把画像分布转成四条反哺规则提案——R1 影线门槛微调候选(近失≥20%+主瓶颈wick)/R2 策略B转正评估启动(trend≥60%)/R3 纪律性等待显式抑制调参(touch≥70%)/R4 量能观察(vol≥40%)。
 - 反哺纪律: 提案只进 experiments 注册表(proposed),永不自动生效——验证门(S1-S3)+人工放行(防过拟合红线)。
 - 当前实测: 主瓶颈 touch 84% → R3 触发("等回踩是纪律,抑制调参冲动")——归因反哺的第一课是"什么都不改"。
 - 测试: 4 项规则触发/抑制断言,test_strategy_b 29 项全绿。
+
+## 2026-08-20 凌晨 TradeJournal ID 防撞号 + 写库增量化
+- 背景: log_entry 按内存 `len(self.trades)+1` 生成 `txn_001` 式主键,两进程同开或重启后内存与库不同步会撞号;
+  `_save()` 对全表逐笔 INSERT OR REPLACE(每笔独立连接+commit),注释声称增量 UPDATE 但未实现——撞号即静默覆盖丢台账。
+- 落地(execution/trade_journal.py,调用方签名零改动,不改 storage/db.py):
+  ① 新 ID = `txn_{int(time.time())}_{secrets.token_hex(2)}`,旧 txn_001 不迁移(lessons.source_trade /
+    trade_features.trade_id 继续引用)。
+  ② log_entry 纯 INSERT(主键冲突抛错不覆盖);log_exit 只 UPDATE status/exit_price/exit_reason/exit_time/pnl;
+    save_review 只 UPDATE review/review_ts;review 只 UPDATE review(lessons 仍只内存追加,kv.legacy_journal_lessons 不动)。
+  ③ `_save()` 全量重写保留,仅 JSON 迁移 + `_backfill_notional` 回填可走(position_mgmt TP 打标仍兼容调用)。
+- 测试适配: test_service_api save_review 不再写死 txn_001,改读 journal.trades[0]["id"]。
+- 验证: 临时库双 TradeJournal 各 log_entry 一笔 → ID 不同且 trades=2;log_exit 一笔另一笔未改;
+  手工插入 txn_001 后 _load + log_exit 正常。py_compile 通过;test_exchange_layers 24/0、
+  test_service_api 24/0;journal 相关 test_r2_6 3/0、test_p0_fixes 13/0、test_phase0_review 33/0、
+  test_decision_loop 14/0、test_phase1_features 16/0。storage/db.py 与活体进程/crypto_agent.db 未动。
+
+## 2026-08-20 凌晨 SQLite 事务原语 tx() + watchlist/快照原子写
+- 背景: storage/db.py 只有 q/q1/x 三个原语,x() 每条写独立短连接+自动 commit;
+  没有跨多条语句的事务。daily_scan 重建当日 watchlist 先 DELETE 再逐条 INSERT,
+  中途崩溃会留下空的/半截候选池,当天开仓决策全部读这份残缺数据。
+- 落地:
+  ① storage/db.py 新增 tx(db_path=None) contextmanager: yield 已设 WAL/
+    busy_timeout/synchronous=NORMAL/row_factory 的连接;正常退出 commit,
+    异常 rollback 后重抛,finally close。docstring 写清何时用 x、何时用 tx。
+  ② _connect 补 PRAGMA synchronous=NORMAL(WAL 官方推荐;checkpoint 仍 fsync,
+    已提交事务崩溃不丢,写入更快)。短连接/WAL/busy_timeout=5000 设计不变。
+  ③ engines/daily_scan.py watchlist 重建: DELETE+全部 INSERT 包进一个 tx()。
+  ④ service/worker.py 与 engines/signal_scan.py 的 position_snapshots 是
+    "一轮快照多行"(同一时刻持仓全集),一并包进 tx();单行写路径未动。
+- 未改: execution/trade_journal.py(单写者,另一协作者刚改过);活体进程未重启;
+  工作目录 crypto_agent.db 未直接修改。
+- 测试: py_compile 改动文件通过;临时库验证 commit 路径/异常 rollback 原子性/
+  PRAGMA synchronous=1(NORMAL) 三项全 PASS;test_exchange_layers 24/0、
+  test_service_api 24/0;相关 test_r1_3_atomic_write 6/0、test_production_guard 2/0
+  (tests/ 下无 db/storage/scan 文件名匹配的专用测试);code_graph --check 无反向依赖。
+
+## 2026-08-20 凌晨 OKX REST 收敛到 exchange 层（用户：api 都没有收敛到交易层）
+- 背景: 四层架构已落地，但交易路径仍旁路：daily_scan urllib 打 tickers/instruments、
+  K 线走 data/fetch_okx（history-candles + 24h 文件缓存，扫描可能用到隔日 K）、
+  realtime_okx REST 预热裸 URL、deploy_guard 穿透 transport、引擎直 import make_cl_ord_id。
+- 落地:
+  ① ExchangeAdapter 增 fetch_tickers(venue) / new_cl_ord_id()；TickerInfo.vol_usdt_24h
+    在适配层归一（SWAP = volCcy24h × last，SPOT 原样）——ANTHROPIC 成交额坑不再能在
+    策略层重踩。
+  ② daily_scan 只吃适配器；SWAP_ONLY 观察池直接用合约 ticker 排名（不再用现货池再滤）；
+    回退主流池 instId 改为 -USDT-SWAP；引擎/HTTP 注入同一 exchange 实例；db_path 隔离。
+  ③ WS REST 预热改为调用方注入 fetch_candles（data 不 import exchange，守分层）。
+  ④ position_mgmt 改 exchange.new_cl_ord_id()；deploy_guard 改 cancel_algos；
+    health_check H13 走 OKXTransport.public(/public/time)。
+  ⑤ 交易四层（engines/service/decision/execution）静态禁止 okx.com 与 /api/v5/。
+- 故意保留: data/fetch_okx.py 的 history-candles 分页（研究/回测，非交易路径）；
+  data/collect.py / tools/okx_pg_ingest.py 采集脚本（data 层不得反向 import exchange）。
+- 活体: 未重启（纯路径收敛，下单语义不变）；重启后验证心跳/持仓衔接后再宣称恢复。
+- 证据: test_exchange_layers 31/0（含 ticker 归一 3、daily_scan 离线回退 3、交易路径无 URL 1）；
+  test_service_api 24/0；test_p0_fixes 13/0；test_phase0_review 33/0；test_decision_loop 14/0；
+  params_lint / code_graph --check / fix_guard 12 条全过。
+
+## 2026-08-20 凌晨 SQLite 索引对齐 + 流水保留 90 天 + 迁移版本化
+- 背景: SCHEMA 索引与真实查询不对齐(trades 按 entry_time 查/排,anomalies 去重按
+  source+status,shadow_signals 按 base+strategy+kline_ts);流水表只增不删会无限膨胀;
+  `_add_missing_columns` 靠 PRAGMA table_info 逐列探测,后续列会越积越多。
+- 落地(storage/db.py; 不改 execution/trade_journal.py; 不写活体 crypto_agent.db):
+  ① 索引: 新增 idx_trades_entry_time(trades.entry_time)、
+    idx_anom_source_status(anomalies.source,status)、
+    idx_shadow_base_strategy_kline(shadow_signals.base,strategy,kline_ts);
+    DROP 旧 idx_anom_status(CREATE INDEX IF NOT EXISTS 不会删旧名;SCHEMA 每次
+    init_db 都 DROP INDEX IF EXISTS,迁移 v2 同样 DROP——防止 version 已升到
+    最新后活体旧进程把旧索引建回来、迁移不再跑)。
+  ② 保留: config.DB_RETENTION_DAYS=90。prune_old_rows 用 tx() 清流水表
+    (scan_decisions/position_snapshots/signal_profiles/engine_errors/
+    shadow_signals/order_failures/analyses kind=daily) 以及已 resolved 的
+    alerts/anomalies;status='new' 即使过期也留。永不碰 trades/lessons/
+    lesson_rollups/trade_features/experiments/factor_trials/thresholds/
+    watchlist/ownership/untradable_symbols/kv。清理后 PRAGMA optimize(不做 VACUUM)。
+    engines/daily_scan.screen_daily 扫完候选后调用一次并打印结果。
+  ③ 迁移: PRAGMA user_version。MIGRATIONS v1=lessons.regime/conditions 补列
+    (探测后再 ALTER,duplicate column 容错);v2=索引替换。全新库 SCHEMA 建满后
+    直接 user_version=SCHEMA_VERSION;老库(version=0 表齐全)按序跑迁移。
+- 查过但不加的索引: lessons(category,content) 表小且主路径全表扫描;
+  experiments.change_id 试验行极少;anomalies(source,title,ts) 与用户指定的
+  (source,status) 重叠且表小;engine_errors.error LIKE 不适合建索引(已有 ts);
+  risk_events 已有 idx_risk_ts、未列入清理清单;watchlist/kv/thresholds/ownership
+  走主键;alerts 已退役无查询调用方。
+- 活体: 未重启、未对工作目录库做 DDL。下次服务重启 init_db 时迁移自动生效。
+- 证据: 见本任务验证脚本输出(全新库 version=2 / 老库迁移 / prune 断言) +
+  py_compile / params_lint / code_graph --check / 全量回归。
+
+

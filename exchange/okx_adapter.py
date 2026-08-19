@@ -18,8 +18,8 @@ import uuid
 from typing import Dict, List, Optional
 
 from exchange.base import ExchangeAdapter, ExchangeError
-from exchange.models import (Instrument, Candle, BalanceInfo, PositionInfo,
-                             OrderResult, floor_to_lot)
+from exchange.models import (Instrument, Candle, TickerInfo, BalanceInfo,
+                             PositionInfo, OrderResult, floor_to_lot)
 from exchange.transport import OKXTransport
 
 INSTRUMENT_CACHE_TTL = 24 * 3600   # 工具规格缓存 24h
@@ -36,6 +36,10 @@ def make_cl_ord_id() -> str:
     return f"ca{int(time.time()*1000)}{uuid.uuid4().hex[:8]}"
 
 
+# 51121 自愈最多粗化次数(0.001→0.01→0.1→1 张;见 __init__._lot_eff 注释)
+LOT_COARSEN_MAX = 3
+
+
 class OKXAdapter(ExchangeAdapter):
     name = "okx"
 
@@ -44,6 +48,10 @@ class OKXAdapter(ExchangeAdapter):
         self.t = OKXTransport(api_key, secret, passphrase, sandbox=sandbox)
         self._instruments: Dict[str, Instrument] = {}
         self._inst_ts = 0.0
+        # 2026-08-20 51121 自愈: 沙盘元数据 lotSz 可能比真实撮合粒度细
+        # (ANTHROPIC 实测 meta 0.001/真实 0.01)。撞 51121 时按 ×10 粗化重试,
+        # 学到的有效粒度按 instId 缓存,止损/平仓单沿用同一粒度。
+        self._lot_eff: Dict[str, float] = {}
 
     # ---------- 工具/市场 ----------
     def _refresh_instruments(self, force: bool = False):
@@ -106,7 +114,7 @@ class OKXAdapter(ExchangeAdapter):
         #  1) bar 大小写敏感——.upper() 把 "1m" 变成 "1M"(月线),导致返回的是
         #     最近 N 个月的月K(最新一根=当月1日),平仓特征 MFE/MAE 窗口零根分钟K;
         #  2) 近期行情用 market/candles(新→旧,limit 上限 300);history-candles
-        #     留给 data/fetch_okx.py 分页回溯,职责分离。
+        #     分页回溯仍留给 data/fetch_okx.py（研究/回测，非交易路径）。
         limit = min(int(limit), 300)
         resp = self.t.public("/api/v5/market/candles",
                              {"instId": inst_id, "bar": str(bar),
@@ -131,6 +139,31 @@ class OKXAdapter(ExchangeAdapter):
         if not data:
             raise ExchangeError(f"funding-rate 无数据: {inst_id}")
         return float(data[0].get("fundingRate") or 0)
+
+    def fetch_tickers(self, venue: str = "swap") -> List[TickerInfo]:
+        """全市场 ticker。SWAP volCcy24h 是币本位 → × last 才是 USDT
+        （pitfalls 2026-08-20 ANTHROPIC 每天被误杀的根因，归一必须在适配层）。"""
+        inst_type = "SWAP" if venue == "swap" else "SPOT"
+        suffix = "-USDT-SWAP" if venue == "swap" else "-USDT"
+        resp = self.t.public("/api/v5/market/tickers", {"instType": inst_type})
+        out = []
+        for t in resp.get("data", []):
+            inst_id = t.get("instId") or ""
+            if not inst_id.endswith(suffix):
+                continue
+            try:
+                last = float(t.get("last") or 0)
+                vol_ccy = float(t.get("volCcy24h") or 0)
+            except (TypeError, ValueError):
+                continue
+            vol_usdt = vol_ccy * last if venue == "swap" else vol_ccy
+            base = inst_id[:-len(suffix)]
+            out.append(TickerInfo(inst_id=inst_id, base=base, last=last,
+                                  vol_ccy_24h=vol_ccy, vol_usdt_24h=vol_usdt))
+        return out
+
+    def new_cl_ord_id(self) -> str:
+        return make_cl_ord_id()
 
     # ---------- 账户 ----------
     def fetch_balance(self) -> BalanceInfo:
@@ -190,13 +223,26 @@ class OKXAdapter(ExchangeAdapter):
         return 0.0
 
     # ---------- 下单 ----------
+    def _effective_lot(self, inst: Instrument) -> float:
+        """有效撮合粒度(张): 51121 自愈学到的值优先,否则用元数据 lotSz。"""
+        return self._lot_eff.get(inst.inst_id, inst.lot_sz)
+
+    def _coarsen_lot(self, inst: Instrument) -> bool:
+        """51121 后把有效粒度 ×10(最多到 max(minSz,1)×100 保险丝)。"""
+        new = self._effective_lot(inst) * 10
+        if new > max(inst.min_sz, 1.0) * 100:
+            return False
+        self._lot_eff[inst.inst_id] = new
+        print(f"  ⚙️ {inst.inst_id}: 51121 → 撮合粒度粗化为 {new} 张(元数据 lotSz 不可信)")
+        return True
+
     def _swap_qty_to_contracts(self, inst: Instrument, qty: float) -> float:
-        contracts = floor_to_lot(qty / inst.ct_val, inst.lot_sz)
+        contracts = floor_to_lot(qty / inst.ct_val, self._effective_lot(inst))
         if inst.min_sz > 0 and contracts < inst.min_sz:
             raise ExchangeError(
                 f"{inst.inst_id}: {qty} 币 = {contracts} 张 < 最小 {inst.min_sz} 张")
         if inst.max_mkt_sz > 0 and contracts > inst.max_mkt_sz:
-            contracts = floor_to_lot(inst.max_mkt_sz, inst.lot_sz)
+            contracts = floor_to_lot(inst.max_mkt_sz, self._effective_lot(inst))
         return contracts
 
     def place_market_order(self, inst_id: str, side: str, qty: float,
@@ -215,25 +261,47 @@ class OKXAdapter(ExchangeAdapter):
                 return OrderResult(ok=False, qty=sz,
                                    message=f"{inst_id}: {sz} < 最小下单量 {inst.min_sz}")
             body = {"instId": inst_id, "tdMode": "cash", "side": side,
-                    "ordType": "market", "sz": str(sz)}
-        else:
+                    "ordType": "market", "sz": str(sz), "clOrdId": cl_ord_id}
+            resp = self.t.private_post("/api/v5/trade/order", body)
+            row = (resp.get("data") or [{}])[0]
+            if row.get("sCode") and row.get("sCode") != "0":
+                return OrderResult(ok=False, qty=qty, cl_ord_id=cl_ord_id,
+                                   message=f"{row.get('sCode')} {row.get('sMsg')}")
+            return OrderResult(ok=True, ord_id=str(row.get("ordId") or ""),
+                               cl_ord_id=cl_ord_id, qty=qty)
+        # ===== 合约: 51121 自愈重试(2026-08-20) =====
+        # 51121 是干净的业务拒绝(未成交),粗化粒度换新 clOrdId 重试无重复成交风险;
+        # 重试全灭则按原 clOrdId 抛出(引擎 _recover_order 反查语义不变)。
+        attempt_cl = cl_ord_id
+        for _ in range(1 + LOT_COARSEN_MAX):
             contracts = self._swap_qty_to_contracts(inst, qty)
             # 2026-08-19 根因修复: 该模拟盘账户所有持仓都在 cross 模式,
             # isolated 下单对 cross 持仓 reduce-only 报 51169'无仓位可减'——
             # ETH 突破止盈后平仓单连续 7 次失败即此因(实测 cross 同单 sCode=0)。
             body = {"instId": inst_id, "tdMode": "cross", "side": side,
                     "ordType": "market", "sz": str(contracts),
-                    "posSide": pos_side or "long"}
+                    "posSide": pos_side or "long", "clOrdId": attempt_cl}
             if reduce_only:
                 body["reduceOnly"] = "true"
-        body["clOrdId"] = cl_ord_id
-        resp = self.t.private_post("/api/v5/trade/order", body)
-        row = (resp.get("data") or [{}])[0]
-        if row.get("sCode") and row.get("sCode") != "0":
-            return OrderResult(ok=False, qty=qty, cl_ord_id=cl_ord_id,
-                               message=f"{row.get('sCode')} {row.get('sMsg')}")
-        return OrderResult(ok=True, ord_id=str(row.get("ordId") or ""),
-                           cl_ord_id=cl_ord_id, qty=qty)
+            try:
+                resp = self.t.private_post("/api/v5/trade/order", body)
+            except ExchangeError as e:
+                if "51121" in str(e) and self._coarsen_lot(inst):
+                    attempt_cl = make_cl_ord_id()
+                    continue
+                raise
+            row = (resp.get("data") or [{}])[0]
+            s_code = row.get("sCode")
+            if s_code == "51121" and self._coarsen_lot(inst):
+                attempt_cl = make_cl_ord_id()
+                continue
+            if s_code and s_code != "0":
+                return OrderResult(ok=False, qty=qty, cl_ord_id=attempt_cl,
+                                   message=f"{s_code} {row.get('sMsg')}")
+            return OrderResult(ok=True, ord_id=str(row.get("ordId") or ""),
+                               cl_ord_id=attempt_cl, qty=qty)
+        return OrderResult(ok=False, qty=qty, cl_ord_id=attempt_cl,
+                           message="51121 粒度粗化重试用尽仍被拒")
 
     def place_conditional_stop(self, inst_id: str, side: str, qty: float,
                                pos_side: str, trigger_px: float,
@@ -241,17 +309,29 @@ class OKXAdapter(ExchangeAdapter):
         inst = self.instrument(inst_id)
         if inst.venue != "swap":
             return OrderResult(ok=False, qty=qty, message="现货不支持交易所侧条件单")
-        contracts = self._swap_qty_to_contracts(inst, qty)
-        body = {"instId": inst_id, "tdMode": "cross", "side": side,
-                "ordType": "conditional", "sz": str(contracts),
-                "posSide": pos_side, "reduceOnly": "true"}
-        if is_tp:
-            body.update({"tpTriggerPx": str(trigger_px), "tpTriggerPxType": "last",
-                         "tpOrdPx": "-1"})
-        else:
-            body.update({"slTriggerPx": str(trigger_px), "slTriggerPxType": "last",
-                         "slOrdPx": "-1"})
-        resp = self.t.private_post("/api/v5/trade/order-algo", body)
+        # 51121 自愈(2026-08-20): 与市价单同一有效粒度缓存,通常开仓已学到,
+        # 此处兜底(条件单先于市价单撞 51121 的场景)。
+        resp = None
+        for _ in range(1 + LOT_COARSEN_MAX):
+            contracts = self._swap_qty_to_contracts(inst, qty)
+            body = {"instId": inst_id, "tdMode": "cross", "side": side,
+                    "ordType": "conditional", "sz": str(contracts),
+                    "posSide": pos_side, "reduceOnly": "true"}
+            if is_tp:
+                body.update({"tpTriggerPx": str(trigger_px), "tpTriggerPxType": "last",
+                             "tpOrdPx": "-1"})
+            else:
+                body.update({"slTriggerPx": str(trigger_px), "slTriggerPxType": "last",
+                             "slOrdPx": "-1"})
+            try:
+                resp = self.t.private_post("/api/v5/trade/order-algo", body)
+                break
+            except ExchangeError as e:
+                if "51121" in str(e) and self._coarsen_lot(inst):
+                    continue
+                raise
+        if resp is None:
+            return OrderResult(ok=False, qty=qty, message="51121 粒度粗化重试用尽仍被拒")
         row = (resp.get("data") or [{}])[0]
         if row.get("sCode") and row.get("sCode") != "0":
             return OrderResult(ok=False, qty=qty,
