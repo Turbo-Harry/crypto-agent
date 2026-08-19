@@ -50,3 +50,7 @@ data/market.db
 lark-cli-local/
 .lark-home/
 .lark-config/
+
+# 运行时进度文件(引擎每拍写入)
+tick_directional.txt
+heartbeat_directional.txt
