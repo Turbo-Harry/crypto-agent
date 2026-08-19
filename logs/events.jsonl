@@ -9,3 +9,4 @@
 {"ts": 1787169873.186, "type": "close", "payload": {"tid": "txn_1787169873_2adc", "symbol": "BTC", "dir": "long", "pnl_usdt": -0.03, "pnl_pct": -0.03, "reason": "止损/止盈", "lessons": 2}}
 {"ts": 1787169873.901, "type": "open", "payload": {"tid": "txn_1787169873_c3e0", "symbol": "ANTHROPIC", "dir": "long", "entry": 180.0, "stop": 175.0, "tp": 190.0, "qty": 1.0, "lev": 3, "notional": 180.0}}
 {"ts": 1787169875.247, "type": "open", "payload": {"tid": "txn_1787169875_041b", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
+{"ts": 1787170816.999, "type": "open", "payload": {"tid": "txn_1787170816_ad3d", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}

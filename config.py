@@ -130,6 +130,12 @@ ARB_FLIP_HOURS = 16          # 费率向不利方向翻转持续 16 小时（2 �
 ARB_LEVERAGE = 1             # 对冲本身不需要杠杆，1x 隔离（高杠杆只抬爆仓风险）
 
 # ============ 参数统一维护 · 扩展区（2026-08-16 用户规则:新增参数只能在 config.py 加） ============
+# ---- 实盘就绪三盏灯（2026-08-20 用户指示"上实盘三条件做成灯"） ----
+READY_MIN_TRADES = 60           # 灯1: 最少平仓样本
+READY_SQN_MIN = 1.6             # 灯1: Van Tharp SQN 下限
+READY_CRITICAL_DAYS = 7         # 灯2: 连续 N 天零 critical 级异常
+READY_MIN_TRUSTED = 3           # 灯3: 最少 trusted 经验条数
+READY_MIN_ROLLUPS = 1           # 灯3: 最少场景归纳条数
 # ---- 每日候选扫描（daily_scan）【激进第二档: 流动性/趋势/波动率门槛放宽,候选更多】 ----
 MIN_VOL = 1_000_000           # 24h 成交额下限 USDT（500万→200万→100万）
 MIN_PRICE = 0.01              # 最低价格

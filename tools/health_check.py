@@ -211,6 +211,15 @@ except Exception:
     check("H14 HTTP 控制面 /health 可达", False, "HTTP 层无响应")
 
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
+
+# 实盘就绪三盏灯(2026-08-20 用户指示,信息展示不做体检项)
+try:
+    from tools.readiness import render_lines
+    print("\n实盘就绪三盏灯:")
+    for _ln in render_lines():
+        print(_ln)
+except Exception:
+    pass
 if failed:
     # 飞书告警 + AI 诊断桥（2026-08-16 用户方案;30 分钟去重;AI 失败自动退回纯文本）
     try:

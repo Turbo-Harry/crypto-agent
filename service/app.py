@@ -379,3 +379,10 @@ def risk_events(limit: int = 20):
 def last_error():
     """方向性引擎最近一次异常堆栈（无异常返回空串）。"""
     return {"last_error": _trader().last_error}
+
+
+@app.get("/readiness", response_model=dict, tags=["观测"])
+def readiness():
+    """实盘就绪三盏灯(2026-08-20 用户指示)——样本/稳定/反哺,全绿才可上实盘。"""
+    from tools.readiness import readiness_status
+    return readiness_status()
