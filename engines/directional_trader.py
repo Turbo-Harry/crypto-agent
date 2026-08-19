@@ -631,7 +631,7 @@ class DirectionalTrader:
                 self._notify(f"⚠️ {base} TP 条件单挂失败（本地 monitor 止盈兜底）")
             msg = (f"🎯 方向性开仓 {base} {sig['dir']}\n"
                    f"入场 {price:.2f} | 止损 {sig['stop']:.2f} | 止盈 {sig['tp']:.2f}\n"
-                   f"盈亏比 2:1 | 杠杆 {lev}x | 数量 {qty}")
+                   f"盈亏比 2:1 | 杠杆 {lev}x | 数量 {qty} | 名义 {qty * price:.0f} USDT")
             print(msg)
             self._notify(msg)
             return tid
@@ -897,7 +897,15 @@ class DirectionalTrader:
                 self.risk.update_equity(eq, time.strftime("%Y-%m-%d"))
         except Exception:
             pass
-        msg = (f"📊 平仓 {base}: 盈亏 {closed['pnl']*100:+.1f}%\n"
+        # 2026-08-18 用户要求: 平仓通知展示具体收益金额(USDT),不是只有百分比。
+        # pnl 为比例(多:(出-入)/入;空:(入-出)/入),× 名义 = USDT 盈亏。
+        notional = t.get("notional_usdt") or (float(t.get("size") or 0)
+                                              * float(t.get("entry_price") or 0))
+        pnl_usdt = (closed.get("pnl") or 0) * notional
+        exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
+        msg = (f"📊 平仓 {base} {t.get('direction') or ''}: "
+               f"盈亏 {pnl_usdt:+.2f} USDT ({closed['pnl']*100:+.1f}%) "
+               f"[{exit_reason_short}]\n"
                f"复盘 {len(lessons)} 条新经验（待验证），"
                f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条本笔采纳经验\n"
                f"当前自适应阈值: {self.threshold_learner.threshold}")
