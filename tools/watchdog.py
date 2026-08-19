@@ -20,6 +20,10 @@ import signal
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from decision.notify import notify
+
 HEARTBEATS = {
     # 2026-08-16 采集加速后首轮扫描 18 币需数分钟（心跳随 tick 阻塞停更），
     # 30s 超时会误杀正在工作的引擎 → 放宽到 120s（配合 scan 内每币心跳刷新）。
@@ -33,18 +37,6 @@ MISSING_TOLERANCE = 3          # 心跳文件连续缺失 N 次才 kill（去抖
 TICK_TIMEOUT = 300             # tick 进度 5 分钟不动 = 主循环卡死
 STARTUP_GRACE = 900            # 进程启动 15 分钟内不判 tick(首轮扫描需数分钟)
 STATE_FILE = "watchdog_state.json"
-
-
-def notify(msg):
-    """飞书告警（复用 lark CLI；失败静默）。"""
-    try:
-        import subprocess
-        subprocess.run([os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark"), "im",
-                        "+messages-send", "--as", "bot",
-                        "--user-id", "ou_3c597d18937078f2587b56adb8b960d2",
-                        "--text", msg], capture_output=True, timeout=20)
-    except Exception:
-        pass
 
 
 def _load_state():

@@ -27,29 +27,18 @@ import sys
 import os
 import json
 import time
-import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
+from decision.notify import notify
 from decision.self_evolving_trader import SelfEvolvingTrader
 from execution.trade_journal import TradeJournal
 from exchange.base import ExchangeAdapter, ExchangeError
 
-LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
-FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
 # 策略参数统一维护于 config.py（2026-08-16 用户指示: 数值不再分散）。
 # 2026-08-20 拆分后各功能块自带所需别名,本文件只留自己用到的。
 SYMBOLS = config.SYMBOLS
-
-
-def notify(msg):
-    try:
-        subprocess.run([LARK, "im", "+messages-send", "--as", "bot",
-                        "--user-id", FEISHU_USER_ID, "--text", msg],
-                       capture_output=True, timeout=20)
-    except Exception:
-        pass
 
 
 def connect() -> ExchangeAdapter:
@@ -155,7 +144,7 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 此前 test_decision_loop 等跑套件时把假开仓单真的发到了用户飞书
         # (与 DEF-8 生产库污染同类的泄漏,这次是通知通道)。
         self._notify = notify if getattr(self.exchange, "name", "") == "okx" \
-            else (lambda msg: None)
+            else (lambda *a, **k: None)
         # Phase0 T0.4：审计/日志表隔离。db_path=None → 生产共享库（默认）；
         # 测试必须传隔离路径（防 scan_decisions 等污染生产表，见 pitfalls）。
         self._db_path = db_path

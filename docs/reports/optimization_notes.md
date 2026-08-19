@@ -470,6 +470,12 @@
 - 已知边界更新: AAPL/MSTR/COIN/META/AMZN/INTC/SNDK/SOXL/LITE/AMD 生产有合约
   但沙盘暂缺(XIAOMI 同类),沙盘补上后扩 STOCK_SWAP_TOKENS 即可。
 
+## 2026-08-20 凌晨 沙盘不可交易币预过滤（用户拍板清遗留：BICO/WLD/ZEC/HYPE 占候选名额）
+- 落地: `untradable_bases()` = DEMO_UNTRADABLE ∪ untradable_symbols；
+  screen_daily 阶段1 前剔除(连 K 线都不拉)；回退池同步过滤；scan_signals
+  第二道跳过旧池残留。开仓层 reject_untradable 闸门保留。
+- 测试: test_daily_scan_drops_untradable(BICO 静态 + ZEC 动态,BTC/SOL 仍入选)。
+
 ## 2026-08-17 凌晨 未触发归因反哺决策系统（用户问:归因如何反哺决策）
 - 落地 tools/no_signal_report.py: generate_feedback() 把画像分布转成四条反哺规则提案——R1 影线门槛微调候选(近失≥20%+主瓶颈wick)/R2 策略B转正评估启动(trend≥60%)/R3 纪律性等待显式抑制调参(touch≥70%)/R4 量能观察(vol≥40%)。
 - 反哺纪律: 提案只进 experiments 注册表(proposed),永不自动生效——验证门(S1-S3)+人工放行(防过拟合红线)。
@@ -569,5 +575,18 @@
   老库 version=0+旧索引 → 迁移后 version=2、旧索引已删、lessons 补列幂等;
   version 已是 2 但仍带旧索引 → init_db 后旧索引被 SCHEMA DROP 清掉;
   prune 过期流水各删 1、new anomaly 保留、trades/lessons/kv 行数不变。
+
+## 2026-08-20 飞书通知改 interactive 卡片（用户：md 无法正常渲染）
+- 背景: 飞书 `--text` 不渲染 Markdown；`--markdown` 包装成 post 也不解析
+  星号（alert_diag 2026-08-17 已实证）。交易/看门狗通知仍走 `--text`，开仓
+  一行用 `|` 拼接，AI 诊断的 `**` 在主通道会原样显示。
+- 落地:
+  ① `decision/notify.py` 唯一出口：GitHub MD → lark_md 子集（标题变加粗、
+    去掉围栏/表格），发 interactive 卡片；失败则 `--text` + 剥标记。
+  ② `engines/directional_trader.py` / `tools/watchdog.py` / `tools/alert_diag.py`
+    不再各自拼 CLI。
+  ③ 开仓/平仓/每日看账/候选池文案改为「首行标题 + 换行字段」，关键数字加粗。
+- 未重启活体进程（下次服务起来后新格式才发出）。
+- 证据: tests/test_notify.py（卡片结构/清洗/CLI 参数，不真发飞书）。
 
 

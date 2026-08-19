@@ -150,7 +150,10 @@ class SignalScanMixin:
                     self.watch_scores = {c["base"]: c["score"] for c in w}
                     self._watch_date = time.strftime("%Y-%m-%d")
                     self._last_watch_refresh = time.time()
-                    self._notify(f"🔍 每日候选池刷新: {self.watchlist}")
+                    self._notify(
+                        "🔍 每日候选池刷新\n"
+                        + " · ".join(self.watchlist)
+                        + f"\n共 {len(self.watchlist)} 个")
             except Exception as e:
                 print(f"候选池刷新失败，沿用旧池: {e}")
         # 2026-08-16 采集加速（用户指示）：扫描池 = 当日候选池 ∪ 回退主流池

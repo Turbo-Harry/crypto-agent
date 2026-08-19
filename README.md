@@ -80,6 +80,7 @@ python3 -m py_compile <改动的文件>
 - 行情：OKX 原生 WebSocket（tickers/funding-rate/trades）+ 适配层 REST 预热
 - 历史数据（研究/回测）：`data/fetch_okx.py` 的 `/market/history-candles`（约 6 年）
 - 本地库：`crypto_agent.db`（SQLite）。流水日志保留 90 天（`config.DB_RETENTION_DAYS`），每天扫完候选池后自动清理；交易台账、经验库、研究表永久保留。未处理的告警不会被清掉。
+- 飞书通知：开仓/平仓/告警走交互卡片（`lark_md`），不是 GitHub Markdown。普通 `--text` 在飞书里不会加粗。
 
 ## 已知边界（诚实声明）
 

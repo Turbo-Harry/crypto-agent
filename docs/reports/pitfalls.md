@@ -264,11 +264,23 @@
 - 修复：Adapter 增 `fetch_tickers`（SWAP 成交额在适配层 × last 归一成 USDT）和 `new_cl_ord_id`；daily_scan / 信号扫描 / HTTP `/scan/daily` 注入同一适配器；WS REST 预热注入 `fetch_candles`；deploy_guard 改 `cancel_algos`；交易四层静态禁止 `okx.com`/`/api/v5/`。
 - 预防：新增 OKX 端点只加在 transport/adapter；`test_trading_layers_no_okx_url` 进分层套件，泄漏立刻红。研究/回测的 history-candles 仍留 `data/fetch_okx.py`（非交易路径）。
 
+### 2026-08-20 沙盘不可交易币进候选池白占名额
+- 现象：BICO/WLD/ZEC/HYPE 等生产有行情、沙盘下不了单（51001/51087/51155）的币凭成交额进每日候选，占 12 席中数席；开仓层才 `reject_untradable`，用户看到"为什么这些币在池子里却从不交易"。
+- 根因：黑名单只接在开仓预检（`DEMO_UNTRADABLE` ∪ `untradable_symbols`），筛选阶段不查——筛选以为"能交易"，执行层才发现不能。更深一层：传输层只给**签名请求**打 `x-simulated-trading`，公开的 instruments/tickers/K 线走生产全集（400+ 永续），INTC/SOXL 凭生产流动性进池，沙盘下单才 51001。
+- 修复：① `screen_daily` 阶段 1 前按黑名单剔除，回退池/信号扫描同步跳过；② 适配器 `venue_for==swap` 再滤一层；③ 沙盘头打到全部 HTTP（含公开接口），仪器表与 ticker 与本账户一致（实测 instruments 436→138）。
+- 预防：沙盘适配器的公开行情也必须带模拟盘头；"占名额的候选"必须是这个账户实际能下单的合约。
+
 ### 2026-08-20 watchlist 先删后插非原子，崩溃留半截候选池
 - 现象：每日扫描重建当日 watchlist 时先 `DELETE FROM watchlist WHERE date=?` 再逐条 `INSERT`，每条走独立短连接自动 commit。中途崩溃（进程被杀/异常）会留下空池或半截池；当天所有开仓决策读的就是这份残缺候选。
 - 根因：`storage/db.py` 只有 q/q1/x 三个原语，x() 每条写立刻 commit，没有跨多条语句的事务。DELETE 已落盘后 INSERT 才开始，两步之间没有原子边界。
 - 修复：新增 `tx()` contextmanager（正常退出 commit，异常 rollback 后重抛，finally close）；daily_scan 的 DELETE+全部 INSERT 包进同一个事务。顺手把 worker/signal_scan 一轮仓位快照的多行 INSERT 也包进事务（同一轮 = 同一时刻持仓全集）。
 - 预防：凡"先清空再写全量"或"一轮多行必须同时可见"的落库，必须用 tx() 而不是循环调 x()。tx() 块内只用 conn.execute，禁止再调 x()/q()（那些会另开连接，看不到未提交变更）。
+
+### 2026-08-20 飞书 `--text` / `--markdown` 都不渲染 GitHub Markdown
+- 现象：开仓/平仓/每日看账消息里的 `**加粗**`、`# 标题`、表格在飞书里原样显示星号和竖线，用户看到的是一堆未渲染的 MD。
+- 根因：飞书个人消息三种发法能力不同。`--text` 纯文本；`--markdown` 只是把正文塞进 post 的 md 标签，实测同样不解析星号；只有 interactive 卡片里 `tag=lark_md` 的元素才渲染加粗/列表/行内代码。而且 lark_md 是子集，不支持 `#` 标题、围栏代码块、表格——这些即使用卡片也会难看。交易通知此前各自 `--text`，告警通道才用过卡片。
+- 修复：统一走 `decision/notify.py`：正文转成 lark_md 子集后发 interactive 卡片；CLI 失败再 `--text` 并剥掉标记。开仓/平仓/看账文案改成「首行标题 + 换行字段」，关键数字用 `**`（卡片里会加粗）。
+- 预防：飞书新消息禁止直接 `--text` 塞 GitHub MD；只从 `decision.notify.notify` 发。改文案前用 `tests/test_notify.py` 看卡片 JSON 是否仍是 lark_md。
 
 ### 2026-08-20 user_version 已升到最新后,旧索引可能被活体旧进程建回来
 - 现象：只读看活体 `crypto_agent.db`，`PRAGMA user_version=2` 且新索引已在，但旧 `idx_anom_status` 仍在。按"version 已最新就跳过迁移"的逻辑，下次重启也不会 DROP。

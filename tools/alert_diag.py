@@ -24,7 +24,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CRED_FILE = os.path.expanduser("~/.dsh/.credentials.yaml")
 API_URL = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
-FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
 
 SYSTEM_PROMPT = (
     "你是加密货币模拟盘交易系统的值守 AI。用户把体检异常转发给你,请你给出"
@@ -145,41 +144,21 @@ def analyze(failed_items, diag, key=None, url=API_URL, model=MODEL):
 
 
 def _plain(text):
-    """告警文本 Markdown 清洗(2026-08-17 用户反馈两次: 飞书与会话通道均不
-    渲染 MD,满屏星号)——剥离 **加粗/`代码/#标题,保留换行与 emoji。"""
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    text = text.replace("`", "")
-    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.M)
-    return text
+    """兼容旧名：会话注入通道不渲染 MD，剥标记。"""
+    from decision.notify import plain
+    return plain(text)
 
 
 def send_feishu(text):
-    """飞书发告警——interactive 卡片 + lark_md 元素。
+    """飞书发告警——走 decision.notify 的 interactive + lark_md 卡片。
+
     2026-08-17 三版演进: --text 纯文本不渲染;--markdown 包装为 post 的 md
     标签,飞书 post 同样不解析星号(dry-run 实证);只有卡片 lark_md 元素
-    真正渲染 **加粗/列表/代码。"""
-    try:
-        body_text = text
-        if body_text.startswith("🚨 统一异常中心:"):
-            # 标题进卡片 header,正文去掉首行避免重复
-            body_text = body_text.split("\n", 1)[1] if "\n" in body_text else body_text
-            header_title = "🚨 统一异常中心"
-        else:
-            header_title = "📢 交易系统告警"
-        card = {
-            "config": {"wide_screen_mode": True},
-            "header": {"template": "blue",
-                       "title": {"tag": "plain_text", "content": header_title}},
-            "elements": [{"tag": "div",
-                          "text": {"tag": "lark_md", "content": body_text}}],
-        }
-        subprocess.run([os.path.join(ROOT, ".lark"), "im", "+messages-send",
-                        "--as", "bot", "--user-id", FEISHU_USER_ID,
-                        "--msg-type", "interactive",
-                        "--content", json.dumps(card, ensure_ascii=False)],
-                       capture_output=True, timeout=20)
-    except Exception:
-        pass
+    真正渲染 **加粗/列表/代码。2026-08-20 收进共享 notify,不再各写一套 CLI。
+    """
+    from decision.notify import notify
+    title = "🚨 统一异常中心" if (text or "").startswith("🚨") else "📢 交易系统告警"
+    notify(text, title=title, template="red")
 
 
 def _register_anomalies(failed_items):

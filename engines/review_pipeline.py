@@ -108,12 +108,13 @@ class ReviewMixin:
                                               * float(t.get("entry_price") or 0))
         pnl_usdt = (closed.get("pnl") or 0) * notional
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
-        msg = (f"📊 平仓 {base} {self._dir_cn(t.get('direction') or 'long')}: "
-               f"盈亏 {pnl_usdt:+.2f} USDT ({closed['pnl']*100:+.1f}%) "
-               f"[{exit_reason_short}]\n"
-               f"复盘 {len(lessons)} 条新经验（待验证），"
-               f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条本笔采纳经验\n"
-               f"当前自适应阈值: {self.threshold_learner.threshold}")
+        sign = "+" if pnl_usdt >= 0 else ""
+        msg = (f"📊 平仓 {base} {self._dir_cn(t.get('direction') or 'long')}\n"
+               f"盈亏 **{sign}{pnl_usdt:.2f} USDT**（{closed['pnl']*100:+.1f}%）\n"
+               f"原因：{exit_reason_short}\n"
+               f"复盘 {len(lessons)} 条新经验（待验证）· "
+               f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条\n"
+               f"当前阈值 {self.threshold_learner.threshold}")
         print(msg)
         self._notify(msg)
 

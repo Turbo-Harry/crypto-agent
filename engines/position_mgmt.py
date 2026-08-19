@@ -143,8 +143,10 @@ class PositionMixin:
                     self.rt.subscribe(base)
                 except Exception:
                     pass
-            msg = (f"🎯 现货开仓 {base} 开多 (long)\n入场 {price:.2f} | 止损 {sig['stop']:.2f} | "
-                   f"止盈 {sig['tp']:.2f}\n数量 {qty}（现货无杠杆，止损由本地监控执行）")
+            msg = (f"🎯 现货开多 {base}\n"
+                   f"入场 **{price:.2f}**\n"
+                   f"止损 {sig['stop']:.2f}  ·  止盈 {sig['tp']:.2f}\n"
+                   f"数量 {qty}（现货无杠杆，止损由本地监控执行）")
             print(msg)
             self._notify(msg)
             return tid
@@ -281,9 +283,10 @@ class PositionMixin:
                         t["tp_missing"] = True
                 self.journal._save()
                 self._notify(f"⚠️ {base} TP 条件单挂失败（本地 monitor 止盈兜底）")
-            msg = (f"🎯 {self._dir_cn(sig['dir'])} {base} ({sig['dir']})\n"
-                   f"入场 {price:.2f} | 止损 {sig['stop']:.2f} | 止盈 {sig['tp']:.2f}\n"
-                   f"盈亏比 2:1 | 杠杆 {lev}x | 数量 {qty} | 名义 {qty * price:.0f} USDT")
+            msg = (f"🎯 {self._dir_cn(sig['dir'])} {base}\n"
+                   f"入场 **{price:.2f}**\n"
+                   f"止损 {sig['stop']:.2f}  ·  止盈 {sig['tp']:.2f}\n"
+                   f"盈亏比 2:1  ·  杠杆 {lev}x  ·  数量 {qty}  ·  名义 {qty * price:.0f} USDT")
             print(msg)
             self._notify(msg)
             return tid

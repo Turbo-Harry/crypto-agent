@@ -150,17 +150,19 @@ def run_daily():
     except Exception:
         report["lesson_rollups"] = []
     # 飞书反馈
+    wr = report['win_rate']
+    wr_s = f"{wr:.0%}" if isinstance(wr, (int, float)) else "—"
+    pnl = report['total_pnl_pct']
     lines = [f"📊 系统每日看账 [{time.strftime('%m-%d %H:%M')}]",
-             f"交易 {report['closed']}/{report['trades_total']} 笔 | 胜率 "
-             f"{report['win_rate'] if report['win_rate'] is not None else '—'} | "
-             f"总盈亏 {report['total_pnl_pct']:+.2f}%",
-             f"扫描 {report['scan_rounds']} 轮 | 信号 {report['scan_signals']} | "
-             f"开仓 {report['scan_opens']} | 熔断 {report['risk_halt_count']} | "
+             f"交易 {report['closed']}/{report['trades_total']} 笔  ·  "
+             f"胜率 {wr_s}  ·  总盈亏 **{pnl:+.2f}%**",
+             f"扫描 {report['scan_rounds']} 轮  ·  信号 {report['scan_signals']}  ·  "
+             f"开仓 {report['scan_opens']}  ·  熔断 {report['risk_halt_count']}  ·  "
              f"异常 {report['engine_errors']}"]
     if issues:
-        lines.append("⚠️ 感知到问题:")
+        lines.append("⚠️ 感知到问题")
         for it in issues:
-            lines.append(f"  [{it['level']}] {it['category']}: {it['detail'][:60]}")
+            lines.append(f"- [{it['level']}] {it['category']}: {it['detail'][:60]}")
     else:
         lines.append("✅ 无异常")
     try:
