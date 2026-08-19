@@ -38,8 +38,10 @@ def _scan(pattern, rel_glob_ok):
 GUARDS = [
     # G1 clOrdId 只允许字母数字,全项目唯一生成器(2026-08-17 e841b5a)
     # 只匹配代码形态(自拼连字符生成器),注释里的旧格式说明不算违规
+    # (2026-08-20 引擎按功能拆分: 扫描范围随代码搬到 position_mgmt)
     ("G1 clOrdId 无连字符生成器且 make_cl_ord_id 存在",
      lambda: (not _scan(r'cl_ord_id\s*=\s*f"ca-\{', ["engines/directional_trader.py",
+                                                     "engines/position_mgmt.py",
                                                      "exchange/okx_adapter.py"])
               and "def make_cl_ord_id" in _read("exchange/okx_adapter.py"))),
     # G2 OKX bar 参数大小写敏感,禁止 .upper()(2026-08-17 de03fcd,1m→1M 月线)
@@ -54,17 +56,19 @@ GUARDS = [
      lambda: "TICK_TIMEOUT" in _read("tools/watchdog.py")
              and "tick_" in _read("tools/watchdog.py")),
     # G5 平仓路径账本释放与台账闭环同层(2026-08-17 f07871b,H2)
+    # (2026-08-20 拆分: monitor/_liquidate_all 搬到 risk_monitor.py)
     ("G5 平仓路径 ledger.release 在 if pos 之外",
-     lambda: "ledger.release" in _read("engines/directional_trader.py")
-             and "台账闭环就必须释放" in _read("engines/directional_trader.py")),
+     lambda: "ledger.release" in _read("engines/risk_monitor.py")
+             and "台账闭环就必须释放" in _read("engines/risk_monitor.py")),
     # G6 evolver 连亏检查用调用方实时 journal(2026-08-17 f07871b)
     ("G6 decide 支持调用方传入 journal",
      lambda: "journal=None" in _read("decision/self_evolving_trader.py")
              and "journal = journal or self.journal" in _read("decision/self_evolving_trader.py")),
     # G7 长扫描逐币插拍监控(2026-08-17 94169fb)
+    # (2026-08-20 拆分: _long_scan_progress 搬到 signal_scan.py)
     ("G7 screen_daily 支持 progress_cb 插拍",
      lambda: "progress_cb" in _read("engines/daily_scan.py")
-             and "_long_scan_progress" in _read("engines/directional_trader.py")),
+             and "_long_scan_progress" in _read("engines/signal_scan.py")),
     # G8 教训聚合由数据验证强度驱动(2026-08-17 8af6f43)
     ("G8 教训聚合+场景匹配 evidence_strength/conditions_match 存在",
      lambda: "def evidence_strength" in _read("decision/experience_scoring.py")
@@ -76,16 +80,20 @@ GUARDS = [
      lambda: "笔，冷却" not in _read("decision/self_evolving_trader.py")),
     # G10 预检拒绝(黑名单/最小张数)不落失败台账(2026-08-17)——正常运营拒绝
     # 无订单发出,落 order_failures 会触发 H11 假告警(BTC 名义不足复现)
+    # (2026-08-20 拆分: 预检拒绝逻辑在 position_mgmt/signal_scan,一并扫)
     ("G10 预检拒绝不污染失败台账",
-     lambda: '"preflight"' not in _read("engines/directional_trader.py")),
+     lambda: not _scan(r'"preflight"', ["engines/directional_trader.py",
+                                        "engines/position_mgmt.py",
+                                        "engines/signal_scan.py"])),
     # G11 场景归纳层(2026-08-17): 只读汇总,决策数学不依赖它
     ("G11 场景归纳 rollup_lessons 存在且表已建",
      lambda: "def rollup_lessons" in _read("decision/experience_scoring.py")
              and "lesson_rollups" in _read("storage/db.py")),
     # G12 止损止盈锚定真实成交价(2026-08-18 用户发现'感觉是1:1')
+    # (2026-08-20 拆分: open_position 搬到 position_mgmt.py)
     ("G12 止损止盈锚定成交价(2:1 恒定)",
-     lambda: "锚定真实成交价" in _read("engines/directional_trader.py")
-             and "fill_px - stop_off" in _read("engines/directional_trader.py")),
+     lambda: "锚定真实成交价" in _read("engines/position_mgmt.py")
+             and "fill_px - stop_off" in _read("engines/position_mgmt.py")),
 ]
 
 

@@ -558,8 +558,16 @@
   (source,status) 重叠且表小;engine_errors.error LIKE 不适合建索引(已有 ts);
   risk_events 已有 idx_risk_ts、未列入清理清单;watchlist/kv/thresholds/ownership
   走主键;alerts 已退役无查询调用方。
-- 活体: 未重启、未对工作目录库做 DDL。下次服务重启 init_db 时迁移自动生效。
-- 证据: 见本任务验证脚本输出(全新库 version=2 / 老库迁移 / prune 断言) +
-  py_compile / params_lint / code_graph --check / 全量回归。
+- 活体: 未手工 DDL/DELETE。TestClient 回归曾让 HTTP init_db() 碰到活体库
+  (user_version 已被升到 2,新索引已在,旧 idx_anom_status 被旧进程建回)。
+  SCHEMA 现每次 DROP 旧索引;下次服务重启(或下一次 init_db)会清掉旧名。
+  未重启活体进程。
+- 证据: py_compile 通过; params_lint 通过; code_graph --check 无违规;
+  test_exchange_layers 31/0、test_service_api 24/0、test_params_centralization 1/0;
+  相关 test_strategy_b 29/0、test_r1_3_atomic_write 6/0、test_production_guard 2/0。
+  临时库: 全新库 user_version=2 且新索引在/旧 idx_anom_status 不在;
+  老库 version=0+旧索引 → 迁移后 version=2、旧索引已删、lessons 补列幂等;
+  version 已是 2 但仍带旧索引 → init_db 后旧索引被 SCHEMA DROP 清掉;
+  prune 过期流水各删 1、new anomaly 保留、trades/lessons/kv 行数不变。
 
 

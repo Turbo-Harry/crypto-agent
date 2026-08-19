@@ -95,7 +95,7 @@ def test_open_position_e2e():
     check("开仓成功返回 tid", bool(tid), f"实际 {tid}")
     cid = fake.orders[-1].get("cl_ord_id", "") if fake.orders else ""
     check("订单带 clOrdId(纯字母数字,禁连字符)",
-          bool(cid) and cid.startswith("ca") and "-" not in cid,
+          bool(cid) and cid.isalnum() and "-" not in cid,
           f"实际 {cid}")
     open_trades = [t for t in trader.journal.trades if t["status"] == "open"]
     check("journal 有未平仓记录", len(open_trades) == 1, f"实际 {len(open_trades)}")

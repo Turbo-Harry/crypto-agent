@@ -4,7 +4,7 @@
 职责（唯一）：
   1. HTTP GET/POST，HMAC-SHA256 签名（OK-ACCESS-* 头）。
   2. 模拟盘：请求头 x-simulated-trading: 1（虚拟资金下单）。
-  3. 简单限速（每请求最小间隔 + 429 退避重试 1 次）。
+  3. 限速（线程安全）+ 指数退避重试（网络抖动/429）。
   4. 错误归一：非 code=0 → ExchangeError(code,msg)。
 
 不做任何业务换算——那是适配层的事。
@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import json
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -22,6 +23,10 @@ from datetime import datetime, timezone
 from exchange.base import ExchangeError
 
 BASE_URL = "https://www.okx.com"
+# 2026-08-20 重试加固: 网络抖动(SSL EOF/握手超时,见 pitfalls)从"固定 1 次/1s"
+# 改为指数退避多次。POST 重试安全由 clOrdId 幂等键保证(同单重复提交返回原单)。
+MAX_ATTEMPTS = 3               # 总尝试次数(1 次原始 + 2 次重试)
+BACKOFF_BASE_SECONDS = 1.0     # 退避基数: 第 n 次重试睡 base × 2^(n-1) 秒
 
 
 class OKXTransport:
@@ -37,13 +42,17 @@ class OKXTransport:
         self.base_url = base_url.rstrip("/")
         self.min_interval = min_interval
         self._last_ts = 0.0
+        # 2026-08-20: 监控线程与扫描线程共用同一适配器实例,
+        # 限速时间戳必须加锁,否则两线程可同时通过限速检查。
+        self._throttle_lock = threading.Lock()
 
     # ---------- 底层 HTTP ----------
     def _throttle(self):
-        wait = self._last_ts + self.min_interval - time.time()
-        if wait > 0:
-            time.sleep(wait)
-        self._last_ts = time.time()
+        with self._throttle_lock:
+            wait = self._last_ts + self.min_interval - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            self._last_ts = time.time()
 
     @staticmethod
     def _iso_ts() -> str:
@@ -80,23 +89,23 @@ class OKXTransport:
                 headers["x-simulated-trading"] = "1"
 
         data = body_str.encode() if body_str else None
-        for attempt in (1, 2):
+        for attempt in range(1, MAX_ATTEMPTS + 1):
             self._throttle()
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:
                     resp = json.loads(r.read().decode())
             except urllib.error.HTTPError as e:
-                if attempt == 1 and e.code == 429:      # 限频 → 退避重试一次
-                    time.sleep(1.0)
+                if attempt < MAX_ATTEMPTS and e.code == 429:   # 限频 → 指数退避
+                    time.sleep(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
                     continue
                 raise ExchangeError(f"HTTP {e.code}: {e.read()[:200]}")
             except Exception as e:
-                # 2026-08-17: SSL EOF/握手超时是瞬时网络抖动(今晚 6 连 blip),
-                # 退避重试一次;POST 重试安全由 clOrdId 幂等键保证(同单重复
-                # 提交返回原单,配合 _recover_order 反查无歧义)。
-                if attempt == 1:
-                    time.sleep(1.0)
+                # 2026-08-17: SSL EOF/握手超时是瞬时网络抖动;2026-08-20 升级
+                # 指数退避多次(1s→2s)。POST 重试安全由 clOrdId 幂等键保证
+                # (同单重复提交返回原单,配合 _recover_order 反查无歧义)。
+                if attempt < MAX_ATTEMPTS:
+                    time.sleep(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
                     continue
                 raise ExchangeError(f"网络错误: {e}")
             if resp.get("code") != "0":

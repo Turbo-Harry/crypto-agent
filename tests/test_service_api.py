@@ -178,7 +178,8 @@ def main():
     # 复盘报告落盘：save_review 写入 journal + API /journal 返回 review 字段
     report = {"pnl": 0.02, "rr": 2.0,
               "lessons": [{"category": "入场时机", "lesson": "测试教训"}]}
-    check("save_review 返回 True", trader.journal.save_review("txn_001", report) is True)
+    tid0 = trader.journal.trades[0]["id"]
+    check("save_review 返回 True", trader.journal.save_review(tid0, report) is True)
     check("journal 落盘 review", trader.journal.trades[0].get("review") == report)
     r = client.get("/journal")
     jr = r.json()

@@ -17,6 +17,7 @@
 import json
 import config
 import os
+import secrets
 import time
 
 from storage.db import _TRADE_COLS
@@ -77,15 +78,53 @@ class TradeJournal:
                     pass
         return t
 
+    @staticmethod
+    def _sql_val(v):
+        """list/dict 落库走 JSON 字符串，其余原样（含 None→NULL）。"""
+        return json.dumps(v) if isinstance(v, (list, dict)) else v
+
+    @staticmethod
+    def _new_trade_id():
+        """时间戳 + 4 位随机 hex，避免多进程/重启后按内存长度撞号。
+        旧数据 txn_001 这类序号 ID 继续共存，本方法不改写历史行。"""
+        return f"txn_{int(time.time())}_{secrets.token_hex(2)}"
+
+    def _insert_trade(self, t):
+        """新开仓：纯 INSERT。主键冲突抛错，绝不覆盖已有行。"""
+        import storage.db as sdb
+        cols = [k for k in t if k in _TRADE_COLS]
+        sdb.x(f"INSERT INTO trades ({','.join(cols)}) "
+              f"VALUES ({','.join('?' * len(cols))})",
+              [self._sql_val(t[k]) for k in cols], db_path=self.db_path)
+
+    def _update_trade(self, trade_id, fields):
+        """按 id 增量 UPDATE 指定列（值仍走 _sql_val 序列化）。"""
+        import storage.db as sdb
+        cols = [k for k in fields if k in _TRADE_COLS]
+        if not cols:
+            return
+        sets = ", ".join(f"{k}=?" for k in cols)
+        sdb.x(f"UPDATE trades SET {sets} WHERE id=?",
+              [self._sql_val(fields[k]) for k in cols] + [trade_id],
+              db_path=self.db_path)
+
     def _save(self):
-        """全量快照写库（事务）。单笔更新在 log_exit/save_review 里做增量 UPDATE。"""
+        """全量快照写库（INSERT OR REPLACE 逐笔）。
+
+        只允许两个场景调用：
+        1. `_load` 的旧 JSON → SQLite 一次性迁移
+        2. `_backfill_notional` 的 legacy 字段一次性回填
+        日常 log_entry / log_exit / save_review / review 必须走增量
+        INSERT/UPDATE，禁止走本方法（全量重写既慢，又会在撞号时覆盖）。
+        兼容：position_mgmt 在 TP 挂失败打标时仍调用（tp_missing 非表列，
+        REPLACE 不持久化该标记；本轮调用方零改动，故保留）。
+        """
         import storage.db as sdb
         for t in self.trades:
             cols = [k for k in t if k in _TRADE_COLS]
             sdb.x(f"INSERT OR REPLACE INTO trades ({','.join(cols)}) "
                   f"VALUES ({','.join('?' * len(cols))})",
-                  [json.dumps(t[k]) if isinstance(t[k], (list, dict)) else t[k]
-                   for k in cols], db_path=self.db_path)
+                  [self._sql_val(t[k]) for k in cols], db_path=self.db_path)
 
     def _backfill_notional(self):
         """旧记录缺 size_unit/notional 时回填（只补一次，落盘）。
@@ -123,7 +162,7 @@ class TradeJournal:
         direction: "long"/"short"，用于正确计算空头盈亏。
         score: 本次决策的综合分（供阈值自适应 record 使用）。"""
         trade = {
-            "id": f"txn_{len(self.trades)+1:03d}",
+            "id": self._new_trade_id(),
             "symbol": symbol,
             "signal": signal,          # 信号描述（哪个策略/模型触发）
             "reason": reason,          # 为什么下单（决策理由）
@@ -147,8 +186,8 @@ class TradeJournal:
             "pnl": None,
             "review": None,
         }
+        self._insert_trade(trade)
         self.trades.append(trade)
-        self._save()
         return trade["id"]
 
     # ---------- 平仓记录 ----------
@@ -165,7 +204,13 @@ class TradeJournal:
                     t["pnl"] = (t["entry_price"] - exit_price) / t["entry_price"]
                 else:
                     t["pnl"] = (exit_price - t["entry_price"]) / t["entry_price"]
-                self._save()
+                self._update_trade(trade_id, {
+                    "status": t["status"],
+                    "exit_price": t["exit_price"],
+                    "exit_reason": t["exit_reason"],
+                    "exit_time": t["exit_time"],
+                    "pnl": t["pnl"],
+                })
                 return t
         return None
 
@@ -178,7 +223,7 @@ class TradeJournal:
             return False
         t["review"] = report
         t["review_ts"] = time.time()
-        self._save()
+        self._update_trade(trade_id, {"review": t["review"], "review_ts": t["review_ts"]})
         return True
 
     # ---------- 自动复盘 ----------
@@ -215,7 +260,8 @@ class TradeJournal:
         t["review"] = lessons
         self.lessons.extend({"trade_id": trade_id, "lesson": l, "ts": time.time()}
                             for l in lessons)
-        self._save()
+        # lessons 只在内存追加（历史落在 kv.legacy_journal_lessons，本路径不扩写）
+        self._update_trade(trade_id, {"review": t["review"]})
         return lessons
 
     # ---------- 读经验库 ----------
