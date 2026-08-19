@@ -773,11 +773,19 @@ class DirectionalTrader:
                             inst_id, side, close_qty, venue="swap",
                             pos_side=pos.side, reduce_only=True)
                         if not res.ok:
-                            print(f"平仓失败: {res.message}")
-                            self._log_order_failure(base, inst_id, side, close_qty, "close", res.message)
-                            continue
-                        # R1-1：平仓成功后取消交易所侧条件停损单（防幽灵单残留）
-                        self._cancel_stop_orders(base, "止损/止盈平仓")
+                            # 2026-08-17: 51169 = 交易所侧条件单已抢先平仓(竞态),
+                            # 视为"仓位已消失",直接落账闭环而非等下拍——消除
+                            # 假失败行与 1 拍延迟(SUI 案例)。
+                            if "51169" in str(res.message):
+                                print(f"{base}: 交易所条件单已抢先平仓(51169),"
+                                      f"按已平仓闭环台账")
+                            else:
+                                print(f"平仓失败: {res.message}")
+                                self._log_order_failure(base, inst_id, side, close_qty, "close", res.message)
+                                continue
+                        else:
+                            # R1-1：平仓成功后取消交易所侧条件停损单（防幽灵单残留）
+                            self._cancel_stop_orders(base, "止损/止盈平仓")
                     except Exception as e:
                         print(f"平仓失败: {e}")
                         self._log_order_failure(base, inst_id, "close", 0, "close", e)
