@@ -218,7 +218,10 @@ class OKXAdapter(ExchangeAdapter):
                     "ordType": "market", "sz": str(sz)}
         else:
             contracts = self._swap_qty_to_contracts(inst, qty)
-            body = {"instId": inst_id, "tdMode": "isolated", "side": side,
+            # 2026-08-19 根因修复: 该模拟盘账户所有持仓都在 cross 模式,
+            # isolated 下单对 cross 持仓 reduce-only 报 51169'无仓位可减'——
+            # ETH 突破止盈后平仓单连续 7 次失败即此因(实测 cross 同单 sCode=0)。
+            body = {"instId": inst_id, "tdMode": "cross", "side": side,
                     "ordType": "market", "sz": str(contracts),
                     "posSide": pos_side or "long"}
             if reduce_only:
@@ -239,7 +242,7 @@ class OKXAdapter(ExchangeAdapter):
         if inst.venue != "swap":
             return OrderResult(ok=False, qty=qty, message="现货不支持交易所侧条件单")
         contracts = self._swap_qty_to_contracts(inst, qty)
-        body = {"instId": inst_id, "tdMode": "isolated", "side": side,
+        body = {"instId": inst_id, "tdMode": "cross", "side": side,
                 "ordType": "conditional", "sz": str(contracts),
                 "posSide": pos_side, "reduceOnly": "true"}
         if is_tp:

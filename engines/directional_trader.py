@@ -783,12 +783,18 @@ class DirectionalTrader:
                             inst_id, side, close_qty, venue="swap",
                             pos_side=pos.side, reduce_only=True)
                         if not res.ok:
-                            # 2026-08-17: 51169 = 交易所侧条件单已抢先平仓(竞态),
-                            # 视为"仓位已消失",直接落账闭环而非等下拍——消除
-                            # 假失败行与 1 拍延迟(SUI 案例)。
+                            # 2026-08-19 51169 双语义: ①条件单已抢先平仓(仓位
+                            # 消失) ②下单层问题如 tdMode 不匹配(仓位还在)。
+                            # 必须反查持仓确认——盲目落账留幽灵仓,盲目重试刷
+                            # 失败行(ETH 案例: 7 连败 51169 即 tdMode 不匹配)。
                             if "51169" in str(res.message):
-                                print(f"{base}: 交易所条件单已抢先平仓(51169),"
-                                      f"按已平仓闭环台账")
+                                if self._pos_gone(inst_id, pos.side):
+                                    print(f"{base}: 交易所已无持仓(51169 确认),"
+                                          f"按已平仓闭环")
+                                else:
+                                    self._log_51169_throttled(base, inst_id,
+                                                              res.message)
+                                    continue
                             else:
                                 print(f"平仓失败: {res.message}")
                                 self._log_order_failure(base, inst_id, side, close_qty, "close", res.message)
@@ -797,9 +803,17 @@ class DirectionalTrader:
                             # R1-1：平仓成功后取消交易所侧条件停损单（防幽灵单残留）
                             self._cancel_stop_orders(base, "止损/止盈平仓")
                     except Exception as e:
-                        print(f"平仓失败: {e}")
-                        self._log_order_failure(base, inst_id, "close", 0, "close", e)
-                        continue
+                        if "51169" in str(e):
+                            if self._pos_gone(inst_id, (t.get("direction") or "long")):
+                                print(f"{base}: 交易所已无持仓(51169 异常路径确认),"
+                                      f"按已平仓闭环")
+                            else:
+                                self._log_51169_throttled(base, inst_id, e)
+                                continue
+                        else:
+                            print(f"平仓失败: {e}")
+                            self._log_order_failure(base, inst_id, "close", 0, "close", e)
+                            continue
                 # R1-12：释放账本认领（2026-08-17 修复: 此前只在 `if pos` 分支内
                 # 释放,交易所侧条件单已平仓时 pos=None → 跳过分支 → 认领永存 →
                 # H2 对账失败(ADA/LTC 双双中招)。台账闭环就必须释放,与谁执行
@@ -1131,6 +1145,29 @@ class DirectionalTrader:
     def _dir_cn(direction):
         """方向中文标签: long→开多, short→开空(2026-08-18 用户要求通知可见方向)。"""
         return "开多" if direction == "long" else "开空"
+
+    def _pos_gone(self, inst_id, side):
+        """反查交易所持仓是否已消失(51169 双语义判定用)。
+        查询失败按'还在'处理——宁可下拍重试,不留幽灵仓。"""
+        try:
+            positions = self.exchange.fetch_positions()
+            return not any(p.inst_id == inst_id and p.side == side
+                           and p.base_qty > 0 for p in positions)
+        except Exception:
+            return False
+
+    def _log_51169_throttled(self, base, inst_id, msg):
+        """51169 且仓位仍在(下单层问题): 60 秒节流记录一条失败,
+        避免每拍一行灌爆台账(ETH 7 连败即此场景)。"""
+        now = time.time()
+        log = getattr(self, "_51169_log", None)
+        if log is None:
+            log = {}
+            self._51169_log = log
+        key = f"{base}:{inst_id}"
+        if now - log.get(key, 0) >= 60:
+            log[key] = now
+            self._log_order_failure(base, inst_id, "close", 0, "close", msg)
 
     def _long_scan_progress(self):
         """长扫描逐币进度回调(2026-08-17): 插拍止损监控 + 心跳/tick 进度 +
