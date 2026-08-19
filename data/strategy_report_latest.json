@@ -1,0 +1,17 @@
+{
+  "generated_ts": 1786883275.4542239,
+  "n_closed": 1,
+  "sample_status": "insufficient",
+  "min_samples": 30,
+  "win_rate": 0.0,
+  "profit_factor": 0.0,
+  "expectancy_pnl": -0.000955,
+  "expectancy_r": null,
+  "max_drawdown": 0.000955,
+  "sqn": null,
+  "sqn_verdict": null,
+  "mfe_dist": null,
+  "mae_dist": null,
+  "features_missing_rate": 0.0,
+  "regimes": {}
+}

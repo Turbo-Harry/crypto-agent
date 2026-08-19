@@ -63,24 +63,33 @@ def main():
     last_upload_day = ""
 
     while True:
-        now = time.time()
-        # 按调度采集各周期
-        for bar, interval in SCHEDULE.items():
-            if now - last_run[bar] >= interval:
-                ok = run_collect(bar, args.top)
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                print(f"[{ts}] {bar} 采集 {'成功' if ok else '失败'}")
-                last_run[bar] = now
-                # 日线采集后上传 COS
-                if bar == "1D" and ok:
-                    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    if day != last_upload_day:
-                        try:
-                            subprocess.run([sys.executable, UPLOAD], timeout=180)
-                            print(f"  数据已上传 COS ({day})")
-                            last_upload_day = day
-                        except Exception:
-                            pass
+        # 2026-08-16 根因修复：循环体整体兜底——此前任何未捕获异常都会
+        # 让常驻采集进程永久退出（两次整夜停更事故）。现在失败只丢一轮、不丢进程；
+        # 配合 launchd KeepAlive（com.okx.collect）双保险。
+        try:
+            now = time.time()
+            # 按调度采集各周期
+            for bar, interval in SCHEDULE.items():
+                if now - last_run[bar] >= interval:
+                    ok = run_collect(bar, args.top)
+                    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                    print(f"[{ts}] {bar} 采集 {'成功' if ok else '失败'}",
+                          flush=True)
+                    last_run[bar] = now
+                    # 日线采集后上传 COS
+                    if bar == "1D" and ok:
+                        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        if day != last_upload_day:
+                            try:
+                                subprocess.run([sys.executable, UPLOAD],
+                                               timeout=180)
+                                print(f"  数据已上传 COS ({day})", flush=True)
+                                last_upload_day = day
+                            except Exception:
+                                pass
+        except Exception as e:
+            print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] "
+                  f"循环异常(已兜底,继续运行): {e}", flush=True)
 
         if args.once:
             break

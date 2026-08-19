@@ -20,12 +20,15 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-WINDOW_DAYS = 7
-MIN_TRADES_FOR_STATS = 5      # 统计结论最少样本
-MIN_SAMPLES_FOR_ISSUE = 3     # 感知问题最少样本
-LOSS_STREAK_ALERT = 3         # 连亏笔数告警线
-STOP_BREACH_RATIO = 1.3       # 实亏/预设风险 > 1.3 视为止损被击穿
-WIN_RATE_FLOOR = 0.30         # 胜率下限（样本≥5 时）
+import config
+from execution.trade_journal import realized_pnl_usdt, total_realized_pnl_usdt
+
+WINDOW_DAYS = config.WINDOW_DAYS
+MIN_TRADES_FOR_STATS = config.MIN_TRADES_FOR_STATS
+MIN_SAMPLES_FOR_ISSUE = config.MIN_SAMPLES_FOR_ISSUE
+LOSS_STREAK_ALERT = config.LOSS_STREAK_ALERT
+STOP_BREACH_RATIO = config.STOP_BREACH_RATIO
+WIN_RATE_FLOOR = config.WIN_RATE_FLOOR
 
 
 def _collect():
@@ -59,13 +62,18 @@ def analyze():
         "closed": len(closed),
         "open": sum(1 for t in trades if t["status"] == "open"),
         "win_rate": round(len(wins) / len(closed), 3) if closed else None,
+        # 总盈亏必须用实际 USDT（名义×比例）。百分比相加会失真。
+        "total_pnl_usdt": total_realized_pnl_usdt(closed),
         "total_pnl_pct": round(sum(t.get("pnl") or 0 for t in closed) * 100, 2),
         "avg_risk_usdt": round(sum(t.get("risk_usdt") or 0 for t in trades) /
                                len(trades), 2) if trades else 0,
         "notional_total": round(sum(t.get("notional_usdt") or 0 for t in trades), 2),
         "scan_rounds": len(scans),
         "scan_signals": sum(1 for s in scans if s["has_signal"]),
+        # scan_opens = 扫描日志里 decision=open 的次数。2026-08-20 起 open
+        # 只在成交入账后才记,应与 trades_total 对齐;历史窗口仍含"想开但没成交"。
         "scan_opens": sum(1 for s in scans if s["decision"] == "open"),
+        "scan_open_failed": sum(1 for s in scans if s["decision"] == "open_failed"),
         "risk_halt_count": sum(1 for r in risks if r["kind"] == "halt"),
         "engine_errors": len(errors),
         "lessons_total": len(d["lessons"]),
@@ -89,7 +97,7 @@ def analyze():
         risk = t.get("risk_usdt") or 0
         if risk <= 0 or t.get("pnl") is None:
             continue
-        actual_loss = abs(t["pnl"]) * (t.get("notional_usdt") or 0)
+        actual_loss = abs(realized_pnl_usdt(t) or 0)
         if t["pnl"] < 0 and actual_loss > risk * STOP_BREACH_RATIO:
             breaches.append(t["symbol"])
     if len(breaches) >= MIN_SAMPLES_FOR_ISSUE:
@@ -140,18 +148,28 @@ def run_daily():
                     ["*", it["category"], it["lesson"], 50, 0, "unverified",
                      f"analyst:{time.strftime('%Y-%m-%d')}", time.time(), time.time()])
         lesson_ids.append(lid)
+    # 场景归纳(2026-08-17 用户要求'多维度经验总结'): 同 symbol+类别+场景
+    # 条件的 trusted 教训 ≥ROLLUP_MIN_MEMBERS 时沉淀归纳结论(只读汇总)。
+    try:
+        from decision.experience_scoring import rollup_lessons
+        report["lesson_rollups"] = rollup_lessons()
+    except Exception:
+        report["lesson_rollups"] = []
     # 飞书反馈
+    wr = report['win_rate']
+    wr_s = f"{wr:.0%}" if isinstance(wr, (int, float)) else "—"
+    pnl_u = report['total_pnl_usdt']
+    sign = "+" if pnl_u >= 0 else ""
     lines = [f"📊 系统每日看账 [{time.strftime('%m-%d %H:%M')}]",
-             f"交易 {report['closed']}/{report['trades_total']} 笔 | 胜率 "
-             f"{report['win_rate'] if report['win_rate'] is not None else '—'} | "
-             f"总盈亏 {report['total_pnl_pct']:+.2f}%",
-             f"扫描 {report['scan_rounds']} 轮 | 信号 {report['scan_signals']} | "
-             f"开仓 {report['scan_opens']} | 熔断 {report['risk_halt_count']} | "
+             f"成交 {report['trades_total']} 笔（已平 {report['closed']}）  ·  "
+             f"胜率 {wr_s}  ·  总盈亏 **{sign}{pnl_u:.2f} USDT**",
+             f"扫描 {report['scan_rounds']} 轮  ·  信号 {report['scan_signals']}  ·  "
+             f"熔断 {report['risk_halt_count']}  ·  "
              f"异常 {report['engine_errors']}"]
     if issues:
-        lines.append("⚠️ 感知到问题:")
+        lines.append("⚠️ 感知到问题")
         for it in issues:
-            lines.append(f"  [{it['level']}] {it['category']}: {it['detail'][:60]}")
+            lines.append(f"- [{it['level']}] {it['category']}: {it['detail'][:60]}")
     else:
         lines.append("✅ 无异常")
     try:

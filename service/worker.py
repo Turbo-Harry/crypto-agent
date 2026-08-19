@@ -1,16 +1,16 @@
 """
 后台交易线程 — 完整交易系统的引擎托管层。
 
-托管两个常驻引擎（共享一个交易所适配器 + 一条 WebSocket 行情连接）：
+托管常驻引擎（一个交易所适配器 + 一条 WebSocket 行情连接）：
   1. 方向性引擎 DirectionalTrader —— 2s 止损监控 + 15min 回踩信号扫描
      （tick() 由 run() 抽取，服务端复用同一逻辑，无重复实现）
-  2. 套利引擎 TradingMain —— 60s 事件检测 + 费率告警 + 套利持仓管理
-     （ENABLE_FUNDING_ARB=False 时仍跑监控/告警，开仓路径被配置拦截）
+
+（2026-08-16 用户决定：套利引擎不再需要，已整线归档 legacy/，本文件不再托管。
+ 详见 docs/plans/2026-08-16_self_evolution_design.md DEF-10 / T0.6。）
 
 安全约束：
   - pause 只拦方向性【开仓信号扫描】；止损止盈监控永不暂停。
-  - 心跳文件沿用 watchdog 命名（heartbeat_directional/heartbeat_arb），
-    旧 launchd/watchdog 部署零改动。
+  - 心跳文件沿用 watchdog 命名（heartbeat_directional）；watchdog 的 arb 项已随引擎移除。
   - 引擎异常被 tick 捕获记入 last_error，不拖垮 HTTP 服务。
 """
 import threading
@@ -24,14 +24,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from engines.directional_trader import DirectionalTrader, connect as connect_dir
-from engines.trading_main import TradingMain
 
 
 class ServiceTrader(DirectionalTrader):
     """方向性引擎 + 暂停开关。暂停时跳过 scan_signals，监控照常。"""
 
-    def __init__(self, exchange=None, rt=None):
-        super().__init__(exchange=exchange, rt=rt)
+    def __init__(self, exchange=None, rt=None, db_path=None):
+        super().__init__(exchange=exchange, rt=rt, db_path=db_path)
         self._pause = threading.Event()   # set() = 暂停开仓
         self.last_error = ""
 
@@ -53,25 +52,25 @@ class ServiceTrader(DirectionalTrader):
 
 
 class TraderWorker:
-    """托管两个引擎线程：方向性（2s tick）+ 套利（60s tick）。"""
+    """托管方向性引擎线程（2s tick）。套利引擎已按用户决定移除（归档 legacy/）。"""
 
     def __init__(self):
-        # 共享依赖：一个适配器、一条 WebSocket（两引擎复用）
+        # 共享依赖：一个适配器、一条 WebSocket（方向性引擎使用）
         self.exchange = connect_dir()
         try:
             from data.realtime_okx import OKXRealtime
-            self.rt = OKXRealtime(["BTC", "ETH", "SOL", "XRP", "DOGE"]).start()
-            print("共享 WebSocket 实时行情已接入（两引擎复用）")
+            # 2026-08-17: WS 覆盖全回退池(此前硬编码 5 币,池外下单无秒级行情)
+            self.rt = OKXRealtime(
+                config.SYMBOLS, fetch_candles=self.exchange.fetch_candles).start()
+            print("共享 WebSocket 实时行情已接入")
         except Exception as e:
             print(f"WebSocket 启动失败，REST 兜底: {e}")
             self.rt = None
         self.trader = ServiceTrader(exchange=self.exchange, rt=self.rt)
-        self.arb = TradingMain(exchange=self.exchange, rt=self.rt)
         self._threads = []
         self._stop = threading.Event()
         self.started_at = 0.0
         self.last_hb_dir = 0.0    # 方向性引擎心跳
-        self.last_hb_arb = 0.0    # 套利引擎心跳
 
     # ---------- 生命周期 ----------
     def start(self):
@@ -83,13 +82,12 @@ class TraderWorker:
             raise RuntimeError("已有交易引擎实例在运行（engine.lock 被持有），拒绝启动第二个实例")
         self._stop.clear()
         self.started_at = time.time()
-        # PID 文件沿用 watchdog 命名（两个都写，服务进程 PID 相同）
-        for name in ("directional_trader.pid", "trading_main.pid"):
-            with open(name, "w") as f:
-                f.write(str(os.getpid()))
+        # PID 文件沿用 watchdog 命名（写入点统一走 execution/pidfile——
+        # code_graph 跨层共享状态告警修复）
+        from execution.pidfile import write_pid
+        write_pid("directional")
         self._threads = [
             threading.Thread(target=self._dir_loop, name="engine-directional", daemon=True),
-            threading.Thread(target=self._arb_loop, name="engine-arb", daemon=True),
         ]
         for t in self._threads:
             t.start()
@@ -107,11 +105,13 @@ class TraderWorker:
         try:
             import storage.db as sdb
             sdb.init_db()
-            for p in self.exchange.fetch_positions():
-                sdb.x("INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
-                      "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
-                      [time.time(), p.inst_id, p.side, p.contracts,
-                       round(p.base_qty, 8), p.avg_px])
+            with sdb.tx() as conn:
+                for p in self.exchange.fetch_positions():
+                    conn.execute(
+                        "INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
+                        "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
+                        [time.time(), p.inst_id, p.side, p.contracts,
+                         round(p.base_qty, 8), p.avg_px])
         except Exception as e:
             print(f"仓位快照失败: {e}")
 
@@ -122,66 +122,110 @@ class TraderWorker:
         t.signal_cool = {}
         self._last_snapshot = 0
         self._last_analysis = 0
-        while not self._stop.is_set():
-            try:
-                t.tick()                       # 心跳在 tick 内写
-                self.last_hb_dir = time.time()
-                # 本地仓位快照（每 60 秒，交易所持仓是唯一事实源）
-                if time.time() - self._last_snapshot >= 60:
-                    self._last_snapshot = time.time()
-                    self._save_positions_snapshot()
-                # 每日看账（自我进化：定期分析问题并反馈，≥24h 跑一次）
-                if time.time() - self._last_analysis >= 24 * 3600:
-                    self._last_analysis = time.time()
-                    try:
-                        from decision.analyst import run_daily
-                        run_daily()
-                    except Exception as e:
-                        print(f"每日分析失败: {e}")
-            except Exception as e:
-                tb = traceback.format_exc(limit=3)
-                t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{tb}"
-                print(f"方向性引擎异常: {e}")
-                try:
-                    import storage.db as sdb
-                    sdb.init_db()
-                    sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
-                          [time.time(), "directional", str(e), tb])
-                except Exception:
-                    pass
-            time.sleep(2)
+        # 2026-08-16 结构性修复: 独立心跳线程——扫描/每日刷新等长阻塞期间
+        # 心跳不断更(激进档首轮 20 币扫描 + 全市场初筛需数分钟,曾两次触发
+        # watchdog 误杀崩溃循环)。心跳与 tick 彻底解耦。
+        stop_hb = threading.Event()
 
-    def _arb_loop(self):
-        a = self.arb
-        a.price_history = {}
-        a.alert_cool = {}
-        a.signal_state = {}
-        a.decision_cool = {}
-        while not self._stop.is_set():
-            try:
-                a.tick()                       # 心跳在 tick 内写
-                self.last_hb_arb = time.time()
-            except Exception as e:
-                print(f"套利引擎异常: {e}")
+        def _hb_loop():
+            from execution.pidfile import write_heartbeat
+            while not stop_hb.is_set():
                 try:
-                    import storage.db as sdb
-                    sdb.init_db()
-                    sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
-                          [time.time(), "arb", str(e), traceback.format_exc(limit=3)])
+                    write_heartbeat("directional")
+                    self.last_hb_dir = time.time()
                 except Exception:
                     pass
-            time.sleep(60)
+                stop_hb.wait(10)
+
+        threading.Thread(target=_hb_loop, name="engine-heartbeat",
+                         daemon=True).start()
+        # 2026-08-19 线程分离: 止损监控独立线程 1s 节拍——长扫描/风控阻塞
+        # 主循环时监控照跑(此前靠逐币插拍打补丁,现从根上分离)。
+        stop_mon = threading.Event()
+
+        def _mon_loop():
+            while not stop_mon.is_set():
+                try:
+                    with t._mutex:
+                        t.monitor()
+                except Exception as e:
+                    # 2026-08-19: 监控线程异常不能静默——与主循环同款
+                    # 5 分钟同文本节流落库,持续坏掉会通过 H6 突发口径报警。
+                    try:
+                        import storage.db as sdb
+                        sdb.init_db()
+                        dup = sdb.q1("SELECT id FROM engine_errors WHERE error LIKE ? "
+                                     "AND ts > ? ORDER BY id DESC LIMIT 1",
+                                     [f"monitor线程: {str(e)[:80]}%",
+                                      time.time() - 300])
+                        if not dup:
+                            sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) "
+                                  "VALUES (?,?,?,?)",
+                                  [time.time(), "monitor", f"monitor线程: {e}", ""])
+                    except Exception:
+                        pass
+                stop_mon.wait(1)
+
+        threading.Thread(target=_mon_loop, name="engine-monitor",
+                         daemon=True).start()
+        try:
+            while not self._stop.is_set():
+                try:
+                    # 监控已由独立线程负责,主循环只做风控+扫描
+                    t.tick(run_monitor=False)
+                    # 2026-08-17: tick 进度标记——主循环被网络黑洞阻塞时心跳线程
+                    # 照常写心跳会让 watchdog 失明(51 分钟盲窗事故),此标记反映
+                    # 主循环真实进度,watchdog 据此判真卡死。
+                    from execution.pidfile import write_tick
+                    write_tick("directional")
+                    self.last_hb_dir = time.time()
+                    # 本地仓位快照（每 60 秒，交易所持仓是唯一事实源）
+                    if time.time() - self._last_snapshot >= 60:
+                        self._last_snapshot = time.time()
+                        self._save_positions_snapshot()
+                    # 每日看账（自我进化：定期分析问题并反馈，≥24h 跑一次）
+                    if time.time() - self._last_analysis >= 24 * 3600:
+                        self._last_analysis = time.time()
+                        try:
+                            from decision.analyst import run_daily
+                            run_daily()
+                        except Exception as e:
+                            print(f"每日分析失败: {e}")
+                except Exception as e:
+                    tb = traceback.format_exc(limit=3)
+                    t.last_error = f"{time.strftime('%H:%M:%S')} {e}\n{tb}"
+                    print(f"方向性引擎异常: {e}")
+                    # 2026-08-17: 同文本错误 5 分钟节流——SSL 抖动时每请求一
+                    # 行会灌爆 engine_errors/anomalies(今晚 6 条 blip 触发
+                    # H6 假告警)。首条落库+注册,同文本窗口内只打印不落库。
+                    err_key = str(e)[:120]
+                    try:
+                        import storage.db as sdb
+                        sdb.init_db()
+                        dup = sdb.q1("SELECT id FROM engine_errors WHERE error LIKE ? "
+                                     "AND ts > ? ORDER BY id DESC LIMIT 1",
+                                     [err_key + "%", time.time() - 300])
+                        if not dup:
+                            sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
+                                  [time.time(), "directional", str(e), tb])
+                            try:
+                                from tools.anomalies import register as _reg
+                                _reg("engine_error", f"方向性引擎异常: {e}",
+                                     str(e)[:200], severity="error")
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                time.sleep(1)   # 2026-08-17 提速: 1s 节拍止损监控(持仓快照仍 2s 节流)
+        finally:
+            stop_hb.set()
+            stop_mon.set()
 
     # ---------- 只读状态快照（供 HTTP 层） ----------
     def heartbeat_age(self) -> float:
         if self.last_hb_dir <= 0:
             return -1.0
         return time.time() - self.last_hb_dir
-
-    def arb_heartbeat_age(self) -> float:
-        if self.last_hb_arb <= 0:
-            return -1.0
-        return time.time() - self.last_hb_arb
 
     def uptime(self) -> float:
         return time.time() - self.started_at if self.started_at else 0.0

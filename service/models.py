@@ -7,13 +7,11 @@ from pydantic import BaseModel
 
 
 class HealthOut(BaseModel):
-    """服务健康状态（两引擎）。"""
+    """服务健康状态（方向性引擎）。"""
     status: str                 # "ok" | "degraded"
     adapter: str                # 交易所适配器名（okx）
     uptime_seconds: float       # 服务进程运行时长
     directional_heartbeat_age: float   # 方向性引擎心跳年龄（>30s 卡死）
-    arb_heartbeat_age: float           # 套利引擎心跳年龄（>300s 卡死）
-    arb_enabled: bool           # ENABLE_FUNDING_ARB 配置
     paused: bool                # 方向性开仓是否暂停
 
 
@@ -83,6 +81,7 @@ class TradeItem(BaseModel):
     entry_price: Optional[float]
     exit_price: Optional[float]
     pnl_pct: Optional[float]
+    pnl_usdt: Optional[float] = None   # 实际盈亏 USDT（比例 × 名义）
     status: str
     entry_time: Optional[float]
     exit_time: Optional[float]
@@ -95,6 +94,7 @@ class JournalOut(BaseModel):
     total: int
     closed: int
     win_rate: Optional[float]
+    total_pnl_usdt: Optional[float] = None  # 已平仓合计实际盈亏 USDT
     trades: List[TradeItem]
 
 
@@ -102,15 +102,6 @@ class ControlOut(BaseModel):
     action: str
     paused: bool
     message: str
-
-
-class ArbStatusOut(BaseModel):
-    """套利引擎状态。"""
-    enabled: bool               # 用户决定：ENABLE_FUNDING_ARB
-    positions_ledger: int       # 套利台账持仓数
-    risk_halted: bool
-    decision_threshold: float
-    last_events: List[str]      # 最近信号事件（内存快照）
 
 
 class RealtimeOut(BaseModel):
@@ -148,3 +139,19 @@ class ReconcileOut(BaseModel):
     per_symbol: List[dict]           # {symbol, journal_base, exchange_base, diff}
     balanced: bool                   # 全部一致？
     notes: List[str]                 # 差异说明（如 legacy 单位换算）
+
+
+class ScanEvolveOut(BaseModel):
+    """扫描尺子进化状态（只动影线比；影子验证通过后须人工批准）。"""
+    enabled: bool
+    incumbent_wick: float
+    effective_wick: float
+    candidate_wick: Optional[float] = None
+    change_id: Optional[str] = None
+    status: Optional[str] = None
+    evidence: str = ""
+    shadow_open: int = 0
+    shadow_settled: int = 0
+    settled_mean_pnl: Optional[float] = None
+    needs_approval: bool = False
+    message: str = ""

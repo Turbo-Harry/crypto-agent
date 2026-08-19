@@ -44,6 +44,19 @@ class Candle:
 
 
 @dataclass
+class TickerInfo:
+    """24h ticker 快照。vol_usdt_24h 已在适配层按场所归一成 USDT。
+
+    OKX 陷阱（见 pitfalls）：SWAP 的 volCcy24h 是币本位，SPOT 才是 USDT。
+    策略层只读 vol_usdt_24h，禁止自己乘 last。"""
+    inst_id: str
+    base: str
+    last: float = 0.0
+    vol_ccy_24h: float = 0.0   # 交易所原始 volCcy24h（单位随场所变）
+    vol_usdt_24h: float = 0.0  # 归一后的 24h 成交额（USDT）
+
+
+@dataclass
 class BalanceInfo:
     """账户余额快照。"""
     total_eq: float = 0.0   # 账户总权益（USDT 计价）

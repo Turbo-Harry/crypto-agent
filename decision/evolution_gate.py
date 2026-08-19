@@ -58,9 +58,13 @@ class EvolutionGate:
             return self._fresh_state()
 
     def _save(self):
+        # 2026-08-20: 原子写（.tmp + os.replace，仓库约定）——进程被杀在写中途
+        # 不会留半个 JSON 导致下次启动 gate 状态全丢。
         try:
-            with open(self.path, "w") as f:
+            tmp = self.path + ".tmp"
+            with open(tmp, "w") as f:
                 json.dump(self.state, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.path)
         except Exception:
             pass
 
@@ -78,13 +82,16 @@ class EvolutionGate:
         self._observe(pnl)
         self._save()
 
-    def propose_candidate(self, label, source):
+    def propose_candidate(self, label, source, meta=None):
         """提出候选规则（同一时间只有一个候选）。
-        source 描述候选的数据/规则来源，用于回声室检测。"""
+        source 描述候选的数据/规则来源，用于回声室检测。
+        meta（2026-08-20）: 候选的机器可读参数（如 {"threshold": 45}），
+        promote 时随 incumbent 保留，调用方据此应用变更。"""
         self.state["candidate"] = {
             "label": label, "source": source,
             "pnls": [],
             "proposed_ts": time.time(),
+            "meta": meta or {},
         }
         self._log("propose", f"{label} (source={source})")
         self._save()

@@ -20,10 +20,13 @@ except ImportError:
 class PositionLedger:
     def __init__(self, path="position_ownership.json",
                  lock_path="position_ownership.lock",
-                 max_total_notional=600.0):
+                 max_total_notional=None):
         # 存储：SQLite（storage 层 ownership 表，事务保证并发安全，替代 flock）
         self.path = path
         self.lock_path = lock_path
+        if max_total_notional is None:
+            import config as _config
+            max_total_notional = _config.MAX_TOTAL_NOTIONAL  # 统一维护（红线 600）
         self.max_total_notional = max_total_notional
         self.db_path = None if path == "position_ownership.json" else path
         self._data = self._load()
@@ -114,6 +117,21 @@ class PositionLedger:
             self._data.pop(key, None)
             return key
         return None
+
+    def restore(self, symbol, pos_side, strategy, qty, notional):
+        """启动对账补账(DEF-11):journal 事实源中的未平仓交易在账本缺失/不完整时
+        恢复 claim。与 claim() 的区别:不走 600 上限闸门——这是恢复既有事实,不是
+        授予新敞口。语义 = 【以 journal 聚合值为准覆盖】:重复对账写入同一聚合值,
+        结果不变(幂等);部分补账残留也会被下一次对账修正到正确值。"""
+        key = f"{symbol}:{pos_side}"
+        rec = self._data.setdefault(key, {"qty": 0.0, "notional": 0.0,
+                                          "strategies": {}})
+        rec["qty"] = float(qty)
+        rec["notional"] = float(notional)
+        rec["strategies"][strategy] = float(qty)
+        rec["updated_at"] = time.time()
+        self._save()
+        return key
 
     def reconcile(self, active_keys):
         """对账(审计 C1):active_keys = 交易所持仓 ∪ 未平仓 journal,是唯一事实源。

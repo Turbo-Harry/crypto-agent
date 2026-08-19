@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # tests 目录（import test_exchange_layers）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
+import config
+
 from fastapi.testclient import TestClient
 from service.app import app
 from service.worker import ServiceTrader
@@ -36,18 +38,13 @@ def check(name, cond):
 class _FakeWorker:
     """CI 安全的假 worker：只提供 app 层读取的属性，不连 OKX/WS。"""
 
-    def __init__(self, trader, arb):
+    def __init__(self, trader):
         self.trader = trader
-        self.arb = arb
         self.last_hb_dir = time.time()
-        self.last_hb_arb = time.time()
         self.started_at = time.time()
 
     def heartbeat_age(self):
         return time.time() - self.last_hb_dir
-
-    def arb_heartbeat_age(self):
-        return time.time() - self.last_hb_arb
 
     def uptime(self):
         return time.time() - self.started_at
@@ -56,11 +53,14 @@ class _FakeWorker:
 def main():
     # 组装：FakeAdapter + ServiceTrader（离线）+ TestClient
     fake = FakeAdapter(usdt_free=10_000.0)
-    trader = ServiceTrader(exchange=fake, rt=None)
-    trader.last_hb = time.time()
     # 隔离持久化（临时 journal/账本，不碰活体服务状态文件）
     import tempfile
     tmp = tempfile.mkdtemp(prefix="tst_svc_")
+    # Phase0 T0.4：ServiceTrader 也必须传 db_path——本测试会 tick() 触发
+    # scan_signals，不隔离会把测试决策行写进生产 scan_decisions（DEF-8）。
+    trader = ServiceTrader(exchange=fake, rt=None,
+                           db_path=os.path.join(tmp, "scan.db"))
+    trader.last_hb = time.time()
     from execution.trade_journal import TradeJournal
     from execution.position_ownership import PositionLedger
     from decision.threshold_learning import ThresholdLearner
@@ -68,21 +68,21 @@ def main():
     trader.journal = TradeJournal(path=os.path.join(tmp, "journal.json"))
     trader.ledger = PositionLedger(path=os.path.join(tmp, "ledger.json"),
                                    lock_path=os.path.join(tmp, "ledger.lock"))
-    trader.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"))
+    trader.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"),
+                                                initial_threshold=config.THRESHOLD_INITIAL)
     trader.exp_bank = ScoredExperience(path=os.path.join(tmp, "exp.json"))
-    # 套利引擎也用 fake（避免真连 OKX）
-    from engines.trading_main import TradingMain
-    worker = _FakeWorker(trader, TradingMain(exchange=fake, rt=None))
+    worker = _FakeWorker(trader)
     app.state.worker = worker
     trader._last_scan = 0
     trader._last_risk_update = 0
     trader.signal_cool = {}
 
-    client = TestClient(app)
+    # base_url=127.0.0.1:让 Host 头落在控制面白名单内(审计 B-H1 的 Host 校验)
+    client = TestClient(app, base_url="http://127.0.0.1")
     print("== 聚合冒烟（全部只读端点一次遍历）==")
     smoke_ok, smoke_detail = True, []
     for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
-                 "/arb/status", "/error", "/analysis/latest", "/reconcile"):
+                 "/error", "/analysis/latest", "/reconcile", "/scan/evolve"):
         r = client.get(path)
         try:
             r.json()
@@ -95,6 +95,15 @@ def main():
     check("9 个只读端点全部 200+JSON 可解析", smoke_ok)
     if smoke_detail:
         print(f"    失败明细: {smoke_detail}")
+    r = client.get("/scan/evolve")
+    check("/scan/evolve 含 effective_wick 且 needs_approval=false",
+          r.status_code == 200 and "effective_wick" in r.json()
+          and r.json()["needs_approval"] is False)
+    r = client.post("/scan/evolve/approve")
+    check("无验证通过提案时 /scan/evolve/approve → 409",
+          r.status_code == 409)
+    if smoke_detail:
+        print(f"    失败明细: {smoke_detail}")
 
     print("== 观测接口（行为断言）==")
     r = client.get("/status")
@@ -105,8 +114,6 @@ def main():
           all(k in j for k in ("total_notional_usdt", "open_notional_usdt", "today_notional_usdt")))
     r = client.get("/realtime/FAKE")
     check("/realtime rt=None 时 fresh=false 不崩", r.json()["fresh"] is False)
-    r = client.get("/arb/status")
-    check("/arb/status enabled=false（套利停用）", r.json()["enabled"] is False)
     r = client.post("/analysis/daily")
     j = r.json()
     check("/analysis/daily 跑通（含 report/issues）",
@@ -180,11 +187,28 @@ def main():
     # 复盘报告落盘：save_review 写入 journal + API /journal 返回 review 字段
     report = {"pnl": 0.02, "rr": 2.0,
               "lessons": [{"category": "入场时机", "lesson": "测试教训"}]}
-    check("save_review 返回 True", trader.journal.save_review("txn_001", report) is True)
+    tid0 = trader.journal.trades[0]["id"]
+    check("save_review 返回 True", trader.journal.save_review(tid0, report) is True)
     check("journal 落盘 review", trader.journal.trades[0].get("review") == report)
     r = client.get("/journal")
     jr = r.json()
     check("/journal 交易项含 review 复盘报告", jr["trades"][0].get("review") is not None)
+
+    # 平仓后总盈亏写实际 USDT（比例 × 名义），不是百分比相加
+    from execution.trade_journal import realized_pnl_usdt as _pnl_u
+    row0 = trader.journal.trades[0]
+    entry = float(row0["entry_price"] or 0)
+    notional = float(row0.get("notional_usdt") or 0)
+    trader.journal.log_exit(tid0, entry * 1.02, "测试止盈")
+    r = client.get("/journal")
+    jr = r.json()
+    expected = _pnl_u(trader.journal.trades[0])
+    item = jr["trades"][0]
+    check("/journal 单笔含 pnl_usdt", item.get("pnl_usdt") == expected)
+    check("/journal 总盈亏 total_pnl_usdt 为实际 USDT",
+          jr.get("total_pnl_usdt") == expected)
+    check("总盈亏约等于名义×2%（不是把 2% 写成 2）",
+          expected is not None and abs(expected - 0.02 * notional) < 0.05)
 
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)

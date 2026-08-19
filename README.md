@@ -1,7 +1,7 @@
 # 加密货币自动化交易系统（宁可做对，不可做错）
 
 以「宁可错过、不可做错」为核心哲学的自动化交易 agent。
-OKX 模拟盘（虚拟资金），方向性日内短线 + 资金费率套利（已停用，代码保留）。
+OKX 模拟盘（虚拟资金），方向性日内短线（2026-08-16 用户决定：资金费率套利引擎移除，代码归档 legacy/）。
 完整功能收在 FastAPI 服务端进程里，HTTP 只读观测 + 最小控制面。
 
 > ⚠️ 重要声明：没有任何系统能"保证"收益率。本系统保证的是**风险上限**
@@ -27,9 +27,8 @@ PYTHONPATH=lib python3 -m service.main --port 8090
 | 组件 | 说明 |
 |---|---|
 | 方向性引擎 | 2s 止损监控 + 15min 回踩信号扫描 + 每日候选刷新 |
-| 套利引擎 | 60s 事件检测/费率告警/持仓管理（开仓受 ENABLE_FUNDING_ARB 开关） |
-| 实时行情 | 原生 WebSocket，两引擎共享 |
-| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/arb/status、POST /pause /resume /scan/daily |
+| 实时行情 | 原生 WebSocket |
+| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback |
 
 ## 目录结构（分层）
 
@@ -38,17 +37,18 @@ crypto-agent/
 ├── AGENTS.md               # AI 协作模型：分层/入口/安全不变量/最佳实践/红线
 ├── docs/architecture/exchange_layers.md      # 交易所访问四层架构
 ├── service/                # 服务端外壳（FastAPI + uvicorn，完整功能入口）
-│   ├── main.py             #   进程入口：双引擎 + HTTP
+│   ├── main.py             #   进程入口：方向性引擎 + HTTP
 │   ├── app.py              #   HTTP 接口层（只读观测 + 暂停/恢复，禁止下单）
 │   ├── models.py           #   Pydantic 响应模型（AI 可读 schema）
-│   └── worker.py           #   引擎托管：两后台线程 + 共享 WS + 心跳
-├── engines/                # 交易引擎层
-│   ├── directional_trader.py   # 方向性引擎（回踩确认 + 2:1 盈亏比 + tick 止损）
-│   ├── trading_main.py         # 套利引擎（事件驱动，ENABLE_FUNDING_ARB=False 停用）
-│   ├── trading_agent.py        # 旧套利 agent（保留）
-│   ├── funding_arb.py          # 套利 CLI（保留）
-│   └── daily_scan.py           # 每日全市场候选扫描 → watchlist.json
-├── decision/               # 决策与进化层（self_evolving/experience/threshold/weight/scoring/review/evolution_gate）
+│   └── worker.py           #   引擎托管：后台线程 + 共享 WS + 心跳
+├── engines/                # 交易引擎层（2026-08-20 按功能拆分，行为零变化）
+│   ├── directional_trader.py   # 方向性引擎核心壳（入口/组装/对账/tick 主循环）
+│   ├── signal_scan.py          #   信号扫描/候选池/额度/冷却（SignalScanMixin）
+│   ├── position_mgmt.py        #   开仓全链路/条件单/失败落库（PositionMixin）
+│   ├── risk_monitor.py         #   止损监控/熔断强平（RiskMonitorMixin）
+│   ├── review_pipeline.py      #   平仓复盘链/阈值进化门（ReviewMixin）
+│   └── daily_scan.py           # 每日全市场候选扫描 → watchlist（走 ExchangeAdapter）
+├── decision/               # 决策与进化层（self_evolving/experience/threshold/review/evolution_gate）
 ├── execution/              # 执行与台账层（quantity/trade_journal/position_ownership）
 ├── exchange/               # 交易所访问四层（transport/okx_adapter/base/models/fake）
 ├── factors/                # 因子挖掘研究层
@@ -57,7 +57,7 @@ crypto-agent/
 ├── strategy/  risk/  backtest/
 ├── tests/                  # 全部测试
 ├── docs/                   # 文档中心（architecture/plans/reports/ops/prompts，索引 docs/README.md）
-├── legacy/                 # 废弃文件
+├── legacy/                 # 废弃/归档文件（含已移除的套利引擎与对应测试）
 └── config.py               # 全局配置
 ```
 
@@ -66,8 +66,8 @@ crypto-agent/
 ## 测试
 
 ```bash
-PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（18 断言，离线）
-PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（14 断言，离线）
+PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（FakeAdapter 离线）
+PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（TestClient 离线）
 python3 -m py_compile <改动的文件>
 ```
 
@@ -76,8 +76,11 @@ python3 -m py_compile <改动的文件>
 ## 数据源与交易所
 
 - 交易所：OKX 模拟盘（sandbox，虚拟资金），原生 REST 直连（无 ccxt）
-- 行情：OKX 原生 WebSocket（tickers/funding-rate/trades）+ REST 兜底
-- 历史数据：OKX `/market/history-candles`（约 6 年）
+- 交易路径 REST：一律走 `exchange/`（适配层 `fetch_tickers`/`fetch_candles`/下单）；`engines/` 禁止裸打 OKX URL
+- 行情：OKX 原生 WebSocket（tickers/funding-rate/trades）+ 适配层 REST 预热
+- 历史数据（研究/回测）：`data/fetch_okx.py` 的 `/market/history-candles`（约 6 年）
+- 本地库：`crypto_agent.db`（SQLite）。流水日志保留 90 天（`config.DB_RETENTION_DAYS`），每天扫完候选池后自动清理；交易台账、经验库、研究表永久保留。未处理的告警不会被清掉。
+- 飞书通知：开仓/平仓/告警走交互卡片（`lark_md`），不是 GitHub Markdown。普通 `--text` 在飞书里不会加粗。每日看账和交易台账的「总盈亏」是已平仓合计的**实际 USDT**（名义投注额 × 盈亏比例），不是把各笔百分比加起来。
 
 ## 已知边界（诚实声明）
 

@@ -43,8 +43,12 @@ class RiskManager:
         """更新净值并检查熔断。day_key 用于识别交易日（如日期字符串）。"""
         self.equity = equity
         if self.current_day != day_key:
+            # 停手语义是"当日"（DAILY_LOSS_LIMIT），跨日必须复位——
+            # 否则一次真实熔断会把引擎永久锁死到进程重启（审计发现 2026-08-17）。
             self.current_day = day_key
             self.day_start_equity = equity
+            self.halted = False
+            self.halt_reason = ""
         self.peak_equity = max(self.peak_equity, equity)
 
         drawdown = (self.peak_equity - equity) / self.peak_equity

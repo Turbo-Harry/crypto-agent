@@ -15,6 +15,7 @@
 - [docs/architecture/code_graph.md](docs/architecture/code_graph.md): 代码知识图谱（模块/符号/数据流三层 + --check/--query）
 - [docs/architecture/exchange_layers.md](docs/architecture/exchange_layers.md): 交易所访问四层（transport/adapter/base/models）
 - [docs/architecture/mtf_resonance_design.md](docs/architecture/mtf_resonance_design.md): 1h+4h 多周期共振设计
+- [docs/architecture/trade_features_schema.md](docs/architecture/trade_features_schema.md): Phase 1 特征采集 schema（影子模式，trade_features 表）
 
 ## 经验与踩坑（写代码前必读）
 
@@ -22,12 +23,31 @@
 - [docs/reports/optimization_notes.md](docs/reports/optimization_notes.md): 历史实施记录（R1/R2/OP/CR/RES）
 - [docs/reports/final_report.md](docs/reports/final_report.md): 系统交付终报
 
+## 计划与设计（当前活跃方案）
+
+- [docs/plans/2026-08-16_self_evolution_design.md](docs/plans/2026-08-16_self_evolution_design.md): 自进化系统设计方案 v0.2 —— 复盘驱动的系统与策略改进（DEF 缺陷清单/业界标准 S1-S5 验收/Phase 0-5/质疑轮/零回归约束/权责矩阵）
+- [docs/reports/2026-08-16_strategy_research.md](docs/reports/2026-08-16_strategy_research.md): 业界策略调研（订单流 CVD/聪明钱 SMC 批评/分场景策略套件/开源机器人，附来源 URL）
+
+## 因子研究
+
+- [docs/prompts/2026-08-16_factor_mining_goal_prompt.md](docs/prompts/2026-08-16_factor_mining_goal_prompt.md): 因子挖掘完善目标 prompt（原理/业界标准/验证门/影子政策）
+- [factors/factor_gate.py](factors/factor_gate.py): 因子验证门（walk-forward t 值 ≥3.0 / 成本扣除 / 去冗余 / 经济逻辑必填 + factor_trials 试验日志）
+- [factors/overfit_guard.py](factors/overfit_guard.py): 防过拟合守卫（Deflated Sharpe + CSCV-PBO）
+- [tools/strategy_report.py](tools/strategy_report.py): 策略体检报告（SQN≥30 笔才报/MAE-MFE 分布/特征缺失率）
+- [tools/replay_signals.py](tools/replay_signals.py): 决策重放集（影子数据，只给证伪权）
+- [tools/health_check.py](tools/health_check.py): 系统体检 H1-H10（launchd 每 5 分钟）
+
 ## 代码
 
-- [service/main.py](service/main.py): 服务端进程入口（FastAPI + 双引擎线程）
-- [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎（回踩确认信号 + tick 止损）
+- [service/main.py](service/main.py): 服务端进程入口（FastAPI + 引擎线程）
+- [decision/scan_evolve.py](decision/scan_evolve.py): 扫描尺子进化（REJECT_WICK_RATIO 提案→影子→DSR 门→人工批准）
+- [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎核心壳（入口/组装/tick 主循环；功能块 2026-08-20 拆分）
+- [engines/signal_scan.py](engines/signal_scan.py): 信号扫描功能块（SignalScanMixin）
+- [engines/position_mgmt.py](engines/position_mgmt.py): 仓位管理功能块（PositionMixin）
+- [engines/risk_monitor.py](engines/risk_monitor.py): 风控监控功能块（RiskMonitorMixin）
+- [engines/review_pipeline.py](engines/review_pipeline.py): 复盘管道功能块（ReviewMixin）
 - [engines/trading_main.py](engines/trading_main.py): 套利引擎（事件驱动，ENABLE_FUNDING_ARB=False 停用）
-- [engines/daily_scan.py](engines/daily_scan.py): 每日全市场候选扫描
+- [engines/daily_scan.py](engines/daily_scan.py): 每日全市场候选扫描（走 ExchangeAdapter，禁止裸打 OKX）
 - [exchange/okx_adapter.py](exchange/okx_adapter.py): OKX 原生 REST 适配器
 - [tests/test_exchange_layers.py](tests/test_exchange_layers.py): 分层单测（FakeAdapter 离线）
 - [tests/test_service_api.py](tests/test_service_api.py): 服务端接口单测（TestClient 离线）

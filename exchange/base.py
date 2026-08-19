@@ -12,8 +12,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from exchange.models import (Instrument, Candle, BalanceInfo, PositionInfo,
-                             OrderResult)
+from exchange.models import (Instrument, Candle, TickerInfo, BalanceInfo,
+                             PositionInfo, OrderResult)
 
 
 class ExchangeError(Exception):
@@ -47,6 +47,15 @@ class ExchangeAdapter(ABC):
     @abstractmethod
     def fetch_funding_rate(self, inst_id: str) -> float:
         """当前资金费率（每 8 小时，swap）。"""
+
+    @abstractmethod
+    def fetch_tickers(self, venue: str = "swap") -> List[TickerInfo]:
+        """全市场 24h ticker。venue="swap"|"spot"。
+        vol_usdt_24h 已按场归一（策略层不要自己乘 last）。"""
+
+    @abstractmethod
+    def new_cl_ord_id(self) -> str:
+        """客户端幂等键。超时后按此反查订单；各交易所格式由适配器保证合法。"""
 
     # ---------- 账户 ----------
     @abstractmethod

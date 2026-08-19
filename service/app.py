@@ -2,9 +2,10 @@
 HTTP 接口层 — FastAPI 应用（完整功能的服务端外壳）。
 
 暴露三大类接口：
-  观测：/health /status /watchlist /signals/{base} /journal /realtime/{base} /arb/status
+  观测：/health /status /watchlist /signals/{base} /journal /realtime/{base}
   控制：/pause /resume（暂停/恢复方向性开仓；止损监控永不暂停）
-  运维：/scan/daily（手动触发全市场候选扫描）/error
+    运维：/scan/daily（手动触发全市场候选扫描）/scan/evolve（扫描尺子进化）/error
+（2026-08-16 用户决定：套利引擎移除，/arb/status 已下线，代码归档 legacy/。）
 
 【禁止】暴露"下单"类接口：交易决策只由后台引擎的既定策略做出，
 HTTP 只是观测窗口与最小控制面，不是交易入口 —— 宁可做对，也不做错。
@@ -24,18 +25,19 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 
 from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             StatusOut, WatchItem, WatchlistOut, SignalOut,
-                            TradeItem, JournalOut, ControlOut, ArbStatusOut,
-                            RealtimeOut, ScanOut, ReconcileOut, RiskEventOut)
+                            TradeItem, JournalOut, ControlOut,
+                            RealtimeOut, ScanOut, ReconcileOut, RiskEventOut,
+                            ScanEvolveOut)
 
 app = FastAPI(
     title="Crypto Agent 交易服务",
     description=(
-        "完整交易系统服务端：方向性日内短线引擎 + 资金费率套利引擎 + 实时行情。\n\n"
+        "交易系统服务端：方向性日内短线引擎 + 实时行情。\n\n"
         "- 方向性引擎：2s 止损监控 + 15min 回踩信号扫描（后台线程）\n"
-        "- 套利引擎：60s 事件检测/费率告警/套利持仓管理（后台线程）\n"
         "- 本接口只读观测 + 暂停/恢复开仓，不提供手动下单\n"
+        "- /journal 总盈亏为已平仓合计实际 USDT，不是百分比相加\n"
         "- 模拟盘（OKX sandbox），虚拟资金"),
-    version="2.0.0")
+    version="2.1.0")
 
 
 def require_control(request: Request):
@@ -60,23 +62,16 @@ def _trader():
     return _worker().trader
 
 
-def _arb():
-    return _worker().arb
-
-
 @app.get("/health", response_model=HealthOut, tags=["观测"])
 def health():
-    """服务健康：两引擎心跳年龄超时判定 degraded。"""
-    import config
+    """服务健康：方向性引擎心跳年龄超时判定 degraded。"""
     w = _worker()
-    hb_d, hb_a = w.heartbeat_age(), w.arb_heartbeat_age()
-    ok = (hb_d >= 0 and hb_d < 30) and (hb_a < 0 or hb_a < 300)
+    hb_d = w.heartbeat_age()
+    ok = hb_d >= 0 and hb_d < 30
     return HealthOut(status="ok" if ok else "degraded",
                      adapter=_trader().exchange.name,
                      uptime_seconds=round(w.uptime(), 1),
                      directional_heartbeat_age=round(hb_d, 1),
-                     arb_heartbeat_age=round(hb_a, 1),
-                     arb_enabled=config.ENABLE_FUNDING_ARB,
                      paused=_trader().paused)
 
 
@@ -154,6 +149,7 @@ def signal_for(base: str):
 @app.get("/journal", response_model=JournalOut, tags=["观测"])
 def journal(limit: int = 20):
     """最近交易台账（含盈亏）。"""
+    from execution.trade_journal import realized_pnl_usdt, total_realized_pnl_usdt
     t = _trader()
     trades = t.journal.trades[-limit:]
     closed = [x for x in t.journal.trades if x["status"] == "closed"]
@@ -161,11 +157,13 @@ def journal(limit: int = 20):
     return JournalOut(
         total=len(t.journal.trades), closed=len(closed),
         win_rate=round(len(wins) / len(closed), 3) if closed else None,
+        total_pnl_usdt=total_realized_pnl_usdt(closed),
         trades=[TradeItem(id=x["id"], symbol=x["symbol"],
                           direction=x.get("direction") or "long",
                           entry_price=x.get("entry_price"),
                           exit_price=x.get("exit_price"),
                           pnl_pct=round(x["pnl"] * 100, 2) if x.get("pnl") is not None else None,
+                          pnl_usdt=realized_pnl_usdt(x),
                           status=x["status"],
                           entry_time=x.get("entry_time"),
                           exit_time=x.get("exit_time"),
@@ -191,17 +189,14 @@ def realtime(base: str):
                        fresh=fresh)
 
 
-@app.get("/arb/status", response_model=ArbStatusOut, tags=["观测"])
-def arb_status():
-    """套利引擎状态：配置开关、持仓台账、事件快照。"""
-    import config
-    a = _arb()
-    return ArbStatusOut(
-        enabled=config.ENABLE_FUNDING_ARB,
-        positions_ledger=len(a.arb_positions),
-        risk_halted=not a.risk.can_trade(),
-        decision_threshold=a.threshold_learner.threshold,
-        last_events=[f"{b}: {a.signal_state.get(b, {})}" for b in a.signal_state][-10:])
+@app.get("/anomalies", tags=["观测"])
+def anomalies():
+    """统一异常中心(2026-08-17 用户要求:所有异常统一输出到一个接口)。
+    消费端只读此端点/表,不接触各业务表。"""
+    import storage.db as sdb
+    sdb.init_db()
+    return sdb.q("SELECT id, ts, source, severity, title, detail, status "
+                 "FROM anomalies ORDER BY ts DESC LIMIT 50")
 
 
 @app.post("/scan/daily", response_model=ScanOut, tags=["运维"],
@@ -210,12 +205,12 @@ def scan_daily():
     """手动触发一次全市场候选扫描（刷新 watchlist，覆盖 123 个标的）。
     耗时约 1-2 分钟；调用会阻塞等待完成。"""
     from engines.daily_scan import screen_daily
+    t = _trader()
     try:
-        w = screen_daily()
+        w = screen_daily(exchange=t.exchange)
     except Exception as e:
         raise HTTPException(500, f"扫描失败: {e}")
-    # 同步刷新两引擎的候选池（避免等跨天自动刷新）
-    t = _trader()
+    # 同步刷新引擎的候选池（避免等跨天自动刷新）
     t.watchlist = [c["base"] for c in w]
     t.watch_scores = {c["base"]: c["score"] for c in w}
     t._watch_date = time.strftime("%Y-%m-%d")
@@ -225,6 +220,41 @@ def scan_daily():
                                 "score": round(c.get("score", 0), 3),
                                 "atr_pct": round(c.get("atr_pct", 0), 4),
                                 "price": c.get("price")} for c in w])
+
+
+@app.get("/scan/evolve", response_model=ScanEvolveOut, tags=["观测"])
+def scan_evolve_status():
+    """扫描尺子进化状态：现役/活体/候选影线比、影子样本、是否待批准。
+    只读；不下单、不改尺子。落库走引擎 db_path（测试隔离、防写活体库）。"""
+    from decision.scan_evolve import snapshot
+    return ScanEvolveOut(**snapshot(_trader()._db_path))
+
+
+@app.post("/scan/evolve/approve", response_model=ScanEvolveOut, tags=["控制"],
+           dependencies=[Depends(require_control)])
+def scan_evolve_approve():
+    """批准已通过影子验证门的扫描尺子（目前仅 REJECT_WICK_RATIO）。
+    未通过验证门的提案一律拒绝。不改 config.py，覆盖写在 kv，可回滚。"""
+    from decision.scan_evolve import approve, snapshot
+    db = _trader()._db_path
+    ok, msg = approve(db_path=db)
+    if not ok:
+        raise HTTPException(409, msg)
+    out = ScanEvolveOut(**snapshot(db))
+    out.message = msg
+    return out
+
+
+@app.post("/scan/evolve/rollback", response_model=ScanEvolveOut, tags=["控制"],
+           dependencies=[Depends(require_control)])
+def scan_evolve_rollback():
+    """撤销活体影线比覆盖，回到 config.REJECT_WICK_RATIO。"""
+    from decision.scan_evolve import rollback, snapshot
+    db = _trader()._db_path
+    _, msg = rollback(db_path=db)
+    out = ScanEvolveOut(**snapshot(db))
+    out.message = msg
+    return out
 
 
 @app.post("/pause", response_model=ControlOut, tags=["控制"],

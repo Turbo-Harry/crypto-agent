@@ -9,6 +9,7 @@ import os
 import random
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 from execution.trade_journal import TradeJournal
 from decision.review_engine import deep_review, ExperienceBank
 
@@ -21,22 +22,30 @@ class SelfEvolvingTrader:
         self.bank = ExperienceBank()
 
     def decide(self, symbol, signal_score, signal_name, signal_price, entry_price,
-               stop_dist, tp_dist, atr_value):
+               stop_dist, tp_dist, atr_value, journal=None, conditions=None):
         """
         决策层：综合信号 + 历史经验 → 是否交易、仓位、止损修正。
         这是"进化"的关键：不是机械执行信号，而是参考经验库调整。
+        journal: 调用方显式传入(2026-08-17)——本类自建 TradeJournal 是启动
+        时快照,不随交易更新,连亏检查读陈旧数据;且测试换掉 trader.journal
+        后这里仍读生产库(隔离泄漏)。单一事实源 = 调用方的 journal。
+        conditions: 场景条件向量(2026-08-17,direction/vol_band/trend/
+        signal_type)——教训匹配逐维比对,教训缺失维度视为通配;经验效果按
+        验证强度聚合(见下)。旧调用传 regime 已废弃。
         """
+        journal = journal or self.journal
         decision = {"trade": True, "reason": [], "stop_adj": 0, "size_factor": 1.0,
                     "adopted_lesson_ids": []}   # R2-3：恒初始化，无采纳也返回空列表
 
-        # 1. 信号门槛
-        if signal_score < 75:
+        # 1. 信号门槛（统一维护于 config.DECIDE_MIN_SCORE,与引擎 SIGNAL_SCORE 联动）
+        if signal_score < config.DECIDE_MIN_SCORE:
             decision["trade"] = False
-            decision["reason"].append(f"信号分 {signal_score} < 75")
+            decision["reason"].append(
+                f"信号分 {signal_score} < {config.DECIDE_MIN_SCORE}")
             return decision
 
-        # 2. 查经验库：该币种历史教训
-        relevant = self.bank.relevant(symbol=symbol)
+        # 2. 查经验库：该币种【同环境】历史教训（regime 匹配,2026-08-17）
+        relevant = self.bank.relevant(symbol=symbol, conditions=conditions)
         if relevant:
             # 统计主要错误类别 + 收集采纳经验 id（R2-3）
             from collections import Counter
@@ -45,18 +54,39 @@ class SelfEvolvingTrader:
             for l in relevant:
                 if l.get("id") is not None:
                     ids_by_cat.setdefault(l["category"], []).append(l["id"])
-            if cats.get("止损", 0) >= 2:
-                # 历史多次止损问题 → 自动放宽止损 0.2 ATR
-                decision["stop_adj"] = 0.2
-                decision["adopted_lesson_ids"] += ids_by_cat.get("止损", [])
-                decision["reason"].append(
-                    f"历史 {cats['止损']} 次止损问题，自动放宽止损 +0.2 ATR")
+            # 2026-08-17 聚合生效: 止损效果 = 验证强度加权,不再数条数。
+            # 单条教训贡献封顶 EVIDENCE_CAP_PER_LESSON,多条叠加;
+            # 分档表 config.STOP_ADJ_TIERS(硬顶 0.5 ATR)。
+            from decision.experience_scoring import evidence_strength
+            _raw_bank = getattr(self.bank, "bank", self.bank)  # _ExpAdapter 透传
+            stop_strength = evidence_strength(_raw_bank, symbol, "止损", conditions=conditions)
+            # 场景归纳层(只读审计注释): 若有 ≥ROLLUP_MIN_MEMBERS 条的归纳
+            # 结论,写入理由供事后审计——决策数学仍以 evidence_strength 为准。
+            try:
+                from decision.experience_scoring import get_rollup
+                rollup = get_rollup(getattr(_raw_bank, "db_path", None),
+                                    symbol, "止损", conditions)
+                if rollup:
+                    decision["reason"].append(
+                        f"场景归纳经验(成员 {rollup['member_count']} 条,"
+                        f"强度 {rollup['strength']})")
+            except Exception:
+                pass
+            for tier_min, tier_adj in reversed(config.STOP_ADJ_TIERS):
+                if stop_strength >= tier_min:
+                    decision["stop_adj"] = tier_adj
+                    decision["adopted_lesson_ids"] += ids_by_cat.get("止损", [])
+                    decision["reason"].append(
+                        f"同环境止损教训验证强度 {stop_strength} → "
+                        f"止损放宽 +{tier_adj} ATR")
+                    break
             if cats.get("入场时机", 0) >= 1:
                 decision["adopted_lesson_ids"] += ids_by_cat.get("入场时机", [])
                 decision["reason"].append("历史有追高记录，本次用限价单，不追市价")
         # 信号失效检查：读【被证伪】的经验（discarded），不是 trusted——
         # 失效教训经亏损验证后只会进 discarded，此前读 trusted 使该分支恒不可达
-        discarded = getattr(self.bank, "discarded", lambda s, c=None: [])(symbol=symbol)
+        discarded = getattr(self.bank, "discarded", lambda s, c=None: [])(symbol=symbol,
+                                                                          conditions=conditions)
         if discarded:
             cats_d = Counter(l["category"] for l in discarded)
             if cats_d.get("信号", 0) >= 3:
@@ -66,19 +96,23 @@ class SelfEvolvingTrader:
                 decision["reason"].append(f"该信号模式历史 {cats_d['信号']} 次失效，拒绝")
                 return decision
 
-        # 3. 连亏检查
-        closed = [t for t in self.journal.trades if t["status"] == "closed"]
+        # 3. 连亏检查（journal 用调用方传入的实时台账，2026-08-17）
+        # 2026-08-17 用户指示: 连亏 3 笔冷却【移除】(激进采集期,净盈亏为正时
+        # 刮损不应锁死开仓;该决定的护栏见 tools/fix_guard.py G9)。
+        closed = [t for t in journal.trades if t["status"] == "closed"]
         recent_losses = [t for t in closed[-5:] if t["pnl"] is not None and t["pnl"] < 0]
-        if len(recent_losses) >= 3:
-            decision["trade"] = False
-            decision["reason"].append(f"连亏 {len(recent_losses)} 笔，冷却")
-            return decision
         if len(recent_losses) == 2:
             decision["size_factor"] = 0.5
             decision["reason"].append("近期连亏 2 笔，半仓")
 
         if not decision["reason"]:
             decision["reason"].append("信号达标，无历史警示，正常交易")
+        # Phase0 T0.2：候选经验（一致性初筛通过、待独立验证）低权重参考——
+        # 只写入决策理由并纳入采纳追踪（供后续交易验证），不改变任何参数。
+        cands = getattr(self.bank, "candidates", lambda s: [])(symbol=symbol)
+        if cands:
+            decision["adopted_lesson_ids"] += [l["id"] for l in cands if l.get("id")]
+            decision["reason"].append(f"参考 {len(cands)} 条待验证候选经验（不影响参数）")
         return decision
 
     def execute_and_review(self, symbol, signal_name, signal_score, signal_price,

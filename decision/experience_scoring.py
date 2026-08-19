@@ -1,3 +1,4 @@
+import config
 """
 经验评分系统 — 历史经验不一定对，每条经验用实际交易结果验证。
 好经验存活（分数上升），坏经验淘汰（分数下降，弃用）。
@@ -19,8 +20,8 @@ import json
 import os
 import time
 
-DECAY_HALFLIFE_DAYS = 30   # 分数向 50 回归的半衰期
-REVIVE_DAYS = 60           # discarded 经验 N 天后复活为 unverified
+DECAY_HALFLIFE_DAYS = config.DECAY_HALFLIFE_DAYS
+REVIVE_DAYS = config.REVIVE_DAYS
 
 
 class ScoredExperience:
@@ -60,29 +61,40 @@ class ScoredExperience:
             self._sync_status(l)
 
     def _sync_status(self, l):
-        """状态只由 分数+验证次数 决定：≥3次且≥60=trusted；≥3次且<40=discarded；其余 unverified。"""
+        """状态由 分数+验证次数 决定：≥3次且≥60=trusted；≥3次且<40=discarded；
+        其余保持现状（unverified/candidate/dubious 在凑满 3 次独立验证前不动——
+        Phase0 T0.2：candidate 是打破死锁的采纳通道，不能被 40/60 规则提前改写）。"""
         if l.get("adoptions", 0) >= 3:
             if l["score"] >= 60:
                 l["status"] = "trusted"
             elif l["score"] < 40:
                 l["status"] = "discarded"
             else:
-                l["status"] = "unverified"   # 40-60 保持未验证（v1 曾强行 discarded）
+                l["status"] = "unverified"
 
     def _save(self):
         import storage.db as sdb
         for l in self.lessons:
+            cond = l.get("conditions")
+            cond_s = cond if isinstance(cond, str) else \
+                json.dumps(cond or {}, ensure_ascii=False)
             sdb.x("INSERT OR REPLACE INTO lessons (id,symbol,category,content,score,"
-                  "adoptions,good,bad,status,source_trade,ts,last_update) "
-                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "adoptions,good,bad,status,source_trade,regime,conditions,ts,last_update) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   [l.get("id"), l.get("symbol"), l.get("category"), l.get("content"),
                    l.get("score", 50), l.get("adoptions", 0), l.get("good", 0),
                    l.get("bad", 0), l.get("status", "unverified"), l.get("source_trade"),
-                   l.get("ts"), l.get("last_update")], db_path=self.db_path)
+                   l.get("regime"), cond_s, l.get("ts"), l.get("last_update")],
+                  db_path=self.db_path)
 
     # ---------- 经验生命周期 ----------
-    def add(self, symbol, category, content, source_trade):
-        """新增经验（初始分 50，未验证）。"""
+    def add(self, symbol, category, content, source_trade, status="unverified",
+            regime=None, conditions=None):
+        """新增经验（初始分 50）。status 默认 unverified；平仓复盘链按一致性初筛
+        传入 candidate/dubious（Phase0 T0.2，见 directional_trader._post_close_review）。
+        regime: 教训产生的市场环境标签（Phase 4，兼容旧字段）。
+        conditions: 场景条件向量 dict（2026-08-17，direction/vol_band/trend/
+        signal_type），JSON 落库;无则空(全维度通配)。"""
         now = time.time()
         lesson = {
             "id": len(self.lessons) + 1,
@@ -93,8 +105,11 @@ class ScoredExperience:
             "adoptions": 0,
             "good": 0,
             "bad": 0,
-            "status": "unverified",
+            "status": status,
             "source_trade": source_trade,
+            "regime": regime,
+            "conditions": json.dumps(conditions, ensure_ascii=False)
+                          if conditions else "",
             "ts": now,
             "last_update": now,
         }
@@ -124,12 +139,19 @@ class ScoredExperience:
         return None
 
     # ---------- 查询 ----------
-    def trusted(self, symbol=None, min_score=60):
-        """可信经验（分数达标，正常参考）。"""
+    def trusted(self, symbol=None, min_score=60, regime=None, conditions=None):
+        """可信经验（分数达标，正常参考）。
+        regime(兼容旧调用): 给定标签时只匹配同环境教训。
+        conditions(2026-08-17): 场景条件向量匹配,逐维比对(见 conditions_match);
+        教训无标签维度 = 通配。"""
         out = [l for l in self.lessons
                if l["status"] == "trusted" and l["score"] >= min_score]
         if symbol:
             out = [l for l in out if l["symbol"] == symbol]
+        if regime and not conditions:
+            conditions = {"vol_band": regime}
+        if conditions:
+            out = [l for l in out if conditions_match(l, conditions)]
         return out
 
     def unverified(self, symbol=None):
@@ -139,11 +161,30 @@ class ScoredExperience:
             out = [l for l in out if l["symbol"] == symbol]
         return out
 
-    def discarded(self, symbol=None):
-        """已弃用经验（证明是错的，不参考）。"""
+    def candidates(self, symbol=None):
+        """候选经验（Phase0 T0.2：平仓复盘一致性初筛通过，等待后续独立交易验证）。
+        决策层低权重参考（只写理由+采纳追踪，不改参数）。"""
+        out = [l for l in self.lessons if l["status"] == "candidate"]
+        if symbol:
+            out = [l for l in out if l["symbol"] == symbol]
+        return out
+
+    def dubious(self, symbol=None):
+        """存疑经验（一致性初筛未通过：教训归因与本笔结果矛盾）。不进采纳池，仅观察。"""
+        out = [l for l in self.lessons if l["status"] == "dubious"]
+        if symbol:
+            out = [l for l in out if l["symbol"] == symbol]
+        return out
+
+    def discarded(self, symbol=None, regime=None, conditions=None):
+        """已弃用经验（证明是错的，不参考）。regime/conditions 过滤语义同 trusted()。"""
         out = [l for l in self.lessons if l["status"] == "discarded"]
         if symbol:
             out = [l for l in out if l["symbol"] == symbol]
+        if regime and not conditions:
+            conditions = {"vol_band": regime}
+        if conditions:
+            out = [l for l in out if conditions_match(l, conditions)]
         return out
 
     def summary(self):
@@ -166,6 +207,159 @@ def experience_score_for_decision(bank, symbol):
     discarded = bank.discarded(symbol)
     score = 60 + min(30, len(trusted) * 5) - min(20, len(discarded) * 5)
     return max(20, score)
+
+
+def build_conditions(direction=None, regime_dict=None, signal_type="pullback"):
+    """教训/信号的【场景条件向量】(2026-08-17 用户要求'经验要有适用场景维度'):
+    - direction: long/short
+    - vol_band: regime tag(low_vol/mid_vol/high_vol)
+    - trend: trend_slope 符号 → up/down/flat
+    - signal_type: pullback/breakout
+    所有维度可选;有值的维度才参与匹配。纯数据,中文不参与。"""
+    cond = {}
+    if direction:
+        cond["direction"] = direction
+    if signal_type:
+        cond["signal_type"] = signal_type
+    if regime_dict:
+        tag = regime_dict.get("tag")
+        if tag:
+            cond["vol_band"] = tag
+        ts = regime_dict.get("trend_slope")
+        if ts is not None:
+            cond["trend"] = ("up" if ts > 0.0005
+                             else "down" if ts < -0.0005 else "flat")
+    return cond
+
+
+def conditions_match(lesson, conditions):
+    """教训与当前场景是否匹配: conditions 中每个【有值】维度都必须一致;
+    教训缺失该维度 = 通配(旧数据)。旧教训无 conditions 仅有 regime 时,
+    按 vol_band 迁移匹配。"""
+    if not conditions:
+        return True
+    lc = None
+    raw = lesson.get("conditions")
+    if isinstance(raw, str) and raw:
+        try:
+            lc = json.loads(raw)
+        except Exception:
+            lc = None
+    elif isinstance(raw, dict):
+        lc = raw
+    if not lc and lesson.get("regime"):
+        lc = {"vol_band": lesson.get("regime")}
+    if not lc:
+        return True
+    for k, v in conditions.items():
+        if not v:
+            continue
+        if lc.get(k) and lc[k] != v:
+            return False
+    return True
+
+
+def _evidence_weight(lesson, now=None):
+    """单条教训的证据权重 = 净验证次数钳制 × 时间衰减(2026-08-20 FinMem 式):
+    权重 = clamp(good-bad, 0, CAP) × 0.5^(距上次验证天数 / EVIDENCE_HALFLIFE_DAYS)。
+    为什么衰减: 市场 regime 会漂移,半衰期前验证的证据不应永久满权重——
+    教训必须被新交易持续验证才能保持强度(分数衰减已有,此处补证据衰减)。"""
+    now = now or time.time()
+    net = int(lesson.get("good", 0) or 0) - int(lesson.get("bad", 0) or 0)
+    net = max(0, min(config.EVIDENCE_CAP_PER_LESSON, net))
+    age_days = max(0.0, (now - (lesson.get("last_update") or now)) / 86400.0)
+    return net * (0.5 ** (age_days / config.EVIDENCE_HALFLIFE_DAYS))
+
+
+def evidence_strength(bank, symbol, category, conditions=None, now=None):
+    """教训的【数据验证强度】聚合(2026-08-17 用户要求'教训聚合生效'):
+    只聚合 trusted;每条教训的权重 = 净验证次数(good - bad),钳制在
+    [0, config.EVIDENCE_CAP_PER_LESSON]——单条教训再强也有上限(防独裁),
+    多条独立验证的教训线性叠加,再乘时间衰减(2026-08-20,见 _evidence_weight)。
+    中文 content 完全不参与计算。
+    conditions: 场景条件向量,只聚合匹配当前场景的教训。"""
+    total = 0.0
+    for l in bank.trusted(symbol, conditions=conditions):
+        if l.get("category") != category:
+            continue
+        total += _evidence_weight(l, now)
+    return round(total, 2)
+
+
+def rollup_lessons(bank=None, db_path=None):
+    """场景归纳(2026-08-17 用户要求'多维度经验总结'):
+    同 symbol+类别+场景条件的 trusted 教训 ≥ config.ROLLUP_MIN_MEMBERS 时,
+    沉淀一条归纳教训(lesson_rollups 表)。归纳层【只读汇总】——strength 是
+    成员权重的和,成员各自仍走 ±10 验证循环,归纳不参与验证(防回声)。
+    返回本轮归纳列表。"""
+    import storage.db as sdb
+    sdb.init_db(db_path)
+    if bank is None:
+        bank = ScoredExperience(db_path or "experience_scored.json")
+    groups = {}
+    for l in bank.trusted():
+        cond = l.get("conditions")
+        if isinstance(cond, str):
+            try:
+                cond = json.loads(cond) if cond else {}
+            except Exception:
+                cond = {}
+        key = (l.get("symbol"), l.get("category"),
+               json.dumps(cond, ensure_ascii=False, sort_keys=True))
+        g = groups.setdefault(key, {"lessons": [], "conditions": cond})
+        g["lessons"].append(l)
+    now = time.time()
+    out = []
+    live_keys = set()
+    for (symbol, category, _), g in groups.items():
+        members = g["lessons"]
+        if len(members) < config.ROLLUP_MIN_MEMBERS:
+            continue
+        # 2026-08-20: 归纳强度与 evidence_strength 同一衰减口径(防两套数学打架)
+        strength = round(sum(_evidence_weight(l, now) for l in members), 2)
+        cond_s = json.dumps(g["conditions"], ensure_ascii=False, sort_keys=True)
+        live_keys.add((symbol, category, cond_s))
+        sdb.x("INSERT OR REPLACE INTO lesson_rollups "
+              "(symbol, category, conditions, strength, member_count, member_ids, ts, last_update) "
+              "SELECT ?,?,?,?,?,?,COALESCE((SELECT ts FROM lesson_rollups WHERE symbol=? "
+              "AND category=? AND conditions=?), ?), ?",
+              [symbol, category, cond_s, strength, len(members),
+               json.dumps([m["id"] for m in members]),
+               symbol, category, cond_s, now, now], db_path=db_path)
+        out.append({"symbol": symbol, "category": category,
+                    "conditions": g["conditions"], "strength": strength,
+                    "member_count": len(members)})
+    # 清理: 成员掉到门槛以下的旧归纳行删除
+    for r in sdb.q("SELECT id, symbol, category, conditions FROM lesson_rollups",
+                   db_path=db_path):
+        if (r["symbol"], r["category"], r["conditions"]) not in live_keys:
+            sdb.x("DELETE FROM lesson_rollups WHERE id=?", [r["id"]], db_path=db_path)
+    return out
+
+
+def get_rollup(db_path, symbol, category, conditions=None):
+    """查场景归纳教训(决策层审计注释用;数学不依赖它,evidence_strength 才是权威)。"""
+    import storage.db as sdb
+    sdb.init_db(db_path)
+    if conditions:
+        cond_s = json.dumps(conditions, ensure_ascii=False, sort_keys=True)
+        row = sdb.q1("SELECT * FROM lesson_rollups WHERE symbol=? AND category=? "
+                     "AND conditions=?", [symbol, category, cond_s], db_path=db_path)
+        if row:
+            return row
+    rows = sdb.q("SELECT * FROM lesson_rollups WHERE symbol=? AND category=?",
+                 [symbol, category], db_path=db_path)
+    if not rows:
+        return None
+    for r in rows:
+        cond = {}
+        try:
+            cond = json.loads(r["conditions"]) if r["conditions"] else {}
+        except Exception:
+            cond = {}
+        if conditions_match({"conditions": cond}, conditions):
+            return r
+    return None
 
 
 if __name__ == "__main__":

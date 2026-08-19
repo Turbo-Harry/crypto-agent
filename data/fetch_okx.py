@@ -1,7 +1,9 @@
 """
-数据层 — OKX 数据源（用户选定）。
-接口：OKX REST API v5（公开接口，无需凭证）
-历史 K 线可回溯至 2020 年（约 6 年，比币安 3 年更长）。
+数据层 — OKX 历史行情（研究/回测/采集用）。
+
+交易路径禁止走本模块：引擎/服务的 OKX REST 一律走 exchange 层
+（ExchangeAdapter.fetch_candles / fetch_tickers）。本文件只服务
+history-candles 分页回溯（约 6 年）+ 本地 24h 缓存，给 backtest/factors。
 """
 import json
 import os

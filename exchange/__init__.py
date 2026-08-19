@@ -25,8 +25,9 @@ exchange 包 — 交易所访问分层架构
 """
 from exchange.base import ExchangeAdapter
 from exchange.okx_adapter import OKXAdapter
-from exchange.models import (Instrument, Candle, BalanceInfo, PositionInfo,
-                             OrderResult)
+from exchange.models import (Instrument, Candle, TickerInfo, BalanceInfo,
+                             PositionInfo, OrderResult)
 
 __all__ = ["ExchangeAdapter", "OKXAdapter",
-           "Instrument", "Candle", "BalanceInfo", "PositionInfo", "OrderResult"]
+           "Instrument", "Candle", "TickerInfo", "BalanceInfo",
+           "PositionInfo", "OrderResult"]
