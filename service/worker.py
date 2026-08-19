@@ -145,8 +145,22 @@ class TraderWorker:
                 try:
                     with t._mutex:
                         t.monitor()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 2026-08-19: 监控线程异常不能静默——与主循环同款
+                    # 5 分钟同文本节流落库,持续坏掉会通过 H6 突发口径报警。
+                    try:
+                        import storage.db as sdb
+                        sdb.init_db()
+                        dup = sdb.q1("SELECT id FROM engine_errors WHERE error LIKE ? "
+                                     "AND ts > ? ORDER BY id DESC LIMIT 1",
+                                     [f"monitor线程: {str(e)[:80]}%",
+                                      time.time() - 300])
+                        if not dup:
+                            sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) "
+                                  "VALUES (?,?,?,?)",
+                                  [time.time(), "monitor", f"monitor线程: {e}", ""])
+                    except Exception:
+                        pass
                 stop_mon.wait(1)
 
         threading.Thread(target=_mon_loop, name="engine-monitor",
