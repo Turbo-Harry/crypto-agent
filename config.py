@@ -136,6 +136,15 @@ EVIDENCE_CAP_PER_LESSON = 2   # 单条教训最大贡献权重（good-bad 净验
 STOP_ADJ_TIERS = [(1, 0.2), (3, 0.4), (5, 0.5)]
 # 止损放宽分档: (聚合强度门槛, 放宽 ATR 数);硬顶 0.5 ATR,越界即封顶
 ROLLUP_MIN_MEMBERS = 3        # 场景归纳教训最少成员数(同 symbol+类别+条件 ≥3 才沉淀)
+EVIDENCE_HALFLIFE_DAYS = 30   # 证据权重时间半衰期(天,2026-08-20 FinMem 式衰减):
+# evidence_strength/rollup 聚合时,教训按 last_update 距今指数衰减——
+# 老教训不再永久满权重,须被新交易反复验证才能保持强度(防市场 regime 漂移)。
+
+# ---- 阈值进化门（2026-08-20 DEF-5 闭环: EvolutionGate 接回生产链路） ----
+# 阈值校准(threshold_learning)不再直接生效:先提案→影子验证→达标晋升→观察期退化回滚。
+GATE_MIN_SHADOW = 30          # 候选阈值影子样本门槛(Tharp ≥30 笔,与 MIN_SAMPLES 同源)
+GATE_MIN_EDGE = 0.001         # 候选须超越现役的最小期望优势(平仓盈亏比例;>0 防平局晋升)
+GATE_OBSERVE_BATCH = 10       # 晋升后观察期批大小(每批对比一次,连续退化→回滚基线)
 
 # ---- 试验注册表（experiments） ----
 DSR_ACCEPT = 1.0              # Deflated Sharpe 接受线（LdP）

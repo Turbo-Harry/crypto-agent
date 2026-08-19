@@ -74,7 +74,7 @@
 | DEF-2 | unverified→trusted 死锁 | 经验库无法晋升 | `directional_trader.py:73-90,550-551` | Phase 0 修（按 §5 Q3 方案） |
 | DEF-3 | post_exit_reverse 死参数 | 插针维度失效 | `directional_trader.py:541-543` | Phase 0 修 |
 | DEF-4 | 信号分恒 80 → 方向侧阈值学习失效 | 无分数方差 | `directional_trader.py:118-121,783` | Phase 3（依赖 T1.3） |
-| DEF-5 | EvolutionGate 死代码 | 参数变更无验证门 | `decision/evolution_gate.py` | Phase 3 |
+| DEF-5 | EvolutionGate 死代码 | 参数变更无验证门 | `decision/evolution_gate.py` | 【2026-08-20 已闭环】阈值层接线：gated 学习器 + 提案→影子(≥30)→晋升→观察期回滚基线；见 optimization_notes 2026-08-20 条 + tests/test_gate_wiring.py |
 | DEF-6 | WeightLearner 仅接线套利引擎 | —— | `trading_main.py:103-105` | 【撤销：随套利移除归档】 |
 | DEF-7 | analyst 教训 symbol=`*` 不匹配 | 日度教训不闭环 | `analyst.py:137` | Phase 4 |
 | DEF-8 | 生产表被测试写入污染 | 学习数据不可信 | **已溯源结案**：`tests/test_decision_loop.py:151-174`（`initial_threshold=85` + `scan_signals()` 写共享库）→ 18:58:54 矛盾行与 thresholds 临时 key 均由此类测试产生 | Phase 0 修（T0.4） |

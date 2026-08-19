@@ -11,6 +11,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 from exchange.fake_adapter import FakeAdapter
 from exchange.models import Candle, floor_to_lot
 from exchange.base import ExchangeError
@@ -91,7 +92,13 @@ def test_full_trade_flow():
     tid = dt.open_position(base, sig, score=80)
     check("开仓成功并记账", tid is not None)
     check("FakeAdapter 记录了市价单", len(fake.orders) == 1 and fake.orders[0]["venue"] == "swap")
-    check("FakeAdapter 记录了止损条件单", len(fake.algos) == 1 and not fake.algos[0]["is_tp"])
+    # 2026-08-20 断言修正: FLAG_ENABLE_EXCHANGE_TP(08-19)后开仓挂两张条件单
+    # (止损+止盈),旧断言写死"恰好1张"过时——按类型分别断言。
+    _stops = [a for a in fake.algos if not a["is_tp"]]
+    _tps = [a for a in fake.algos if a["is_tp"]]
+    check("FakeAdapter 记录了止损条件单", len(_stops) == 1)
+    check("交易所侧止盈与开关一致",
+          len(_tps) == (1 if config.FLAG_ENABLE_EXCHANGE_TP else 0))
     check("交易所持仓腿存在", any(p.inst_id == "BTC-USDT-SWAP" and p.side == "long"
                                   and p.base_qty > 0 for p in fake.positions))
     check("账本总敞口 = 名义额", abs(dt.ledger.total_notional() - fake.orders[0]["qty"] * 110.0) < 1.0)

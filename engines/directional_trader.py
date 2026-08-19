@@ -192,8 +192,24 @@ class DirectionalTrader:
         from decision.threshold_learning import ThresholdLearner
         # 2026-08-16 用户指示采集加速: 信号分门槛降到 50,阈值初始 70→45
         # (若保持 70,50<70 会让全部信号被拒)。影子分喂入后满 30 样本仍可校准。
+        # 2026-08-20 DEF-5 闭环: gated=True——校准只产提案,变更必须过进化门;
+        # db_path 透传(测试隔离,与 T0.4 同口径)。
         self.threshold_learner = ThresholdLearner(path="threshold_state_dir.json",
-                                                  initial_threshold=config.THRESHOLD_INITIAL)
+                                                  initial_threshold=config.THRESHOLD_INITIAL,
+                                                  db_path=self._db_path, gated=True)
+        # 阈值进化门（DEF-5）: 提案→影子验证→晋升生效→观察期退化回滚基线。
+        # 状态文件随 db_path 隔离(测试进临时目录,不污染仓库根)。
+        from decision.evolution_gate import EvolutionGate
+        _gate_file = (os.path.join(os.path.dirname(os.path.abspath(self._db_path)),
+                                   "evolution_gate_threshold.json")
+                      if self._db_path else "evolution_gate_threshold.json")
+        self.threshold_gate = EvolutionGate(
+            "方向性阈值层", _gate_file,
+            min_shadow_samples=config.GATE_MIN_SHADOW,
+            min_edge=config.GATE_MIN_EDGE,
+            batch_size=config.GATE_OBSERVE_BATCH,
+            on_rollback=lambda: self.threshold_learner.apply_threshold(
+                config.THRESHOLD_INITIAL))
         # 账户级风控（审计 CR-2：RiskManager 必须真正接线）
         from risk.risk_manager import RiskManager
         try:
@@ -911,9 +927,10 @@ class DirectionalTrader:
         # R2-3：只 validate 本笔实际采纳的经验（替换全量 trusted validate 回声）
         for lid in t.get("adopted_lesson_ids") or []:
             self.exp_bank.validate(lid, closed["pnl"])
-        # 阈值自适应：记录本次【真实】决策分数 + 结果，校准阈值
+        # 阈值自适应：记录本次【真实】决策分数 + 结果。
+        # 2026-08-20 DEF-5 闭环: 校准不再直接生效,走进化门(提案→影子→晋升/回滚)。
         score = t.get("score") or SIGNAL_SCORE
-        self.threshold_learner.record(score, closed["pnl"])
+        self._threshold_gate_step(score, closed["pnl"])
         # 账户级风控：净值更新（平仓后）
         try:
             eq = self.exchange.fetch_balance().total_eq
@@ -935,6 +952,48 @@ class DirectionalTrader:
                f"当前自适应阈值: {self.threshold_learner.threshold}")
         print(msg)
         self._notify(msg)
+
+    def _threshold_gate_step(self, score, pnl):
+        """阈值进化门接线（2026-08-20，DEF-5 闭环）。每笔真实平仓走一步：
+          1) 学习器只记录样本（gated 模式，不自动改阈值）；
+          2) 现役样本喂 gate（晋升后的观察期靠它检测退化→自动回滚基线）；
+          3) 有候选阈值时，按候选的【反事实决策】记影子样本——候选会拒绝的
+             交易记 0（=空仓），影子样本满 GATE_MIN_SHADOW 且期望优势
+             ≥ GATE_MIN_EDGE 才晋升生效；
+          4) 无候选时，用校准数学产提案（只算不改）。
+        诚实声明：反事实只对【收紧】方向有证据力——放松方向新增的交易现实中
+        未执行、无盈亏可依，影子期表现与现役恒相同，会被 min_edge>0 拒绝。
+        这与"宁可做对，也不做错"一致：放宽门槛必须由用户拍板，不由机器自动。
+        任何异常只打日志，不拖垮复盘链。"""
+        try:
+            self.threshold_learner.record(score, pnl)
+            self.threshold_gate.record_incumbent(pnl)
+            cand = self.threshold_gate.state.get("candidate")
+            if cand:
+                cand_thr = (cand.get("meta") or {}).get("threshold")
+                shadow_pnl = pnl if (cand_thr is None or score >= cand_thr) else 0.0
+                res = self.threshold_gate.record_shadow(shadow_pnl) or {}
+                if res.get("action") == "promote" and cand_thr is not None:
+                    old = self.threshold_learner.apply_threshold(cand_thr)
+                    msg = (f"🧬 阈值进化门晋升: {old} → {cand_thr} "
+                           f"(影子均值 {res.get('cand', 0):+.4f} vs "
+                           f"现役 {res.get('inc', 0):+.4f})")
+                    print(msg)
+                    self._notify(msg)
+                elif res.get("action") == "reject":
+                    print(f"阈值进化门淘汰候选: 影子均值 {res.get('cand', 0):+.4f} "
+                          f"未超越现役 {res.get('inc', 0):+.4f}")
+            else:
+                proposal = self.threshold_learner.propose()
+                if proposal is not None:
+                    self.threshold_gate.propose_candidate(
+                        f"阈值{proposal}",
+                        source="分数-盈亏桶校准(threshold_learning)",
+                        meta={"threshold": proposal})
+                    print(f"阈值进化门收到候选: {self.threshold_learner.threshold} "
+                          f"→ {proposal}（进入影子验证,不改现役）")
+        except Exception as e:
+            print(f"阈值进化门异常(不影响复盘链): {e}")
 
     # ---------- 熔断强平（只平本策略的 journal 持仓，不动套利对冲仓） ----------
     def _liquidate_all(self, reason):

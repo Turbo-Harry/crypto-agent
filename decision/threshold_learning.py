@@ -23,11 +23,14 @@ class ThresholdLearner:
     def __init__(self, path="threshold_state.json", initial_threshold=70,
                  min_samples=30, bucket_width=5, safety_margin=5,
                  min_bucket_samples=8, min_threshold=60, max_threshold=90,
-                 max_history=500, db_path=None):
+                 max_history=500, db_path=None, gated=False):
         # db_path=None → 共享库（key=path，生产：threshold_state_dir/arb.json）；
         # db_path 显式传（测试隔离）→ 独立库。防测试临时 key 污染生产 thresholds 表。
+        # gated=True（2026-08-20 DEF-5）: record() 只记录不自动校准——
+        # 阈值变更由 EvolutionGate 影子验证通过后经 apply_threshold() 生效。
         self.path = path
         self.db_path = db_path
+        self.gated = gated
         self.threshold = initial_threshold
         self.min_samples = min_samples
         self.bucket_width = bucket_width
@@ -70,6 +73,10 @@ class ThresholdLearner:
                                "pnl_estimated": bool(pnl_estimated)})
         if len(self.decisions) > self.max_history:
             self.decisions = self.decisions[-self.max_history:]
+        # gated 模式（DEF-5）: 只记录,校准提案由进化门驱动,不在此自动生效
+        if self.gated:
+            self._save()
+            return
         # 样本够了就自动校准
         if len([d for d in self.decisions if not d.get("pnl_estimated")]) >= self.min_samples:
             self.calibrate()
@@ -77,20 +84,22 @@ class ThresholdLearner:
             self._save()
 
     # ---------- 校准阈值 ----------
-    def calibrate(self):
-        """用历史决策的分数→盈亏分布，找到盈亏平衡分数，动态设阈值。
-        统计防护：桶样本数不足不参与、要求连续多桶非负（防噪声桶）、阈值夹逼。"""
+    def _calibration_target(self):
+        """校准数学（纯计算，不改任何状态）：返回 (建议阈值 or None, 诊断 dict)。
+        统计防护：桶样本数不足不参与、要求连续多桶非负（防噪声桶）、阈值夹逼、
+        放松方向闸（新放行分数段必须正期望）。2026-08-20 从 calibrate 抽出，
+        供 propose()（进化门提案）与 calibrate()（旧直接生效路径）复用。"""
         if len(self.decisions) < self.min_samples:
-            return {"unchanged": self.threshold, "samples": len(self.decisions)}
+            return None, {"unchanged": self.threshold, "samples": len(self.decisions)}
 
         scores = np.array([d["score"] for d in self.decisions
                            if not d.get("pnl_estimated")])
         pnls = np.array([d["pnl"] for d in self.decisions
                          if not d.get("pnl_estimated")])
         if len(scores) < self.min_samples:
-            return {"unchanged": self.threshold,
-                    "samples": len(self.decisions),
-                    "reason": "有效样本不足（估算样本不参与校准）"}
+            return None, {"unchanged": self.threshold,
+                          "samples": len(self.decisions),
+                          "reason": "有效样本不足（估算样本不参与校准）"}
 
         # 分桶：每 bucket_width 分一桶，算平均盈亏
         buckets = {}
@@ -102,8 +111,8 @@ class ThresholdLearner:
         qual = {b: float(np.mean(v)) for b, v in buckets.items()
                 if len(v) >= self.min_bucket_samples}
         if len(qual) < 2:
-            return {"unchanged": self.threshold, "samples": len(self.decisions),
-                    "reason": f"样本达标桶不足（<2，需每桶≥{self.min_bucket_samples}样本）"}
+            return None, {"unchanged": self.threshold, "samples": len(self.decisions),
+                          "reason": f"样本达标桶不足（<2，需每桶≥{self.min_bucket_samples}样本）"}
 
         # 找"盈亏平衡分数"：本桶及更高分至少 2 个连续桶都非负
         sorted_b = sorted(qual)
@@ -123,19 +132,47 @@ class ThresholdLearner:
                 band = [p for s, p in zip(scores, pnls)
                         if new_threshold <= s < self.threshold]
                 if len(band) >= self.min_bucket_samples and float(np.mean(band)) <= 0:
-                    self._save()
-                    return {"unchanged": self.threshold,
-                            "samples": len(self.decisions),
-                            "reason": (f"放松阈值被方向闸拒绝：新放行段"
-                                       f"[{new_threshold},{self.threshold})"
-                                       f"平均盈亏 {np.mean(band):+.4f} ≤ 0")}
-            old = self.threshold
-            self.threshold = new_threshold
+                    return None, {"unchanged": self.threshold,
+                                  "samples": len(self.decisions),
+                                  "reason": (f"放松阈值被方向闸拒绝：新放行段"
+                                             f"[{new_threshold},{self.threshold})"
+                                             f"平均盈亏 {np.mean(band):+.4f} ≤ 0")}
+            return new_threshold, {"old": self.threshold, "new": new_threshold,
+                                   "break_even": break_even,
+                                   "samples": len(self.decisions)}
+        return None, {"unchanged": self.threshold, "samples": len(self.decisions),
+                      "reason": "未找到稳定的盈亏平衡点（分数→盈亏非单调）"}
+
+    def calibrate(self):
+        """旧直接生效路径（非 gated）：算出目标阈值立即应用。返回值语义不变。"""
+        target, info = self._calibration_target()
+        if target is None or target == self.threshold:
             self._save()
-            return {"old": old, "new": new_threshold,
-                    "break_even": break_even, "samples": len(self.decisions)}
-        return {"unchanged": self.threshold, "samples": len(self.decisions),
-                "reason": "未找到稳定的盈亏平衡点（分数→盈亏非单调）"}
+            if target == self.threshold and "new" in info:
+                return {"unchanged": self.threshold, "samples": len(self.decisions)}
+            return info
+        self.threshold = target
+        self._save()
+        return info
+
+    # ---------- 进化门接口（2026-08-20 DEF-5 闭环） ----------
+    def propose(self):
+        """gated 模式提案：只算不改。有值得变更的目标阈值 → 返回该值,否则 None。
+        供 EvolutionGate 发起候选,影子验证通过后由 apply_threshold 生效。"""
+        target, _ = self._calibration_target()
+        if target is not None and target != self.threshold:
+            return target
+        return None
+
+    def apply_threshold(self, new_threshold):
+        """进化门晋升/回滚时的唯一写入口。返回旧阈值（供日志）。
+        不做 min/max 夹逼：提案值在 _calibration_target 已夹逼过；
+        回滚基线 THRESHOLD_INITIAL(35) 低于学习器下限(60),夹逼会
+        把回滚值偷偷抬高——回滚必须精确恢复用户拍板的基线。"""
+        old = self.threshold
+        self.threshold = new_threshold
+        self._save()
+        return old
 
     # ---------- 诊断 ----------
     def profile(self):

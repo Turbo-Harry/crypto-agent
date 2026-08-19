@@ -395,6 +395,28 @@
 - 报警链统一: alert_diag 从 anomalies.list_new() 组装统一格式消息 → 飞书 + 注入本 session。
 - 测试: anomalies 登记/去重/resolve 3 项,test_strategy_b 24 项全绿;全量回归见套件。
 
+## 2026-08-20 凌晨 阈值进化门接线 + 证据时间衰减（用户拍板"都做吧"，DEF-5 闭环）
+- 背景: EvolutionGate 自审计 CR-8/CR-10 落成后一直是死代码(DEF-5)——阈值校准
+  (threshold_learning.calibrate)满 30 样本直接改阈值,无影子验证、无观察期、无回滚。
+  经验库分数有衰减但 evidence_strength 聚合无衰减——老教训证据权重永久满额。
+- 落地(阈值门): ThresholdLearner 增 gated 模式(record 只记录)+propose(只算不改)
+  +apply_threshold(门晋升/回滚唯一写入口,不夹逼——回滚基线 35 低于学习器下限 60,
+  夹逼会偷偷抬高回滚值);引擎 _threshold_gate_step 接线: 每笔真实平仓→现役样本
+  +候选反事实影子样本(候选拒绝的交易记 0)→满 GATE_MIN_SHADOW(30) 且优势
+  ≥GATE_MIN_EDGE(0.001) 晋升→观察期(GATE_OBSERVE_BATCH=10)退化自动回滚
+  THRESHOLD_INITIAL。诚实声明: 反事实只对收紧方向有证据力,放松阈值机器不可自动过门。
+- 落地(证据衰减): _evidence_weight = clamp(good-bad,0,CAP) × 0.5^(天数/
+  EVIDENCE_HALFLIFE_DAYS=30),evidence_strength 与 rollup_lessons 同口径(防两套数学)。
+  借鉴 FinMem 分层记忆衰减思想,但保留本仓可审计的 SQLite 教训表,不引 LLM 依赖。
+- 其他: EvolutionGate._save 改原子写(.tmp+os.replace);候选支持 meta(机器可读参数);
+  ThresholdLearner/gate 状态文件随 db_path 隔离(T0.4 同口径)。
+- 参数新增(config 参数区): EVIDENCE_HALFLIFE_DAYS / GATE_MIN_SHADOW / GATE_MIN_EDGE /
+  GATE_OBSERVE_BATCH。
+- 测试: 新增 tests/test_gate_wiring.py 14 项(衰减半衰期数学/gated 不自动改/提案→影子
+  →晋升/退化→回滚基线/状态文件隔离);修正 test_exchange_layers 过时断言(08-19
+  FLAG_ENABLE_EXCHANGE_TP 后开仓挂 2 张条件单,旧断言写死 1 张,见 pitfalls);
+  全量回归 15 文件 191 项全绿 0 失败;params_lint/code_graph/fix_guard 全过。
+
 ## 2026-08-17 凌晨 未触发归因反哺决策系统（用户问:归因如何反哺决策）
 - 落地 tools/no_signal_report.py: generate_feedback() 把画像分布转成四条反哺规则提案——R1 影线门槛微调候选(近失≥20%+主瓶颈wick)/R2 策略B转正评估启动(trend≥60%)/R3 纪律性等待显式抑制调参(touch≥70%)/R4 量能观察(vol≥40%)。
 - 反哺纪律: 提案只进 experiments 注册表(proposed),永不自动生效——验证门(S1-S3)+人工放行(防过拟合红线)。

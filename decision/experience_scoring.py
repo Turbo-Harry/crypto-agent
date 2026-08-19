@@ -259,19 +259,31 @@ def conditions_match(lesson, conditions):
     return True
 
 
-def evidence_strength(bank, symbol, category, conditions=None):
+def _evidence_weight(lesson, now=None):
+    """单条教训的证据权重 = 净验证次数钳制 × 时间衰减(2026-08-20 FinMem 式):
+    权重 = clamp(good-bad, 0, CAP) × 0.5^(距上次验证天数 / EVIDENCE_HALFLIFE_DAYS)。
+    为什么衰减: 市场 regime 会漂移,半衰期前验证的证据不应永久满权重——
+    教训必须被新交易持续验证才能保持强度(分数衰减已有,此处补证据衰减)。"""
+    now = now or time.time()
+    net = int(lesson.get("good", 0) or 0) - int(lesson.get("bad", 0) or 0)
+    net = max(0, min(config.EVIDENCE_CAP_PER_LESSON, net))
+    age_days = max(0.0, (now - (lesson.get("last_update") or now)) / 86400.0)
+    return net * (0.5 ** (age_days / config.EVIDENCE_HALFLIFE_DAYS))
+
+
+def evidence_strength(bank, symbol, category, conditions=None, now=None):
     """教训的【数据验证强度】聚合(2026-08-17 用户要求'教训聚合生效'):
     只聚合 trusted;每条教训的权重 = 净验证次数(good - bad),钳制在
     [0, config.EVIDENCE_CAP_PER_LESSON]——单条教训再强也有上限(防独裁),
-    多条独立验证的教训线性叠加。中文 content 完全不参与计算。
+    多条独立验证的教训线性叠加,再乘时间衰减(2026-08-20,见 _evidence_weight)。
+    中文 content 完全不参与计算。
     conditions: 场景条件向量,只聚合匹配当前场景的教训。"""
-    total = 0
+    total = 0.0
     for l in bank.trusted(symbol, conditions=conditions):
         if l.get("category") != category:
             continue
-        net = int(l.get("good", 0) or 0) - int(l.get("bad", 0) or 0)
-        total += max(0, min(config.EVIDENCE_CAP_PER_LESSON, net))
-    return total
+        total += _evidence_weight(l, now)
+    return round(total, 2)
 
 
 def rollup_lessons(bank=None, db_path=None):
@@ -303,9 +315,8 @@ def rollup_lessons(bank=None, db_path=None):
         members = g["lessons"]
         if len(members) < config.ROLLUP_MIN_MEMBERS:
             continue
-        strength = sum(max(0, min(config.EVIDENCE_CAP_PER_LESSON,
-                                  int(l.get("good", 0) or 0) - int(l.get("bad", 0) or 0)))
-                       for l in members)
+        # 2026-08-20: 归纳强度与 evidence_strength 同一衰减口径(防两套数学打架)
+        strength = round(sum(_evidence_weight(l, now) for l in members), 2)
         cond_s = json.dumps(g["conditions"], ensure_ascii=False, sort_keys=True)
         live_keys.add((symbol, category, cond_s))
         sdb.x("INSERT OR REPLACE INTO lesson_rollups "
