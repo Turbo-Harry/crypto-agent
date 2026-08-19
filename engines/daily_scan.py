@@ -91,6 +91,26 @@ def _swap_observe_pool(exchange: ExchangeAdapter, pool_top):
     return pool
 
 
+def untradable_bases(db_path=None):
+    """沙盘不可交易集合 = config.DEMO_UNTRADABLE ∪ untradable_symbols 动态表。
+
+    静态表是人工确认的永久缺口(51001/51087);动态表由开仓失败自动登记
+    (ZEC/HYPE/ALLO 等)。读动态表失败只返回静态表——漏过的币开仓层仍会
+    reject_untradable,不扩大敞口,只是可能白占一席(本函数的目的就是少占席)。
+    """
+    blocked = set(config.DEMO_UNTRADABLE)
+    try:
+        import storage.db as sdb
+        sdb.init_db(db_path)
+        for r in sdb.q("SELECT base FROM untradable_symbols", db_path=db_path):
+            b = r.get("base")
+            if b:
+                blocked.add(b)
+    except Exception:
+        pass
+    return blocked
+
+
 def _spot_observe_pool(exchange: ExchangeAdapter, pool_top):
     """现货观察池（SWAP_ONLY=False 时的可逆路径）。"""
     tickers = exchange.fetch_tickers("spot")
@@ -122,6 +142,34 @@ def screen_daily(pool_top=60, watch_n=None, progress_cb=None,
         print(f"  只做合约观察池: {len(pool)} 个（SWAP ticker + 美股合约清单）")
     else:
         pool = _spot_observe_pool(exchange, pool_top)
+
+    # 沙盘不可交易预过滤(2026-08-20 用户拍板): BICO/WLD/ZEC/HYPE 等生产有行情、
+    # 沙盘 51001/51087/51155 下不了单,此前仍凭成交额进候选池占 12 席中数席,
+    # 开仓层才 reject_untradable——名额浪费。阶段1 之前剔除,连 K 线请求都省掉。
+    blocked = untradable_bases(db_path)
+    removed = [p["base"] for p in pool if p["base"] in blocked]
+    if removed:
+        pool = [p for p in pool if p["base"] not in blocked]
+        print(f"  沙盘不可交易预过滤: 剔除 {len(removed)} 个 {removed}")
+
+    # 本账户实际没有永续合约的标的(生产 ticker 有、沙盘 instruments 无:
+    # INTC/SOXL/MSTR 等)同样不占名额。venue_for 走适配器仪器缓存,沙盘
+    # 账户看到的才是能下单的。探测失败 fail-open,开仓层仍会拒。
+    if config.SWAP_ONLY:
+        kept, no_swap = [], []
+        for p in pool:
+            try:
+                v = exchange.venue_for(p["base"])
+            except Exception:
+                v = "swap"
+            if v == "swap":
+                kept.append(p)
+            else:
+                no_swap.append(p["base"])
+        if no_swap:
+            print(f"  本账户无永续合约剔除: {len(no_swap)} 个 {no_swap[:12]}"
+                  + ("…" if len(no_swap) > 12 else ""))
+        pool = kept
 
     # 阶段1：流动性与价格硬门槛（用 ticker 数据，无额外请求）
     stage1 = [p for p in pool if p["vol24h"] >= MIN_VOL]
@@ -198,10 +246,11 @@ def screen_daily(pool_top=60, watch_n=None, progress_cb=None,
     if not watch:
         # 空结果：今日无高评分候选 → 回退主流池并标注（宁可错过，但系统仍需盯盘）
         print("  今日无通过筛选的候选 → 回退主流池（BTC/ETH/SOL/XRP/DOGE）")
+        fallback = [b for b in config.SYMBOLS[:5] if b not in blocked] or config.SYMBOLS[:5]
         watch = [{"base": b, "instId": _inst_id(b), "dir": 0, "score": 0.0,
                   "trend_dev": 0.0, "atr_pct": 0.0, "price": 0.0,
                   "is_stock": False}
-                 for b in config.SYMBOLS[:5]]
+                 for b in fallback]
     result = {
         "date": time.strftime("%Y-%m-%d"),
         "generated_at": time.time(),

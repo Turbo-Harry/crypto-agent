@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     ts REAL, base TEXT, venue TEXT,
     has_signal INTEGER DEFAULT 0,      -- 是否出回踩确认信号
     direction TEXT,                    -- long/short/None
-    threshold REAL, decision TEXT,     -- open / hold / cooldown / budget / reject
+    threshold REAL, decision TEXT,     -- open / open_failed / hold / cooldown / budget / reject
     reason TEXT                        -- 拒绝/放行原因
 );
 CREATE INDEX IF NOT EXISTS idx_scan_ts ON scan_decisions(ts);

@@ -589,4 +589,16 @@
 - 未重启活体进程（下次服务起来后新格式才发出）。
 - 证据: tests/test_notify.py（卡片结构/清洗/CLI 参数，不真发飞书）。
 
+## 2026-08-20 开仓日志与台账笔数对齐
+- 背景: 看账「开仓 159」vs 台账 24 笔。扫描在下单前就把 decision=open 落下;
+  ALLO 当天 51001 失败仍算开仓。历史按日: 08-17 意图 49/成交 4, 08-19 59/8。
+- 落地:
+  ① `scan_signals` 等 `open_position` 返回 tid 才记 open。
+  ② 失败路径记 `open_failed`(下单失败/熔断/幂等/余额/账本)或既有 `reject_*`。
+  ③ 看账改「成交 N 笔（已平 M）」,不再把扫描意图叫开仓。
+- 未改活体库历史行(旧 open 仍是意图,7 天窗口内 JSON 字段 scan_opens 仍含旧数)。
+- 未重启活体进程。
+- 证据: tests/test_decision_loop.py `test_open_logged_only_on_fill`
+  (成交 open=台账; 失败 0 open + open_failed)。
+
 

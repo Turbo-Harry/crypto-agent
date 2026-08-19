@@ -67,7 +67,10 @@ def analyze():
         "notional_total": round(sum(t.get("notional_usdt") or 0 for t in trades), 2),
         "scan_rounds": len(scans),
         "scan_signals": sum(1 for s in scans if s["has_signal"]),
+        # scan_opens = 扫描日志里 decision=open 的次数。2026-08-20 起 open
+        # 只在成交入账后才记,应与 trades_total 对齐;历史窗口仍含"想开但没成交"。
         "scan_opens": sum(1 for s in scans if s["decision"] == "open"),
+        "scan_open_failed": sum(1 for s in scans if s["decision"] == "open_failed"),
         "risk_halt_count": sum(1 for r in risks if r["kind"] == "halt"),
         "engine_errors": len(errors),
         "lessons_total": len(d["lessons"]),
@@ -154,10 +157,10 @@ def run_daily():
     wr_s = f"{wr:.0%}" if isinstance(wr, (int, float)) else "—"
     pnl = report['total_pnl_pct']
     lines = [f"📊 系统每日看账 [{time.strftime('%m-%d %H:%M')}]",
-             f"交易 {report['closed']}/{report['trades_total']} 笔  ·  "
+             f"成交 {report['trades_total']} 笔（已平 {report['closed']}）  ·  "
              f"胜率 {wr_s}  ·  总盈亏 **{pnl:+.2f}%**",
              f"扫描 {report['scan_rounds']} 轮  ·  信号 {report['scan_signals']}  ·  "
-             f"开仓 {report['scan_opens']}  ·  熔断 {report['risk_halt_count']}  ·  "
+             f"熔断 {report['risk_halt_count']}  ·  "
              f"异常 {report['engine_errors']}"]
     if issues:
         lines.append("⚠️ 感知到问题")

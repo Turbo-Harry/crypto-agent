@@ -206,14 +206,20 @@ class SignalScanMixin:
                                           journal=self.journal,
                                           conditions=_build_trade_conditions(sig))
                 if dec["trade"]:
-                    self._log_scan_decision(base, True, sig["dir"], "open",
-                                            "; ".join(dec.get("reason") or ["信号达标"]))
-                    # Phase3 T3.1: journal 记影子分(供阈值学习喂分),门控仍由常量负责
-                    self.open_position(base, sig,
-                                       score=sig.get("shadow_score") or SIGNAL_SCORE,
-                                       stop_adj=dec.get("stop_adj", 0.0),
-                                       size_factor=dec.get("size_factor", 1.0),
-                                       adopted_ids=dec.get("adopted_lesson_ids", []))
+                    # 2026-08-20: 先下单,成交入账后才记 open。此前先记 open 再
+                    # 调 open_position,下单失败(51001 等)会虚增"开仓"——看账
+                    # 开仓 159 vs 台账 24 笔(ALLO 当天即复现)。
+                    reason = "; ".join(dec.get("reason") or ["信号达标"])
+                    tid = self.open_position(
+                        base, sig,
+                        score=sig.get("shadow_score") or SIGNAL_SCORE,
+                        stop_adj=dec.get("stop_adj", 0.0),
+                        size_factor=dec.get("size_factor", 1.0),
+                        adopted_ids=dec.get("adopted_lesson_ids", []))
+                    if tid:
+                        self._log_scan_decision(base, True, sig["dir"], "open",
+                                                reason)
+                    # 未成交: open_position 已记 reject_* / open_failed,此处不补 open
                 else:
                     print(f"{base}: 有信号但拒绝 - {'; '.join(dec['reason'])}")
                     self._log_scan_decision(base, True, sig["dir"], "reject",

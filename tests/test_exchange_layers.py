@@ -221,6 +221,58 @@ def test_daily_scan_offline_fallback():
           f"实际 {list(loaded)}")
 
 
+def test_daily_scan_drops_untradable():
+    """沙盘不可交易币(静态 DEMO_UNTRADABLE + 动态表)不占候选名额。"""
+    print("== daily_scan 剔除沙盘不可交易币 ==")
+    import tempfile
+    from exchange.models import Instrument
+    from engines.daily_scan import screen_daily
+    import storage.db as sdb
+
+    def _sw(base):
+        return Instrument(f"{base}-USDT-SWAP", base, "swap",
+                          ct_val=1, lot_sz=1, min_sz=1)
+
+    fake = FakeAdapter(instruments={
+        "BTC-USDT-SWAP": _sw("BTC"),
+        "SOL-USDT-SWAP": _sw("SOL"),
+        "BICO-USDT-SWAP": _sw("BICO"),   # 静态黑名单
+        "ZEC-USDT-SWAP": _sw("ZEC"),     # 动态黑名单
+    })
+    kl = make_candles(120, base=100.0, drift=0.2)
+    for inst in fake._instruments:
+        fake.candles[inst] = kl
+        fake.last_prices[inst] = kl[-1].close
+        fake.ticker_vol_usdt[inst] = 5_000_000
+    tmp = tempfile.mkdtemp(prefix="tst_untr_")
+    db = os.path.join(tmp, "scan.db")
+    sdb.init_db(db)
+    sdb.x("INSERT INTO untradable_symbols (base, reason, ts) VALUES (?,?,?)",
+          ["ZEC", "51087", time.time()], db_path=db)
+    w = screen_daily(exchange=fake, db_path=db, pool_top=10, watch_n=5)
+    bases = [c["base"] for c in w]
+    check("BICO(静态黑名单)不在候选", "BICO" not in bases)
+    check("ZEC(动态黑名单)不在候选", "ZEC" not in bases)
+    check("可交易币仍能入选", "BTC" in bases and "SOL" in bases,
+          f"实际 {bases}")
+    """daily_scan 必须可注入 FakeAdapter，零网络；成交额为 0 时回退主流合约池。"""
+    print("== daily_scan 离线回退（FakeAdapter） ==")
+    import tempfile
+    from engines.daily_scan import screen_daily, load_watchlist
+    fake = FakeAdapter()
+    tmp = tempfile.mkdtemp(prefix="tst_scan_")
+    db = os.path.join(tmp, "scan.db")
+    w = screen_daily(exchange=fake, db_path=db, pool_top=5, watch_n=5)
+    bases = [c["base"] for c in w]
+    check("回退池是主流 5 币",
+          bases == ["BTC", "ETH", "SOL", "XRP", "DOGE"])
+    check("回退 instId 走合约",
+          all(c["instId"].endswith("-USDT-SWAP") for c in w))
+    loaded = load_watchlist(db_path=db)
+    check("隔离库可读回退池", set(loaded) == set(bases),
+          f"实际 {list(loaded)}")
+
+
 def test_trading_layers_no_okx_url():
     """交易路径（engines/service/decision/execution）禁止裸打 OKX URL。"""
     print("== 交易路径无 OKX URL ==")
@@ -250,6 +302,7 @@ if __name__ == "__main__":
     test_51121_lot_self_heal()
     test_ticker_usdt_normalization()
     test_daily_scan_offline_fallback()
+    test_daily_scan_drops_untradable()
     test_trading_layers_no_okx_url()
     test_full_trade_flow()
     print(f"\n结果: {passed} 通过, {failed} 失败")

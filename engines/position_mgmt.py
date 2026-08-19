@@ -31,6 +31,8 @@ class PositionMixin:
         venue = self.exchange.venue_for(base)
         if venue is None:
             print(f"⏭️ {base}: 无可用交易场所，跳过")
+            self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                    "无可用交易场所")
             return None
         # 2026-08-20 用户拍板"只做合约,不做现货": 无合约场所一律拒绝。
         # 现货路径代码保留但不可达(SWAP_ONLY=False 可逆恢复)。
@@ -41,17 +43,23 @@ class PositionMixin:
             return None
         if venue == "spot" and sig["dir"] != "long":
             print(f"⏭️ {base}: 仅现货，不支持做空，跳过")
+            self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                    "仅现货不支持做空")
             return None
         inst_id = self._inst_id(base, venue)
         sym_ledger = f"{base}/USDT" if venue == "spot" else f"{base}/USDT:USDT"
         # 0. 风控闸门：熔断 + 幂等 + 余额（审计 CR-1/CR-2）
         if not self.risk.can_trade():
             print(f"⛔ 拒绝开仓 {base}: 风控熔断 {self.risk.halt_reason}")
+            self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                    f"风控熔断 {self.risk.halt_reason}")
             return None
         open_same = [t for t in self.journal.trades
                      if t["status"] == "open" and t["symbol"] == base]
         if open_same:
             print(f"⏭️ {base} 已有未平仓交易 {open_same[0]['id']}，跳过（幂等）")
+            self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                    f"已有未平仓 {open_same[0]['id']}")
             return None
         # R1-6 跨策略幂等（收窄版）：只拒【同 symbol 且同 posSide】的交易所持仓
         # （同 posSide 会合并、互顶杠杆；opposite side 是独立仓位，放行）
@@ -64,6 +72,8 @@ class PositionMixin:
                 if same_side:
                     print(f"⏭️ {base} 同方向 {dir_side} 已有 {len(same_side)} 个合约持仓"
                           f"（同 posSide 会合并，可能为套利腿），跳过")
+                    self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                            f"同方向已有 {len(same_side)} 个持仓")
                     return None
             except Exception:
                 pass   # 查询失败退回 journal 幂等
@@ -100,6 +110,8 @@ class PositionMixin:
                 usdt_free = self.exchange.fetch_balance().usdt_free
                 if usdt_free < qty * price:
                     print(f"⛔ 拒绝开仓 {base}: USDT 可用 {usdt_free:.0f} < 所需 {qty*price:.0f}")
+                    self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                            f"USDT 可用 {usdt_free:.0f} < 所需 {qty*price:.0f}")
                     return None
             except Exception:
                 pass
@@ -107,6 +119,8 @@ class PositionMixin:
                 ok_claim, claim_reason = self.ledger.claim(sym_ledger, "long", "dir", qty, qty * price)
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
+                self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                        claim_reason)
                 return None
             cl_ord_id = self.exchange.new_cl_ord_id()
             try:
@@ -121,6 +135,8 @@ class PositionMixin:
                     pass
                 print(f"❌ 现货开仓失败 {base}: {res.message}")
                 self._log_order_failure(base, inst_id, "buy", qty, "open", res.message)
+                self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                        res.message)
                 return None
             with self._mutex:
                 tid = self.journal.log_entry(
@@ -187,6 +203,8 @@ class PositionMixin:
             usdt_free = self.exchange.fetch_balance().usdt_free
             if usdt_free < qty * price:
                 print(f"⛔ 拒绝开仓 {base}: USDT 可用 {usdt_free:.0f} < 所需 {qty*price:.0f}")
+                self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                        f"USDT 可用 {usdt_free:.0f} < 所需 {qty*price:.0f}")
                 return None
         except Exception:
             pass
@@ -199,6 +217,8 @@ class PositionMixin:
                 ok_claim, claim_reason = self.ledger.claim(sym_ledger, sig["dir"], "dir", qty, qty * price)
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
+                self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                        claim_reason)
                 return None
             cl_ord_id = self.exchange.new_cl_ord_id()
             try:
@@ -216,6 +236,8 @@ class PositionMixin:
                     pass
                 print(f"❌ 开仓失败 {base}: {res.message}")
                 self._log_order_failure(base, inst_id, side, qty, "open", res.message)
+                self._log_scan_decision(base, True, sig["dir"], "open_failed",
+                                        res.message)
                 return None
             # 审计 M5:用真实成交均价记账(响应里没有时回填;失败退回信号价)
             fill_px = None
@@ -298,6 +320,7 @@ class PositionMixin:
                 pass
             print(f"❌ 开仓失败 {base}: {e}")
             self._log_order_failure(base, inst_id, side, qty, "open", e)
+            self._log_scan_decision(base, True, sig["dir"], "open_failed", str(e))
             return None
 
     def _recover_order(self, inst_id, cl_ord_id, qty, error):

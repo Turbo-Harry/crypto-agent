@@ -77,6 +77,13 @@ class OKXTransport:
 
         headers = {"Content-Type": "application/json",
                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+        # 2026-08-20: 沙盘头必须打在公开接口上,不只是签名请求。
+        # 否则 /public/instruments 和 /market/tickers 返回生产全集(400+ 永续),
+        # 候选池按生产流动性排名,开仓才 51001(INTC/SOXL/BICO 占席的根因)。
+        # 实测: 带 x-simulated-trading 后 instruments 436→138,tickers 451→172,
+        # 沙盘无合约的 K 线直接 51001。
+        if self.sandbox:
+            headers["x-simulated-trading"] = "1"
         if auth:
             ts = self._iso_ts()
             headers.update({
@@ -85,8 +92,6 @@ class OKXTransport:
                 "OK-ACCESS-TIMESTAMP": ts,
                 "OK-ACCESS-PASSPHRASE": self.passphrase,
             })
-            if self.sandbox:
-                headers["x-simulated-trading"] = "1"
 
         data = body_str.encode() if body_str else None
         for attempt in range(1, MAX_ATTEMPTS + 1):

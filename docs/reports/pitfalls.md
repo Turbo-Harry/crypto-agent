@@ -282,8 +282,15 @@
 - 修复：统一走 `decision/notify.py`：正文转成 lark_md 子集后发 interactive 卡片；CLI 失败再 `--text` 并剥掉标记。开仓/平仓/看账文案改成「首行标题 + 换行字段」，关键数字用 `**`（卡片里会加粗）。
 - 预防：飞书新消息禁止直接 `--text` 塞 GitHub MD；只从 `decision.notify.notify` 发。改文案前用 `tests/test_notify.py` 看卡片 JSON 是否仍是 lark_md。
 
+### 2026-08-20 看账「开仓」虚增：想开仓就算开仓
+- 现象：飞书每日看账「开仓 159」对不上「交易 24 笔」。活体库 08-17 开仓意图 49 vs 成交 4；08-19 意图 59 vs 成交 8。当天 ALLO 00:35 记了 open，00:36 下单 51001 失败，台账 0 笔。
+- 根因：`scan_signals` 在决策放行后立刻把 `scan_decisions.decision=open` 落下，再调 `open_position`。下单失败 / 最小张数拒绝 / 黑名单拒绝不会撤回这条 open。看账把这条意图数当成成交笔数。
+- 修复：① 成交入账（`log_entry` 返回 tid）之后才记 `open`；失败记 `open_failed` 或既有 `reject_*`。② 看账改报「成交 N 笔（已平 M）」，不再把扫描意图叫开仓。
+- 预防：「开仓」只等于台账成交；扫描日志的 open 必须后置于成交。计数类文案禁止混用意图和成交。
+
 ### 2026-08-20 user_version 已升到最新后,旧索引可能被活体旧进程建回来
 - 现象：只读看活体 `crypto_agent.db`，`PRAGMA user_version=2` 且新索引已在，但旧 `idx_anom_status` 仍在。按"version 已最新就跳过迁移"的逻辑，下次重启也不会 DROP。
 - 根因：① HTTP 层 `sdb.init_db()` 不带 db_path，TestClient 回归会把新迁移跑到活体库（version 被升到 2、新索引建上）；② 活体进程仍跑旧代码，旧 SCHEMA 里有 `CREATE INDEX IF NOT EXISTS idx_anom_status`，会把刚删掉的旧索引建回来；③ v2 迁移因 version 已是 2 不再执行。
 - 修复：SCHEMA 每次 `executescript` 都 `DROP INDEX IF EXISTS idx_anom_status`（幂等），不依赖"迁移还没跑过"。v2 里仍保留同款 DROP。
 - 预防：改名/替换索引时，DROP 旧名必须进 SCHEMA（每次 init_db 都跑），不能只放在"只跑一次"的迁移函数里；测试 init_db 必须传隔离 db_path，HTTP 只读端点的 init_db() 默认路径会碰到活体库。
+

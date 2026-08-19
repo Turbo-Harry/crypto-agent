@@ -186,6 +186,61 @@ def test_threshold_gate(tmp):
           len(fake.orders) >= 1)
 
 
+def test_open_logged_only_on_fill(tmp):
+    """开仓决策只在成交入账后记 open；下单失败不得虚增开仓数。"""
+    import sqlite3
+    from exchange.models import OrderResult
+
+    def _setup(dt, fake):
+        import config
+        fake.candles["BTC-USDT-SWAP"] = _make_candles()
+        fake.last_prices["BTC-USDT-SWAP"] = 110.0
+        fake.last_prices["BTC-USDT"] = 110.0
+        dt.watchlist = ["BTC"]
+        dt.watch_scores = {"BTC": 0.9}
+        dt._watch_date = time.strftime("%Y-%m-%d")
+        dt._last_watch_refresh = time.time()
+        dt._last_scan = 0
+        dt.signal_cool = {}
+        dt.threshold_learner.threshold = config.THRESHOLD_INITIAL
+
+    print("== 开仓日志与台账笔数对齐 ==")
+    tmp_ok = os.path.join(tmp, "fill_ok")
+    os.makedirs(tmp_ok, exist_ok=True)
+    dt, fake = _make_trader(tmp_ok)
+    _setup(dt, fake)
+    dt.scan_signals()
+    conn = sqlite3.connect(os.path.join(tmp_ok, "scan.db"))
+    n_open = conn.execute(
+        "SELECT COUNT(*) FROM scan_decisions WHERE decision='open'").fetchone()[0]
+    conn.close()
+    check(f"成交后 scan open = 1（实际 {n_open}）", n_open == 1)
+    check(f"成交后台账 1 笔（实际 {len(dt.journal.trades)}）",
+          len(dt.journal.trades) == 1)
+    check("开仓数 = 台账笔数", n_open == len(dt.journal.trades))
+
+    tmp_fail = os.path.join(tmp, "fill_fail")
+    os.makedirs(tmp_fail, exist_ok=True)
+    dt, fake = _make_trader(tmp_fail)
+    _setup(dt, fake)
+
+    def _fail(*a, **kw):
+        return OrderResult(ok=False, message="模拟下单失败")
+    fake.place_market_order = _fail
+    dt.scan_signals()
+    conn = sqlite3.connect(os.path.join(tmp_fail, "scan.db"))
+    n_open = conn.execute(
+        "SELECT COUNT(*) FROM scan_decisions WHERE decision='open'").fetchone()[0]
+    n_failed = conn.execute(
+        "SELECT COUNT(*) FROM scan_decisions WHERE decision='open_failed'"
+    ).fetchone()[0]
+    conn.close()
+    check(f"下单失败不得记 open（实际 {n_open}）", n_open == 0)
+    check(f"下单失败记 open_failed（实际 {n_failed}）", n_failed >= 1)
+    check(f"失败后台账 0 笔（实际 {len(dt.journal.trades)}）",
+          len(dt.journal.trades) == 0)
+
+
 def _make_candles(n=100, base=100.0, drift=0.1):
     from exchange.models import Candle
     out = []
@@ -208,5 +263,6 @@ if __name__ == "__main__":
     test_experience_gate(tmp)
     test_stop_adj_effect(tmp)
     test_threshold_gate(tmp)
+    test_open_logged_only_on_fill(tmp)
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
