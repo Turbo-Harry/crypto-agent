@@ -497,7 +497,7 @@ class DirectionalTrader:
                     self.rt.subscribe(base)
                 except Exception:
                     pass
-            msg = (f"🎯 现货开仓 {base} long\n入场 {price:.2f} | 止损 {sig['stop']:.2f} | "
+            msg = (f"🎯 现货开仓 {base} 开多 (long)\n入场 {price:.2f} | 止损 {sig['stop']:.2f} | "
                    f"止盈 {sig['tp']:.2f}\n数量 {qty}（现货无杠杆，止损由本地监控执行）")
             print(msg)
             self._notify(msg)
@@ -629,7 +629,7 @@ class DirectionalTrader:
                         t["tp_missing"] = True
                 self.journal._save()
                 self._notify(f"⚠️ {base} TP 条件单挂失败（本地 monitor 止盈兜底）")
-            msg = (f"🎯 方向性开仓 {base} {sig['dir']}\n"
+            msg = (f"🎯 {self._dir_cn(sig['dir'])} {base} ({sig['dir']})\n"
                    f"入场 {price:.2f} | 止损 {sig['stop']:.2f} | 止盈 {sig['tp']:.2f}\n"
                    f"盈亏比 2:1 | 杠杆 {lev}x | 数量 {qty} | 名义 {qty * price:.0f} USDT")
             print(msg)
@@ -903,7 +903,7 @@ class DirectionalTrader:
                                               * float(t.get("entry_price") or 0))
         pnl_usdt = (closed.get("pnl") or 0) * notional
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
-        msg = (f"📊 平仓 {base} {t.get('direction') or ''}: "
+        msg = (f"📊 平仓 {base} {self._dir_cn(t.get('direction') or 'long')}: "
                f"盈亏 {pnl_usdt:+.2f} USDT ({closed['pnl']*100:+.1f}%) "
                f"[{exit_reason_short}]\n"
                f"复盘 {len(lessons)} 条新经验（待验证），"
@@ -1126,6 +1126,11 @@ class DirectionalTrader:
             return bool(row)
         except Exception:
             return False
+
+    @staticmethod
+    def _dir_cn(direction):
+        """方向中文标签: long→开多, short→开空(2026-08-18 用户要求通知可见方向)。"""
+        return "开多" if direction == "long" else "开空"
 
     def _long_scan_progress(self):
         """长扫描逐币进度回调(2026-08-17): 插拍止损监控 + 心跳/tick 进度 +
