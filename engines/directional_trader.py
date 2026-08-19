@@ -572,6 +572,16 @@ class DirectionalTrader:
                 fill_px = None
             if fill_px:
                 price = fill_px
+                # 2026-08-18 止损/止盈锚定真实成交价: 此前锚定信号参考价,滑点
+                # 把实际 R:R 从名义 2:1 压到 1.4~0.9(用户发现'感觉是 1:1'——
+                # BNB 空单 fill 偏离 0.7 后实际 R:R 仅 0.90)。重锚后无论滑点
+                # 多少,止损永远 = 成交价 ∓ (1+stop_adj)×ATR、止盈 = ∓ 2×ATR。
+                stop_off = (1 + stop_adj) * config.STOP_ATR_MULT * sig["atr"]
+                tp_off = config.TP_ATR_MULT * sig["atr"]
+                if sig["dir"] == "long":
+                    sig = dict(sig, stop=fill_px - stop_off, tp=fill_px + tp_off)
+                else:
+                    sig = dict(sig, stop=fill_px + stop_off, tp=fill_px - tp_off)
             # 交易所侧停损单（本地进程崩溃也生效 — OP-1）
             stop_side = "sell" if sig["dir"] == "long" else "buy"
             try:

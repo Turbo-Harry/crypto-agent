@@ -82,6 +82,10 @@ GUARDS = [
     ("G11 场景归纳 rollup_lessons 存在且表已建",
      lambda: "def rollup_lessons" in _read("decision/experience_scoring.py")
              and "lesson_rollups" in _read("storage/db.py")),
+    # G12 止损止盈锚定真实成交价(2026-08-18 用户发现'感觉是1:1')
+    ("G12 止损止盈锚定成交价(2:1 恒定)",
+     lambda: "锚定真实成交价" in _read("engines/directional_trader.py")
+             and "fill_px - stop_off" in _read("engines/directional_trader.py")),
 ]
 
 
