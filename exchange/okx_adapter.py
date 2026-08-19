@@ -137,7 +137,16 @@ class OKXAdapter(ExchangeAdapter):
         data = resp.get("data") or []
         if not data:
             raise ExchangeError(f"ticker 无数据: {inst_id}")
-        return float(data[0]["last"])
+        # 2026-08-20 防御解析: 低活跃标的偶发 last=""(AAVE 案例,每 15 分钟
+        # 扫描必崩 float('')),空值按无数据抛错——上层 _ticker_last 捕获后
+        # 跳过该币,不打断整轮扫描。
+        last = data[0].get("last")
+        if not last:
+            raise ExchangeError(f"ticker last 为空: {inst_id}")
+        try:
+            return float(last)
+        except (TypeError, ValueError):
+            raise ExchangeError(f"ticker last 非法: {inst_id}")
 
     def fetch_funding_rate(self, inst_id: str) -> float:
         resp = self.t.public("/api/v5/public/funding-rate", {"instId": inst_id})
