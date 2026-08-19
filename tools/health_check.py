@@ -185,6 +185,20 @@ try:
 except Exception:
     check("H12 修复经验护栏全部在位", True)
 
+# ---------- H13 时间同步（2026-08-19 用户要求健壮性） ----------
+# OKX 签名请求依赖本地时钟,偏差大会 50113 全灭;与服务器时间比对 >5s 报警。
+# 网络失败时跳过(不误报——网络问题由 H4/H5/H6 负责)。
+try:
+    import urllib.request as _ur
+    req = _ur.Request("https://www.okx.com/api/v5/public/time",
+                      headers={"User-Agent": "Mozilla/5.0"})
+    with _ur.urlopen(req, timeout=8) as r:
+        _st = json.loads(r.read().decode())["data"][0]["ts"]
+    _skew = abs(int(_st) / 1000.0 - time.time())
+    check("H13 本地时钟与 OKX 服务器偏差 <5s", _skew < 5, f"偏差 {_skew:.2f}s")
+except Exception:
+    check("H13 本地时钟与 OKX 服务器偏差 <5s", True)
+
 print(f"\n体检结果: {len(passed)} 通过, {len(failed)} 失败")
 if failed:
     # 飞书告警 + AI 诊断桥（2026-08-16 用户方案;30 分钟去重;AI 失败自动退回纯文本）

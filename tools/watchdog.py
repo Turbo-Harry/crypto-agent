@@ -117,6 +117,21 @@ def _kill(name, pid, reason):
         print(f"kill 失败 {name} pid={pid}: {e}")
 
 
+def _storm_ok(name, state):
+    """重启风暴防护(2026-08-19 用户要求健壮性): 15 分钟内 kill ≥3 次 →
+    环境性故障(网络黑洞等)重启也修不好,停止自动 kill,告警人工介入。
+    风暴窗口滚动后自动恢复。"""
+    kills = state.setdefault("kills", [])
+    now = time.time()
+    kills = [t for t in kills if now - t < 900]
+    state["kills"] = kills
+    if len(kills) >= 3:
+        notify(f"⛔ {name} 15 分钟内已被 kill {len(kills)} 次——疑似环境性故障,"
+               f"watchdog 停止自动重启,请人工排查后清 watchdog_state.json 恢复")
+        return False
+    return True
+
+
 def check():
     state = _load_state()
     now = time.time()
@@ -147,8 +162,11 @@ def check():
                        f"（防误杀），跳过 kill，请人工检查")
                 state.pop(name, None)
                 continue
+            if not _storm_ok(name, state):
+                continue
             _kill(name, pid, f"{cfg['proc']} 主循环 tick 卡死超过 {TICK_TIMEOUT}s"
                              f"（心跳正常，tick 进度停滞）")
+            state.setdefault("kills", []).append(time.time())
             state.pop(name, None)
             continue
         if stale or missing >= MISSING_TOLERANCE:
@@ -157,7 +175,10 @@ def check():
                        f"（防误杀），跳过 kill，请人工检查")
                 state.pop(name, None)
                 continue
+            if not _storm_ok(name, state):
+                continue
             _kill(name, pid, f"{cfg['proc']} 心跳异常（stale={stale}, 缺失{missing}次）")
+            state.setdefault("kills", []).append(time.time())
             state.pop(name, None)
     _save_state(state)
 

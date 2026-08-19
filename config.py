@@ -103,7 +103,9 @@ SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
            "LINK", "ADA", "AVAX", "BNB", "LTC"]   # 回退主流池（采集加速扩到 10 个）
 LEVERAGE_MAP = {"BTC": 3, "ETH": 3, "SOL": 3, "XRP": 3, "DOGE": 3,
                 "LINK": 3, "ADA": 3, "AVAX": 3, "BNB": 3, "LTC": 3}
-FLAG_ENABLE_EXCHANGE_TP = False          # 止盈挂交易所侧（默认关,沙盘验证后开启）
+# 2026-08-19 沙盘实测: tpTriggerPx 条件单开/挂/取消全链路 sCode=0,开启。
+# 意义: 引擎死机时止盈照常成交(此前仅本地 monitor,崩溃窗口利润会跑)。
+FLAG_ENABLE_EXCHANGE_TP = True           # 止盈挂交易所侧
 FLAG_USE_SHADOW_SCORE_GATE = False       # 影子分门控（A3 检验通过后人工开启）
 
 # ============ 套利失效防护（OP-3） ============

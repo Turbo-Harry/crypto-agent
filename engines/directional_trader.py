@@ -155,6 +155,11 @@ class _ExpAdapter:
 class DirectionalTrader:
     def __init__(self, exchange: ExchangeAdapter = None, rt=None, db_path=None):
         self.exchange = exchange or connect()
+        # 2026-08-19 线程分离: 监控线程与主循环共享 journal/ledger 突变,
+        # RLock 保护(监控线程每 1s 拿锁跑 monitor,主循环只在开仓/强平
+        # 突变点拿锁——监控不再被扫描阻塞,扫描也不被监控饿死)。
+        import threading
+        self._mutex = threading.RLock()
         # 2026-08-16 结构性修复: 测试/fake 适配器必须静音飞书通知——
         # 此前 test_decision_loop 等跑套件时把假开仓单真的发到了用户飞书
         # (与 DEF-8 生产库污染同类的泄漏,这次是通知通道)。
@@ -459,7 +464,8 @@ class DirectionalTrader:
                     return None
             except Exception:
                 pass
-            ok_claim, claim_reason = self.ledger.claim(sym_ledger, "long", "dir", qty, qty * price)
+            with self._mutex:
+                ok_claim, claim_reason = self.ledger.claim(sym_ledger, "long", "dir", qty, qty * price)
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
                 return None
@@ -477,9 +483,10 @@ class DirectionalTrader:
                 print(f"❌ 现货开仓失败 {base}: {res.message}")
                 self._log_order_failure(base, inst_id, "buy", qty, "open", res.message)
                 return None
-            tid = self.journal.log_entry(
-                symbol=base, signal="回踩确认",
-                reason=f"long {sig['atr']/price*100:.1f}%ATR(现货)",
+            with self._mutex:
+                tid = self.journal.log_entry(
+                    symbol=base, signal="回踩确认",
+                    reason=f"long {sig['atr']/price*100:.1f}%ATR(现货)",
                 entry_price=price, stop_loss=sig["stop"], take_profit=sig["tp"],
                 size=qty, direction="long", score=score,
                 adopted_lesson_ids=adopted_ids, atr_value=sig["atr"],
@@ -544,7 +551,8 @@ class DirectionalTrader:
             # R1-1 开仓前清理残留：取消该 instId 全部 pending algo 单（防幽灵止损单误平新仓）
             self._cancel_stop_orders(base, "开仓前清理残留")
             # R1-12 所有权账本：组合总敞口闸门 + claim
-            ok_claim, claim_reason = self.ledger.claim(sym_ledger, sig["dir"], "dir", qty, qty * price)
+            with self._mutex:
+                ok_claim, claim_reason = self.ledger.claim(sym_ledger, sig["dir"], "dir", qty, qty * price)
             if not ok_claim:
                 print(f"⛔ 拒绝开仓 {base}: {claim_reason}")
                 return None
@@ -558,7 +566,8 @@ class DirectionalTrader:
                 res = self._recover_order(inst_id, cl_ord_id, qty, e)
             if not res.ok:
                 try:
-                    self.ledger.release(sym_ledger, sig["dir"], "dir", qty, qty * price)
+                    with self._mutex:
+                        self.ledger.release(sym_ledger, sig["dir"], "dir", qty, qty * price)
                 except Exception:
                     pass
                 print(f"❌ 开仓失败 {base}: {res.message}")
@@ -602,8 +611,9 @@ class DirectionalTrader:
             if FLAG_ENABLE_EXCHANGE_TP:
                 tp_ok = self._place_tp(base, sig, qty)
             # 记录交易（journal）
-            tid = self.journal.log_entry(
-                symbol=base, signal="回踩确认", reason=f"{sig['dir']} {sig['atr']/price*100:.1f}%ATR",
+            with self._mutex:
+                tid = self.journal.log_entry(
+                    symbol=base, signal="回踩确认", reason=f"{sig['dir']} {sig['atr']/price*100:.1f}%ATR",
                 entry_price=price, stop_loss=sig["stop"], take_profit=sig["tp"],
                 size=qty, direction=sig["dir"], score=score,
                 adopted_lesson_ids=adopted_ids,          # R2-3：本笔实际采纳的经验
@@ -1241,9 +1251,11 @@ class DirectionalTrader:
         except Exception:
             pass
 
-    def tick(self):
+    def tick(self, run_monitor=True):
         """单拍主循环体（服务模式由 service/worker 线程调用；独立模式由 run() 调用）。
-        包含：心跳、每分钟账户风控、2s 止损监控、15min 信号扫描。"""
+        包含：心跳、每分钟账户风控、2s 止损监控、15min 信号扫描。
+        run_monitor(2026-08-19 线程分离): 生产 worker 传 False——监控由专用
+        线程 1s 节拍执行,长扫描不再阻塞止损监控;测试/standalone 保持 True。"""
         now = time.time()
         # R2-4: 心跳（watchdog 超时 30s 判定）。写入点统一走 execution/pidfile
         # （code_graph 跨层共享状态告警修复: 文件名字面量只在 pidfile 一处）。
@@ -1267,7 +1279,8 @@ class DirectionalTrader:
                 if now - getattr(self, "_last_liq_attempt", 0) >= 30:
                     self._last_liq_attempt = now
                     self._liquidate_all(self.risk.halt_reason)
-                self.monitor()
+                if run_monitor:
+                    self.monitor()
                 time.sleep(2)
                 return
             elif self._halt_notified:
@@ -1275,7 +1288,8 @@ class DirectionalTrader:
                 self._log_risk_event("recovery", "风控解除", eq)
                 self._notify("✅ 风控解除，恢复信号扫描")
         # 1. tick 级止损止盈监控（每 2 秒 — OP-1，替代 6 小时轮询）
-        self.monitor()
+        if run_monitor:
+            self.monitor()
         # 2. 信号扫描（每 15 分钟 — 真日内短线）
         if now - self._last_scan >= 15 * 60:
             self._last_scan = now

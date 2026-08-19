@@ -136,10 +136,26 @@ class TraderWorker:
 
         threading.Thread(target=_hb_loop, name="engine-heartbeat",
                          daemon=True).start()
+        # 2026-08-19 线程分离: 止损监控独立线程 1s 节拍——长扫描/风控阻塞
+        # 主循环时监控照跑(此前靠逐币插拍打补丁,现从根上分离)。
+        stop_mon = threading.Event()
+
+        def _mon_loop():
+            while not stop_mon.is_set():
+                try:
+                    with t._mutex:
+                        t.monitor()
+                except Exception:
+                    pass
+                stop_mon.wait(1)
+
+        threading.Thread(target=_mon_loop, name="engine-monitor",
+                         daemon=True).start()
         try:
             while not self._stop.is_set():
                 try:
-                    t.tick()                       # 心跳由独立线程负责
+                    # 监控已由独立线程负责,主循环只做风控+扫描
+                    t.tick(run_monitor=False)
                     # 2026-08-17: tick 进度标记——主循环被网络黑洞阻塞时心跳线程
                     # 照常写心跳会让 watchdog 失明(51 分钟盲窗事故),此标记反映
                     # 主循环真实进度,watchdog 据此判真卡死。
@@ -186,6 +202,7 @@ class TraderWorker:
                 time.sleep(1)   # 2026-08-17 提速: 1s 节拍止损监控(持仓快照仍 2s 节流)
         finally:
             stop_hb.set()
+            stop_mon.set()
 
     # ---------- 只读状态快照（供 HTTP 层） ----------
     def heartbeat_age(self) -> float:
