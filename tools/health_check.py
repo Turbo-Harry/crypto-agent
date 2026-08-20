@@ -137,10 +137,14 @@ snap = q(DB, "SELECT MAX(ts) m FROM position_snapshots")
 s_age = time.time() - (snap[0]["m"] or 0)
 check("H9 仓位快照新鲜(<5min)", s_age < 300, f"{s_age:.0f}s 前")
 
-# ---------- H10 特征缺失率（Phase 1 质量,生产目标 0%） ----------
-badf = q(DB, "SELECT COUNT(*) c FROM trade_features "
-            "WHERE features_missing IS NOT NULL AND features_missing != ''")
-check("H10 特征缺失率=0（生产）", badf[0]["c"] == 0,
+# ---------- H10 核心特征缺失率（Phase 1 质量,生产目标 0%） ----------
+# 2026-08-20 口径修正: 订单流字段(of_*)是 best-effort 网络源,Binance/Gate
+# 无覆盖的币(AI16Z 等)按设计记缺失——不算缺陷。只查【核心特征】
+# (MFE/MAE/R 倍数/滑点/持仓时长)缺失的行。
+_core_fields = ("mae_r", "mfe_r", "r_multiple", "slippage_bps", "holding_hours")
+_where = " OR ".join(f"features_missing LIKE '%{f}%'" for f in _core_fields)
+badf = q(DB, f"SELECT COUNT(*) c FROM trade_features WHERE {_where}")
+check("H10 核心特征缺失率=0（订单流 best-effort 除外）", badf[0]["c"] == 0,
       f"{badf[0]['c']} 行有缺失字段")
 
 # ---------- H11 下单失败（新增即告警,2026-08-17 用户要求:逐笔进报警链） ----------
