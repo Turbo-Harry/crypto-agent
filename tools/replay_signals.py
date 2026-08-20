@@ -29,11 +29,11 @@ from exchange.fake_adapter import FakeAdapter
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MARKET_DB = os.path.join(ROOT, "data", "market.db")
 REPLAY_DB = os.path.join(ROOT, "data", "replay.db")
-DEFAULT_SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE"]
+DEFAULT_SYMBOLS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "LINK", "ADA", "AVAX", "BNB", "LTC"]
 COST_BPS = 10.0          # 往返成本
 MAX_HOLD_BARS = 48       # 最长持仓 48 根 1H（2 天）
 
-SYMBOL_WHITELIST = {"BTC", "ETH", "SOL", "XRP", "DOGE", "LINK", "AEON"}
+SYMBOL_WHITELIST = {"BTC", "ETH", "SOL", "XRP", "DOGE", "LINK", "ADA", "AVAX", "BNB", "LTC", "AEON"}
 
 
 def load_klines(symbol, bar="1H"):
