@@ -189,9 +189,9 @@ class SignalScanMixin:
         today = time.strftime("%Y-%m-%d")
         # 2026-08-20 交易所故障退避: 下单遇 50001/503 后暂停开仓 N 秒,
         # 避免故障期间每轮扫描都刷失败行/告警(OKX 沙盘全灭案例)。
-        _backoff_until = getattr(self, "_open_backoff_until", 0)
+        # 逐币实时读(不能轮前快照——同轮首个币失败后,后续币还会再试)。
         for base in scan_pool:
-            if time.time() < _backoff_until:
+            if time.time() < getattr(self, "_open_backoff_until", 0):
                 self._log_scan_decision(base, False, "", "exchange_backoff",
                                         "交易所下单 API 故障,退避中")
                 continue
