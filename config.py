@@ -136,6 +136,9 @@ READY_SQN_MIN = 1.6             # 灯1: Van Tharp SQN 下限
 READY_CRITICAL_DAYS = 7         # 灯2: 连续 N 天零 critical 级异常
 READY_MIN_TRUSTED = 3           # 灯3: 最少 trusted 经验条数
 READY_MIN_ROLLUPS = 1           # 灯3: 最少场景归纳条数
+# ---- 交易所故障退避（2026-08-20 OKX 沙盘下单 API 503/50001 全灭） ----
+EXCHANGE_OUTAGE_BACKOFF_SECONDS = 300   # 下单遇 50001/503 暂停开仓 N 秒
+                                        # (监控/平仓重试不受影响)
 # ---- 每日候选扫描（daily_scan）【激进第二档: 流动性/趋势/波动率门槛放宽,候选更多】 ----
 MIN_VOL = 1_000_000           # 24h 成交额下限 USDT（500万→200万→100万）
 MIN_PRICE = 0.01              # 最低价格

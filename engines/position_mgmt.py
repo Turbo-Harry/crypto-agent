@@ -423,6 +423,15 @@ class PositionMixin:
         """下单失败结构化落库（2026-08-16 用户问"有没有下单失败的日志"——
         此前只有 stdout 文本,无法查询/告警。每次下单/挂单/预检失败必入账）。"""
         try:
+            # 2026-08-20 交易所故障退避: 开仓遇 50001/503(OKX 沙盘 API 全灭)
+            # → 暂停开仓 EXCHANGE_OUTAGE_BACKOFF_SECONDS 秒,故障期不再刷失败行。
+            # 监控/平仓(stage=close)不受影响——平仓重试每拍继续。
+            err_s = str(error)
+            if stage == "open" and ("50001" in err_s or "503" in err_s):
+                self._open_backoff_until = time.time() + \
+                    config.EXCHANGE_OUTAGE_BACKOFF_SECONDS
+                print(f"⛔ 交易所下单 API 故障(50001/503),"
+                      f"暂停开仓 {config.EXCHANGE_OUTAGE_BACKOFF_SECONDS}s")
             import storage.db as sdb
             sdb.init_db(self._db_path)
             sdb.x("INSERT INTO order_failures (ts, base, inst_id, side, qty, "

@@ -187,7 +187,14 @@ class SignalScanMixin:
             except Exception as e:
                 print(f"扫描进化步进异常(不影响扫描): {e}")
         today = time.strftime("%Y-%m-%d")
+        # 2026-08-20 交易所故障退避: 下单遇 50001/503 后暂停开仓 N 秒,
+        # 避免故障期间每轮扫描都刷失败行/告警(OKX 沙盘全灭案例)。
+        _backoff_until = getattr(self, "_open_backoff_until", 0)
         for base in scan_pool:
+            if time.time() < _backoff_until:
+                self._log_scan_decision(base, False, "", "exchange_backoff",
+                                        "交易所下单 API 故障,退避中")
+                continue
             # 2026-08-16: 长扫描期间每币刷新心跳——18 币扫描需数分钟,
             # 心跳停更 >30s 会被 watchdog 误杀（exit -15 崩溃循环事故）。
             # 2026-08-17 事故: 网络黑洞让 20 币扫描 × 30s 超时阻塞主循环 51 分钟,
