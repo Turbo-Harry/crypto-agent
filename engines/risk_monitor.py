@@ -99,7 +99,8 @@ class RiskMonitorMixin:
                         close_qty = min(abs(float(t["size"])), pos.base_qty)
                         res = self.exchange.place_market_order(
                             inst_id, side, close_qty, venue="swap",
-                            pos_side=pos.side, reduce_only=True)
+                            pos_side=pos.side, reduce_only=True,
+                            td_mode=getattr(pos, "mgn_mode", None) or "cross")
                         if not res.ok:
                             # 2026-08-19 51169 双语义: ①条件单已抢先平仓(仓位
                             # 消失) ②下单层问题如 tdMode 不匹配(仓位还在)。
@@ -191,7 +192,8 @@ class RiskMonitorMixin:
                     close_qty = min(abs(float(t["size"])), pos.base_qty)
                     res = self.exchange.place_market_order(
                         inst_id, side, close_qty, venue="swap",
-                        pos_side=pos.side, reduce_only=True)
+                        pos_side=pos.side, reduce_only=True,
+                        td_mode=getattr(pos, "mgn_mode", None) or "cross")
                     if not res.ok:
                         # 审计 H4:平仓失败不得落账"已平"——保持 open,下一轮重试
                         print(f"强平失败 {base}: {res.message}（保持 open，下轮重试）")

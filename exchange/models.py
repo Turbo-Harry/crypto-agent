@@ -74,6 +74,9 @@ class PositionInfo:
     contracts: float = 0.0  # 张数（spot 无此概念，恒 0）
     base_qty: float = 0.0   # 基础币数量（contracts × ct_val）
     avg_px: float = 0.0     # 开仓均价
+    mgn_mode: str = "cross"  # 2026-08-20: 仓位保证金模式(cross/isolated)。
+                             # 平仓单必须按仓位自身模式——账户存在混模仓位
+                             # (旧 isolated 仓在 cross 适配器下 51169 平不掉)
 
 
 @dataclass

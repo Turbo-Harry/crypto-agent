@@ -103,13 +103,14 @@ class FakeAdapter(ExchangeAdapter):
     def place_market_order(self, inst_id: str, side: str, qty: float,
                            venue: str = "swap", pos_side: Optional[str] = None,
                            reduce_only: bool = False,
-                           cl_ord_id: Optional[str] = None) -> OrderResult:
+                           cl_ord_id: Optional[str] = None,
+                           td_mode: Optional[str] = None) -> OrderResult:
         ord_id = f"f{next(self._ord_seq)}"
         px = self._fill_price(inst_id)
         self.orders.append({"ord_id": ord_id, "inst_id": inst_id, "side": side,
                             "qty": qty, "venue": venue, "pos_side": pos_side,
                             "reduce_only": reduce_only, "cl_ord_id": cl_ord_id,
-                            "price": px})
+                            "td_mode": td_mode, "price": px})
         if venue == "spot":
             if side == "buy":
                 cost = qty * px

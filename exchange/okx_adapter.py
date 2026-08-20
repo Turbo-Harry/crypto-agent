@@ -217,7 +217,8 @@ class OKXAdapter(ExchangeAdapter):
                 side=(p.get("posSide") or ("long" if contracts > 0 else "short")),
                 contracts=abs(contracts),
                 base_qty=abs(contracts) * ct_val,
-                avg_px=float(p.get("avgPx") or 0)))
+                avg_px=float(p.get("avgPx") or 0),
+                mgn_mode=(p.get("mgnMode") or "cross")))
         return out
 
     def set_leverage(self, inst_id: str, lever: int, pos_side: str,
@@ -263,7 +264,8 @@ class OKXAdapter(ExchangeAdapter):
     def place_market_order(self, inst_id: str, side: str, qty: float,
                            venue: str = "swap", pos_side: Optional[str] = None,
                            reduce_only: bool = False,
-                           cl_ord_id: Optional[str] = None) -> OrderResult:
+                           cl_ord_id: Optional[str] = None,
+                           td_mode: Optional[str] = None) -> OrderResult:
         inst = self.instrument(inst_id)
         # 审计 C1:客户端幂等键(下单响应丢失/超时后按它反查真实状态)
         # 2026-08-17 根因修复: OKX clOrdId 只允许字母数字,禁止连字符——
@@ -291,10 +293,12 @@ class OKXAdapter(ExchangeAdapter):
         for _ in range(1 + LOT_COARSEN_MAX):
             contracts = self._swap_qty_to_contracts(inst, qty)
             # 2026-08-19 根因修复: 该模拟盘账户所有持仓都在 cross 模式,
-            # isolated 下单对 cross 持仓 reduce-only 报 51169'无仓位可减'——
-            # ETH 突破止盈后平仓单连续 7 次失败即此因(实测 cross 同单 sCode=0)。
-            body = {"instId": inst_id, "tdMode": "cross", "side": side,
-                    "ordType": "market", "sz": str(contracts),
+            # isolated 下单对 cross 持仓 reduce-only 报 51169'无仓位可减'。
+            # 2026-08-20 修正: 账户实际存在【混模仓位】(旧 isolated 仓遗留,
+            # KAITO 案例)——平仓必须按仓位自身 mgnMode(td_mode 参数),
+            # 否则跨模式 reduce-only 报 51169。
+            body = {"instId": inst_id, "tdMode": td_mode or "cross",
+                    "side": side, "ordType": "market", "sz": str(contracts),
                     "posSide": pos_side or "long", "clOrdId": attempt_cl}
             if reduce_only:
                 body["reduceOnly"] = "true"
