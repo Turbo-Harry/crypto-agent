@@ -73,6 +73,21 @@ CREATE TABLE IF NOT EXISTS lesson_rollups (
 );
 CREATE INDEX IF NOT EXISTS idx_rollups_key ON lesson_rollups(symbol, category);
 
+-- 组合试验(2026-08-21 用户洞察"单条不盈利,combo 可能盈利"):
+-- 每笔平仓实际采纳的教训组合(≥2 条)记一行,真实交易结果作验证样本。
+-- 只观测;combo 统计达标走 experiments 提案,绝不自动改决策。
+CREATE TABLE IF NOT EXISTS combo_trials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id TEXT,
+    signature TEXT,            -- 成员教训 id 升序拼接,组合身份
+    member_ids TEXT,           -- JSON 数组
+    pnl REAL,                  -- 本笔盈亏(比例)
+    pnl_usdt REAL,             -- 本笔盈亏 USDT
+    r_multiple REAL,
+    ts REAL
+);
+CREATE INDEX IF NOT EXISTS idx_combo_sig ON combo_trials(signature);
+
 CREATE TABLE IF NOT EXISTS thresholds (
     key TEXT PRIMARY KEY,          -- "dir" / "arb"
     threshold REAL, records TEXT,  -- records: JSON 数组（score→pnl 样本）

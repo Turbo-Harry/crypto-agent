@@ -386,3 +386,11 @@ def readiness():
     """实盘就绪三盏灯(2026-08-20 用户指示)——样本/稳定/反哺,全绿才可上实盘。"""
     from tools.readiness import readiness_status
     return readiness_status()
+
+
+@app.get("/combos", response_model=dict, tags=["观测"])
+def combos(min_samples: int = 3):
+    """组合试验统计(2026-08-21 用户洞察'单条不盈利,combo 可能盈利')——
+    只观测;达标组合走 experiments 提案,不自动改决策。"""
+    from decision.experience_scoring import combo_stats
+    return {"combos": combo_stats(min_samples=min_samples)}

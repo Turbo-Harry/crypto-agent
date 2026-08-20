@@ -362,6 +362,64 @@ def get_rollup(db_path, symbol, category, conditions=None):
     return None
 
 
+def record_combo_trial(trade_id, adopted_ids, closed, db_path=None):
+    """记录组合试验(2026-08-21 用户洞察'单条不盈利,combo 可能盈利'):
+    本笔实际采纳的教训 ≥2 条时,按升序 id 拼签名记一行真实结果。
+    只观测——combo 统计达标后走 experiments 提案,决策层零改动。"""
+    ids = sorted(set(int(x) for x in (adopted_ids or []) if str(x).isdigit()))
+    if len(ids) < 2:
+        return None
+    import storage.db as sdb
+    sdb.init_db(db_path)
+    sig = ",".join(str(i) for i in ids)
+    pnl = closed.get("pnl")
+    r_mult = None
+    try:
+        entry = closed.get("entry_price")
+        stop = closed.get("stop_loss")
+        if entry and stop and pnl is not None and abs(entry - stop) > 0:
+            sd = abs(entry - stop) / entry
+            r_mult = round(pnl / sd, 4) if sd > 0 else None
+    except Exception:
+        r_mult = None
+    notional = closed.get("notional_usdt")
+    pnl_usdt = round(pnl * notional, 4) if pnl is not None and notional else None
+    sdb.x("INSERT INTO combo_trials (trade_id, signature, member_ids, pnl, "
+          "pnl_usdt, r_multiple, ts) VALUES (?,?,?,?,?,?,?)",
+          [trade_id, sig, json.dumps(ids), pnl, pnl_usdt, r_mult, time.time()],
+          db_path=db_path)
+    return sig
+
+
+def combo_stats(db_path=None, min_samples=3):
+    """组合试验统计(只读): 每个签名 ≥min_samples 笔的胜率/期望 R。
+    用于 experiments 提案与看板展示,绝不自动改决策。"""
+    import storage.db as sdb
+    sdb.init_db(db_path)
+    rows = sdb.q("SELECT signature, member_ids, pnl, r_multiple FROM combo_trials",
+                 db_path=db_path)
+    groups = {}
+    for r in rows:
+        g = groups.setdefault(r["signature"], {"ids": r["member_ids"],
+                                               "pnls": [], "rs": []})
+        if r["pnl"] is not None:
+            g["pnls"].append(r["pnl"])
+        if r["r_multiple"] is not None:
+            g["rs"].append(r["r_multiple"])
+    out = []
+    for sig, g in groups.items():
+        n = len(g["pnls"])
+        if n < min_samples:
+            continue
+        wins = sum(1 for p in g["pnls"] if p > 0)
+        mean_r = (sum(g["rs"]) / len(g["rs"])) if g["rs"] else None
+        out.append({"signature": sig, "member_ids": g["ids"],
+                    "samples": n, "win_rate": round(wins / n, 3),
+                    "mean_r": round(mean_r, 3) if mean_r is not None else None})
+    out.sort(key=lambda x: (x["mean_r"] is None, -(x["mean_r"] or 0)))
+    return out
+
+
 if __name__ == "__main__":
     bank = ScoredExperience("experience_scored_demo.json")
     # 模拟：一条经验从"未验证"到"可信"或"弃用"的过程

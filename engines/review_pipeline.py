@@ -92,6 +92,15 @@ class ReviewMixin:
         # R2-3：只 validate 本笔实际采纳的经验（替换全量 trusted validate 回声）
         for lid in t.get("adopted_lesson_ids") or []:
             self.exp_bank.validate(lid, closed["pnl"])
+        # 2026-08-21 用户洞察: 单条不盈利,combo 可能盈利——单条验证会误杀
+        # 组合价值。记录组合试验(≥2 条教训同时采纳),只观测不生效:
+        # combo 统计达标后走 experiments 提案通道,绝不自动改决策。
+        try:
+            from decision.experience_scoring import record_combo_trial
+            record_combo_trial(t.get("id"), t.get("adopted_lesson_ids") or [],
+                               closed, db_path=self._db_path)
+        except Exception:
+            pass
         # 阈值自适应：记录本次【真实】决策分数 + 结果。
         # 2026-08-20 DEF-5 闭环: 校准不再直接生效,走进化门(提案→影子→晋升/回滚)。
         score = t.get("score") or SIGNAL_SCORE
