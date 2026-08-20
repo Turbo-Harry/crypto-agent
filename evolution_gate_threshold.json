@@ -1,0 +1,14 @@
+{
+  "name": "方向性阈值层",
+  "incumbent": {
+    "label": "基线",
+    "pnls": [
+      0.13616268788682578
+    ]
+  },
+  "candidate": null,
+  "live_batches": [],
+  "rollbacks": 0,
+  "promotions": 0,
+  "events": []
+}

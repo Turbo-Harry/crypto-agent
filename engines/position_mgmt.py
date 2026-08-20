@@ -370,7 +370,10 @@ class PositionMixin:
     # ---------- R2-5：止盈挂交易所侧（独立 TP 条件单） ----------
     def _place_tp(self, base, sig, qty):
         """挂 TP 条件单（原生 tpTriggerPx 结构）。失败返回 False（上层打 tp_missing
-        + 本地 monitor 兜底）。"""
+        + 本地 monitor 兜底）。
+        51279(2026-08-20): TP 价已被现价越过(快涨/快跌,成交后价格瞬间越过
+        fill+2ATR)→ 条件单按定义即刻触发,本地 monitor 会秒级市价止盈——
+        属【预期达成】而非故障: 不落失败台账(防 H11 噪音),只记事件。"""
         inst_id = self._inst_id(base, "swap")
         tp_side = "sell" if sig["dir"] == "long" else "buy"
         try:
@@ -379,10 +382,21 @@ class PositionMixin:
             if res.ok:
                 print(f"  🎯 已挂交易所侧 TP 条件单（原生 tpTriggerPx） @ {sig['tp']:.2f}")
                 return True
+            if "51279" in str(res.message):
+                print(f"  ⚡ {base}: TP 价已被现价越过(51279),本地监控即刻市价止盈")
+                try:
+                    from service.events import log_event
+                    log_event("tp_prepassed", {"base": base, "tp": sig["tp"]})
+                except Exception:
+                    pass
+                return False
             print(f"  ⚠️ TP 挂单失败（本地 monitor 止盈兜底）: {res.message}")
             self._log_order_failure(base, inst_id, "tp", qty, "tp_order", res.message)
             return False
         except ExchangeError as e:
+            if "51279" in str(e):
+                print(f"  ⚡ {base}: TP 价已被现价越过(51279),本地监控即刻市价止盈")
+                return False
             print(f"  ⚠️ TP 挂单失败（本地 monitor 止盈兜底）: {e}")
             self._log_order_failure(base, inst_id, "tp", qty, "tp_order", e)
             return False
