@@ -185,6 +185,14 @@ class TraderWorker:
                     if time.time() - self._last_snapshot >= 60:
                         self._last_snapshot = time.time()
                         self._save_positions_snapshot()
+                    # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
+                    # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。
+                    if time.time() - getattr(self, "_last_reconcile_sweep", 0) >= 3600:
+                        self._last_reconcile_sweep = time.time()
+                        try:
+                            t._reconcile_startup()
+                        except Exception:
+                            pass
                     # 每日看账（自我进化：定期分析问题并反馈，≥24h 跑一次）
                     if time.time() - self._last_analysis >= 24 * 3600:
                         self._last_analysis = time.time()

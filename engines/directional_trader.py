@@ -269,6 +269,16 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 print(f"⚠️ 启动对账:交易所存在无台账持仓 {p.inst_id} {p.side} "
                       f"qty={p.base_qty}(仅告警,人工处置)")
                 self._notify(f"⚠️ 启动对账:无台账持仓 {p.inst_id} {p.side} qty={p.base_qty}")
+                # 2026-08-21: 幽灵仓也进统一异常中心(交易所故障期成交回报丢失
+                # 会产生无台账持仓,HBAR 案例)——值守 AI 与人工都能看到。
+                try:
+                    from tools.anomalies import register as _reg
+                    _reg("reconcile",
+                         f"无台账持仓 {p.inst_id} {p.side} qty={p.base_qty}",
+                         "交易所持仓无对应 journal 记录(疑似成交回报丢失),"
+                         "仅告警待人工处置", severity="warning")
+                except Exception:
+                    pass
 
     # ---------- 场所/行情辅助（依赖 ExchangeAdapter 接口） ----------
     def _inst_id(self, base, venue="swap"):

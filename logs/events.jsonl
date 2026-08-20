@@ -133,3 +133,8 @@
 {"ts": 1787244177.049, "type": "open", "payload": {"tid": "txn_1787244177_000d", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
 {"ts": 1787244177.217, "type": "order_fail", "payload": {"base": "BTC", "inst_id": "BTC-USDT-SWAP", "side": "buy", "qty": 1.36, "stage": "open", "error": "模拟下单失败"}}
 {"ts": 1787244178.505, "type": "open", "payload": {"tid": "txn_1787244178_2235", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
+{"ts": 1787244326.431, "type": "open", "payload": {"tid": "txn_1787244326_62dd", "symbol": "ANTHROPIC", "dir": "long", "entry": 180.0, "stop": 175.0, "tp": 190.0, "qty": 1.0, "lev": 3, "notional": 180.0}}
+{"ts": 1787244326.743, "type": "close", "payload": {"tid": "txn_1787244326_7366", "symbol": "ANTHROPIC", "dir": "long", "pnl_usdt": -10.0, "pnl_pct": -0.05555555555555555, "reason": "熔断强平: 测试熔断", "lessons": 2}}
+{"ts": 1787244326.955, "type": "close", "payload": {"tid": "txn_1787244326_c3a3", "symbol": "BTC", "dir": "long", "pnl_usdt": -10.1, "pnl_pct": -0.016031746031746032, "reason": "止损", "lessons": 3}}
+{"ts": 1787244327.087, "type": "open", "payload": {"tid": "txn_1787244327_39bb", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 0.68, "lev": 3, "notional": 74.80000000000001}}
+{"ts": 1787244327.415, "type": "close", "payload": {"tid": "txn_1787244327_b6e6", "symbol": "BTC", "dir": "long", "pnl_usdt": -0.03, "pnl_pct": -0.03, "reason": "止损/止盈", "lessons": 2}}
