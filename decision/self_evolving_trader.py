@@ -34,6 +34,10 @@ class SelfEvolvingTrader:
         验证强度聚合(见下)。旧调用传 regime 已废弃。
         """
         journal = journal or self.journal
+        # 2026-08-20 修复: Counter 原本只在 `if relevant:` 块内局部 import,
+        # relevant 为空时 discarded 检查再引用 → UnboundLocalError(12:18 事故)。
+        # 统一在函数顶部导入。
+        from collections import Counter
         decision = {"trade": True, "reason": [], "stop_adj": 0, "size_factor": 1.0,
                     "adopted_lesson_ids": []}   # R2-3：恒初始化，无采纳也返回空列表
 
@@ -48,7 +52,6 @@ class SelfEvolvingTrader:
         relevant = self.bank.relevant(symbol=symbol, conditions=conditions)
         if relevant:
             # 统计主要错误类别 + 收集采纳经验 id（R2-3）
-            from collections import Counter
             cats = Counter(l["category"] for l in relevant)
             ids_by_cat = {}
             for l in relevant:
