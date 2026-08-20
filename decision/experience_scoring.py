@@ -79,22 +79,27 @@ class ScoredExperience:
             cond_s = cond if isinstance(cond, str) else \
                 json.dumps(cond or {}, ensure_ascii=False)
             sdb.x("INSERT OR REPLACE INTO lessons (id,symbol,category,content,score,"
-                  "adoptions,good,bad,status,source_trade,regime,conditions,ts,last_update) "
-                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "adoptions,good,bad,status,source_trade,regime,conditions,hist_evidence,ts,last_update) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   [l.get("id"), l.get("symbol"), l.get("category"), l.get("content"),
                    l.get("score", 50), l.get("adoptions", 0), l.get("good", 0),
                    l.get("bad", 0), l.get("status", "unverified"), l.get("source_trade"),
-                   l.get("regime"), cond_s, l.get("ts"), l.get("last_update")],
+                   l.get("regime"), cond_s,
+                   l.get("hist_evidence") if isinstance(l.get("hist_evidence"), str)
+                   else json.dumps(l.get("hist_evidence") or {}, ensure_ascii=False),
+                   l.get("ts"), l.get("last_update")],
                   db_path=self.db_path)
 
     # ---------- 经验生命周期 ----------
     def add(self, symbol, category, content, source_trade, status="unverified",
-            regime=None, conditions=None):
+            regime=None, conditions=None, hist_evidence=None):
         """新增经验（初始分 50）。status 默认 unverified；平仓复盘链按一致性初筛
         传入 candidate/dubious（Phase0 T0.2，见 directional_trader._post_close_review）。
         regime: 教训产生的市场环境标签（Phase 4，兼容旧字段）。
         conditions: 场景条件向量 dict（2026-08-17，direction/vol_band/trend/
-        signal_type），JSON 落库;无则空(全维度通配)。"""
+        signal_type），JSON 落库;无则空(全维度通配)。
+        hist_evidence(2026-08-21 用户要求'经验从历史看是否有符合的'):
+        教训诞生时的历史先验(同场景历史交易表现),只观测不进 ±10 验证循环。"""
         now = time.time()
         lesson = {
             "id": len(self.lessons) + 1,
@@ -110,6 +115,8 @@ class ScoredExperience:
             "regime": regime,
             "conditions": json.dumps(conditions, ensure_ascii=False)
                           if conditions else "",
+            "hist_evidence": json.dumps(hist_evidence, ensure_ascii=False)
+                             if hist_evidence else "",
             "ts": now,
             "last_update": now,
         }
@@ -360,6 +367,47 @@ def get_rollup(db_path, symbol, category, conditions=None):
         if conditions_match({"conditions": cond}, conditions):
             return r
     return None
+
+
+def historical_evidence(symbol, direction, conditions=None, db_path=None):
+    """教训的历史先验(2026-08-21 用户要求'经验从历史看看是否有符合的'):
+    在【历史已平仓交易】里找同场景先例(symbol+方向+波动带+趋势)——
+    返回 {samples, win_rate, mean_r, matched_trades}。只观测,不进决策。"""
+    import storage.db as sdb
+    sdb.init_db(db_path)
+    rows = sdb.q("SELECT id, symbol, direction, pnl, entry_price, stop_loss "
+                 "FROM trades WHERE status='closed' AND symbol=? AND direction=?",
+                 [symbol, direction], db_path=db_path)
+    feats = {r["trade_id"]: r for r in sdb.q(
+        "SELECT trade_id, regime_tag, trend_slope FROM trade_features",
+        db_path=db_path)}
+    cond = conditions or {}
+    matched = []
+    for r in rows:
+        f = feats.get(r["id"]) or {}
+        if cond.get("vol_band") and f.get("regime_tag")                 and f["regime_tag"] != cond["vol_band"]:
+            continue
+        ts = f.get("trend_slope")
+        if cond.get("trend") and ts is not None:
+            t_now = "up" if ts > 0.0005 else ("down" if ts < -0.0005 else "flat")
+            if t_now != cond["trend"]:
+                continue
+        matched.append(r)
+    if len(matched) < 1:
+        return {"samples": 0, "win_rate": None, "mean_r": None,
+                "matched_trades": []}
+    wins = sum(1 for r in matched if (r["pnl"] or 0) > 0)
+    rs = []
+    for r in matched:
+        e, s, pnl = r["entry_price"], r["stop_loss"], r["pnl"]
+        if e and s and pnl is not None and abs(e - s) > 0:
+            sd = abs(e - s) / e
+            if sd > 0:
+                rs.append(pnl / sd)
+    return {"samples": len(matched),
+            "win_rate": round(wins / len(matched), 3),
+            "mean_r": round(sum(rs) / len(rs), 3) if rs else None,
+            "matched_trades": [r["id"] for r in matched]}
 
 
 def record_combo_trial(trade_id, adopted_ids, closed, db_path=None):

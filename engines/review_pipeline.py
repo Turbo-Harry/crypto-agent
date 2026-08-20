@@ -86,9 +86,19 @@ class ReviewMixin:
                 status = "candidate" if consistent else "dubious"
             else:
                 status = "unverified"
+            # 2026-08-21 用户要求'经验从历史看是否有符合的': 教训诞生即查
+            # 历史同场景先例(symbol+方向+波动带+趋势),先验只观测不进验证循环。
+            hist = None
+            try:
+                from decision.experience_scoring import historical_evidence
+                hist = historical_evidence(base, lesson_conditions.get("direction"),
+                                           conditions=lesson_conditions,
+                                           db_path=self._db_path)
+            except Exception:
+                hist = None
             self.exp_bank.add(base, l["category"], l["lesson"], t["id"],
                               status=status, regime=regime_tag,
-                              conditions=lesson_conditions)
+                              conditions=lesson_conditions, hist_evidence=hist)
         # R2-3：只 validate 本笔实际采纳的经验（替换全量 trusted validate 回声）
         for lid in t.get("adopted_lesson_ids") or []:
             self.exp_bank.validate(lid, closed["pnl"])

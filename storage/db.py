@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS lessons (
     source_trade TEXT,
     regime TEXT,                        -- Phase 4: 教训产生的市场环境标签(兼容旧数据)
     conditions TEXT DEFAULT '',         -- 2026-08-17 场景条件向量 JSON(direction/vol_band/trend/signal_type)
+    hist_evidence TEXT DEFAULT '',      -- 2026-08-21 历史先验 JSON(同场景历史表现,只观测)
     ts REAL, last_update REAL
 );
 CREATE INDEX IF NOT EXISTS idx_lessons_symbol ON lessons(symbol);
@@ -339,12 +340,18 @@ def _migrate_v4_engine_errors_archived(conn):
     _add_column_if_missing(conn, "engine_errors", "archived", "INTEGER DEFAULT 0")
 
 
+def _migrate_v5_lesson_hist_evidence(conn):
+    """v5: 教训历史先验(2026-08-21 用户要求'经验从历史看是否有符合的')。"""
+    _add_column_if_missing(conn, "lessons", "hist_evidence", "TEXT")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
     (2, _migrate_v2_indexes),
     (3, _migrate_v3_shadow_settle),
     (4, _migrate_v4_engine_errors_archived),
+    (5, _migrate_v5_lesson_hist_evidence),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
