@@ -95,9 +95,9 @@ MTF_ENABLED = False           # 多周期共振过滤关闭（采集加速;tf4h_
 # 改交易门槛只改这里;各模块一律 import config 引用,禁止私藏副本。
 # 注意三件套联动关系（不满足会导致"全部信号被拒"或"门槛失效"）:
 #   THRESHOLD_INITIAL < DECIDE_MIN_SCORE <= SIGNAL_SCORE
-SIGNAL_SCORE = 40            # 回踩确认信号基础分（激进第二档: 80→50→40）
-DECIDE_MIN_SCORE = 40        # 决策层最低信号分（与 SIGNAL_SCORE 联动）
-THRESHOLD_INITIAL = 35       # 阈值学习层初始阈值（联动约束: < DECIDE_MIN_SCORE）
+SIGNAL_SCORE = 30            # 回踩确认信号基础分（2026-08-21 用户放宽: 80→50→40→30）
+DECIDE_MIN_SCORE = 30        # 决策层最低信号分（与 SIGNAL_SCORE 联动）
+THRESHOLD_INITIAL = 25       # 阈值学习层初始阈值（联动约束: < DECIDE_MIN_SCORE）
 REJECT_WICK_RATIO = 1.0      # 拒绝K线: 影线/实体 最小比（激进第二档 1.5→1.0,信号更多）
 STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR
 TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比）
