@@ -106,7 +106,15 @@ class TraderWorker:
             import storage.db as sdb
             sdb.init_db()
             with sdb.tx() as conn:
-                for p in self.exchange.fetch_positions():
+                positions = self.exchange.fetch_positions()
+                if not positions:
+                    # 2026-08-21: 空仓时写一行哨兵(inst_id='-')——
+                    # 否则一行都不写,H9 拿不到新时间戳误报'快照不新鲜'。
+                    conn.execute(
+                        "INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
+                        "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
+                        [time.time(), "-", "-", 0, 0, 0])
+                for p in positions:
                     conn.execute(
                         "INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
                         "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
