@@ -363,8 +363,8 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 1. tick 级止损止盈监控（每 2 秒 — OP-1，替代 6 小时轮询）
         if run_monitor:
             self.monitor()
-        # 2. 信号扫描（每 15 分钟 — 真日内短线）
-        if now - self._last_scan >= 15 * 60:
+        # 2. 信号扫描（间隔 config.SCAN_INTERVAL_MINUTES — 2026-08-21 用户改 5 分钟）
+        if now - self._last_scan >= config.SCAN_INTERVAL_MINUTES * 60:
             self._last_scan = now
             self.scan_signals()
 
