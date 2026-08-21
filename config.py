@@ -222,3 +222,32 @@ DEMO_UNTRADABLE = ["BICO", "GRVT", "AEON", "WLD", "WLFI"]
 #   BICO/GRVT/AEON/WLD → 51001 沙盘无此合约; WLFI → 51087 已退市
 # 新符号遇同类错误码由 _log_order_failure 自动记入 untradable_symbols 表,
 # 预检合并查询(配置 + 动态表),后续无需人工扩表。
+
+
+# ============ 热重载机制（2026-08-21 用户要求'配置动态读取'） ============
+# 改 config.py 保存后,引擎下一拍(≤1s,worker tick 调用 maybe_reload)
+# 自动生效,无需重启。机制: mtime 变化时把本文件重新 exec 进本模块
+# 命名空间(原地覆盖),所有 config.X 引用立刻看到新值。
+# 各引擎模块的历史别名已改为模块级 __getattr__ 转发,同样动态。
+import os as _os
+
+_CONFIG_MTIME = _os.path.getmtime(__file__)
+
+
+def maybe_reload():
+    """mtime 变了就原地重载。返回变化了的键名列表(供告警/审计)。"""
+    global _CONFIG_MTIME
+    try:
+        m = _os.path.getmtime(__file__)
+    except OSError:
+        return []
+    if m == _CONFIG_MTIME:
+        return []
+    before = {k: v for k, v in globals().items()
+              if k.isupper() and not k.startswith("_")}
+    src = open(__file__, encoding="utf-8").read()
+    exec(compile(src, __file__, "exec"), globals())
+    _CONFIG_MTIME = _os.path.getmtime(__file__)
+    changed = [k for k in before
+               if k in globals() and globals().get(k) != before.get(k)]
+    return changed

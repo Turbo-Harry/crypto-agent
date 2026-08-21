@@ -9,11 +9,21 @@
 import time
 
 import config
+SIGNAL_SCORE = config.SIGNAL_SCORE
+
+
+def _refresh_config():
+    """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
+    把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
+    global SIGNAL_SCORE
+    SIGNAL_SCORE = config.SIGNAL_SCORE
+
+
+
 from decision.review_engine import deep_review
 from execution.trade_journal import realized_pnl_usdt
 
 # 参数别名（统一维护于 config.py,本模块不私藏数值）
-SIGNAL_SCORE = config.SIGNAL_SCORE
 
 
 class ReviewMixin:

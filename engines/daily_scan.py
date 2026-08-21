@@ -22,17 +22,37 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
-from strategy.indicators import ema, atr
-from exchange.base import ExchangeAdapter, ExchangeError
-
-# 筛选参数（非拟合：区间取经验保守值）
-# 2026-08-16 采集加速（用户指示）：流动性门槛 500万→200万,扩大候选池
 MIN_VOL = config.MIN_VOL
 MIN_PRICE = config.MIN_PRICE
 MIN_TREND_DEV = config.MIN_TREND_DEV
 ATR_SWEET_LOW = config.ATR_SWEET_LOW
 ATR_SWEET_HIGH = config.ATR_SWEET_HIGH
 WATCH_N = config.WATCH_N
+
+
+def _refresh_config():
+    """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
+    把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
+    global MIN_VOL
+    MIN_VOL = config.MIN_VOL
+    global MIN_PRICE
+    MIN_PRICE = config.MIN_PRICE
+    global MIN_TREND_DEV
+    MIN_TREND_DEV = config.MIN_TREND_DEV
+    global ATR_SWEET_LOW
+    ATR_SWEET_LOW = config.ATR_SWEET_LOW
+    global ATR_SWEET_HIGH
+    ATR_SWEET_HIGH = config.ATR_SWEET_HIGH
+    global WATCH_N
+    WATCH_N = config.WATCH_N
+
+
+
+from strategy.indicators import ema, atr
+from exchange.base import ExchangeAdapter, ExchangeError
+
+# 筛选参数（非拟合：区间取经验保守值）
+# 2026-08-16 采集加速（用户指示）：流动性门槛 500万→200万,扩大候选池
 
 
 def _klines_to_dicts(candles):

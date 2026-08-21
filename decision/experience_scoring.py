@@ -1,4 +1,18 @@
 import config
+DECAY_HALFLIFE_DAYS = config.DECAY_HALFLIFE_DAYS
+REVIVE_DAYS = config.REVIVE_DAYS
+
+
+def _refresh_config():
+    """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
+    把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
+    global DECAY_HALFLIFE_DAYS
+    DECAY_HALFLIFE_DAYS = config.DECAY_HALFLIFE_DAYS
+    global REVIVE_DAYS
+    REVIVE_DAYS = config.REVIVE_DAYS
+
+
+
 """
 经验评分系统 — 历史经验不一定对，每条经验用实际交易结果验证。
 好经验存活（分数上升），坏经验淘汰（分数下降，弃用）。
@@ -20,8 +34,6 @@ import json
 import os
 import time
 
-DECAY_HALFLIFE_DAYS = config.DECAY_HALFLIFE_DAYS
-REVIVE_DAYS = config.REVIVE_DAYS
 
 
 class ScoredExperience:

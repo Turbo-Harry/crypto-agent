@@ -9,14 +9,30 @@
 import time
 
 import config
-from exchange.base import ExchangeError
-from exchange.models import floor_to_lot, OrderResult
-
-# 参数别名（统一维护于 config.py,本模块不私藏数值）
 SIGNAL_SCORE = config.SIGNAL_SCORE
 LEVERAGE_MAP = config.LEVERAGE_MAP
 RISK_PER_TRADE = config.RISK_PER_TRADE
 FLAG_ENABLE_EXCHANGE_TP = config.FLAG_ENABLE_EXCHANGE_TP
+
+
+def _refresh_config():
+    """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
+    把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
+    global SIGNAL_SCORE
+    SIGNAL_SCORE = config.SIGNAL_SCORE
+    global LEVERAGE_MAP
+    LEVERAGE_MAP = config.LEVERAGE_MAP
+    global RISK_PER_TRADE
+    RISK_PER_TRADE = config.RISK_PER_TRADE
+    global FLAG_ENABLE_EXCHANGE_TP
+    FLAG_ENABLE_EXCHANGE_TP = config.FLAG_ENABLE_EXCHANGE_TP
+
+
+
+from exchange.base import ExchangeError
+from exchange.models import floor_to_lot, OrderResult
+
+# 参数别名（统一维护于 config.py,本模块不私藏数值）
 
 
 def leverage_for(base, score, journal_trades):
@@ -41,7 +57,7 @@ class PositionMixin:
     """仓位/订单管理功能块。"""
 
     # ---------- 执行：开仓（合约或现货） ----------
-    def open_position(self, base, sig, score=SIGNAL_SCORE,
+    def open_position(self, base, sig, score=None,
                       stop_adj=0.0, size_factor=1.0, adopted_ids=None):
         adopted_ids = adopted_ids or []   # R2-3 预接线：本笔实际采纳的经验 id
         # 交易场所探测：有合约 → 合约（多空皆可，杠杆+交易所侧止损）；

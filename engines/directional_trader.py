@@ -31,6 +31,17 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
+SYMBOLS = config.SYMBOLS
+
+
+def _refresh_config():
+    """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
+    把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
+    global SYMBOLS
+    SYMBOLS = config.SYMBOLS
+
+
+
 from decision.notify import notify
 from decision.self_evolving_trader import SelfEvolvingTrader
 from execution.trade_journal import TradeJournal
@@ -38,7 +49,6 @@ from exchange.base import ExchangeAdapter, ExchangeError
 
 # 策略参数统一维护于 config.py（2026-08-16 用户指示: 数值不再分散）。
 # 2026-08-20 拆分后各功能块自带所需别名,本文件只留自己用到的。
-SYMBOLS = config.SYMBOLS
 
 
 def connect() -> ExchangeAdapter:

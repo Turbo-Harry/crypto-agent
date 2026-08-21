@@ -146,6 +146,8 @@ class TraderWorker:
         def _mon_loop():
             while not stop_mon.is_set():
                 try:
+                    import config as _cfg
+                    _cfg.maybe_reload()
                     with t._mutex:
                         t.monitor()
                 except Exception as e:
@@ -173,6 +175,30 @@ class TraderWorker:
         try:
             while not self._stop.is_set():
                 try:
+                    # 2026-08-21 热重载: 每拍查 config.py mtime,改动即生效
+                    import config as _cfg
+                    _changed = _cfg.maybe_reload()
+                    if _changed:
+                        print(f"[config] 热重载生效: {_changed}")
+                        try:
+                            from service.events import log_event
+                            log_event("config_reload", {"changed": _changed})
+                        except Exception:
+                            pass
+                        # 刷新各引擎模块的参数别名(函数体裸名引用读模块全局)
+                        for _m in ("engines.review_pipeline", "engines.signal_scan",
+                                   "engines.daily_scan", "engines.position_mgmt",
+                                   "decision.experience_scoring", "decision.experiments"):
+                            try:
+                                import importlib
+                                importlib.import_module(_m)._refresh_config()
+                            except Exception:
+                                pass
+                        try:
+                            import engines.directional_trader as _dt
+                            _dt._refresh_config()
+                        except Exception:
+                            pass
                     # 监控已由独立线程负责,主循环只做风控+扫描
                     t.tick(run_monitor=False)
                     # 2026-08-17: tick 进度标记——主循环被网络黑洞阻塞时心跳线程

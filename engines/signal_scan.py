@@ -10,14 +10,32 @@ threshold_learner/signal_cool/_db_path/_notify 等。
 import time
 
 import config
-from strategy.indicators import ema, atr
-
-# 参数别名（统一维护于 config.py,本模块不私藏数值）
 MTF_ENABLED = config.MTF_ENABLED
 SIGNAL_COOLDOWN_MINUTES = config.SIGNAL_COOLDOWN_MINUTES
 SYMBOLS = config.SYMBOLS
 SIGNAL_SCORE = config.SIGNAL_SCORE
 FLAG_USE_SHADOW_SCORE_GATE = config.FLAG_USE_SHADOW_SCORE_GATE
+
+
+def _refresh_config():
+    """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
+    把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
+    global MTF_ENABLED
+    MTF_ENABLED = config.MTF_ENABLED
+    global SIGNAL_COOLDOWN_MINUTES
+    SIGNAL_COOLDOWN_MINUTES = config.SIGNAL_COOLDOWN_MINUTES
+    global SYMBOLS
+    SYMBOLS = config.SYMBOLS
+    global SIGNAL_SCORE
+    SIGNAL_SCORE = config.SIGNAL_SCORE
+    global FLAG_USE_SHADOW_SCORE_GATE
+    FLAG_USE_SHADOW_SCORE_GATE = config.FLAG_USE_SHADOW_SCORE_GATE
+
+
+
+from strategy.indicators import ema, atr
+
+# 参数别名（统一维护于 config.py,本模块不私藏数值）
 
 
 def _build_trade_conditions(sig):

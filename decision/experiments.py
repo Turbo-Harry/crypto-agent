@@ -1,4 +1,15 @@
 import config
+DSR_ACCEPT = config.DSR_ACCEPT
+
+
+def _refresh_config():
+    """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
+    把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
+    global DSR_ACCEPT
+    DSR_ACCEPT = config.DSR_ACCEPT
+
+
+
 """
 试验注册表（Phase 3 T3.2）—— 每次参数/规则变更提案必入账，多重检验可追溯。
 
@@ -12,7 +23,6 @@ import time
 from factors.overfit_guard import deflated_sharpe, pbo_cscv
 
 # 接受线(López de Prado 实务门槛,见设计文档 S3)
-DSR_ACCEPT = config.DSR_ACCEPT
 PBO_ACCEPT = config.PBO_ACCEPT
 MIN_SAMPLES = config.MIN_SAMPLES
 
