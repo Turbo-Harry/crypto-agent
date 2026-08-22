@@ -6,6 +6,7 @@
 幂等恢复）、TP 条件单、幽灵条件单清理、下单失败结构化落库。
 方法体与拆分前逐行一致（行为零变化）；宿主为 DirectionalTrader。
 """
+import json
 import time
 
 import config
@@ -180,6 +181,8 @@ class PositionMixin:
                 size=qty, direction="long", score=score,
                 adopted_lesson_ids=adopted_ids, atr_value=sig["atr"],
                 signal_price=sig["entry"],
+                shadow_dims=json.dumps(sig.get("shadow_dims") or {},
+                                       ensure_ascii=False),
                 venue=("live" if getattr(self, "live_mode", False) else "spot"))
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
@@ -347,6 +350,8 @@ class PositionMixin:
                 size=qty, direction=sig["dir"], score=score,
                 adopted_lesson_ids=adopted_ids,          # R2-3：本笔实际采纳的经验
                 atr_value=sig["atr"], signal_price=sig["entry"],
+                shadow_dims=json.dumps(sig.get("shadow_dims") or {},
+                                       ensure_ascii=False),
                 venue=("live" if getattr(self, "live_mode", False) else "swap"))  # 合约腿；实盘标 live(2026-08-23 重新计盈亏)
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:

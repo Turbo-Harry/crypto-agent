@@ -36,7 +36,8 @@ def score(**kw):
              ema50_val=98.0, atr_val=1.0, vol_last=100.0, vol_avg=100.0,
              funding_rate=None, book_imb=None, direction="long")
     d.update(kw)
-    return compute_shadow_score(**d)
+    sc, dims = compute_shadow_score(**d)
+    return sc
 
 
 def main():

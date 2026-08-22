@@ -38,7 +38,7 @@ from strategy.indicators import ema, atr
 
 def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
                          atr_val, vol_last, vol_avg, funding_rate, book_imb,
-                         direction):
+                         direction, weights=None):
     """信号影子连续分(0-100),2026-08-23 用户指示"维度太少了,加"后 3 维→6 维:
       1. wick    拒绝K线强度(影线/实体,封顶3x)   — 28%
       2. depth   回踩深度适中(贴EMA20/ATR)      — 27%
@@ -47,8 +47,9 @@ def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
       5. funding 资金费顺风(多单负费率/空单正)  — 5%
       6. book    盘口失衡(前10档,方向对齐)      — 10%
     数据缺失的维度取 0.5 中性,不污染总分;权重和必须=1.0(config.SHADOW_WEIGHTS)。
-    纯函数(无 IO),便于单元测试与回放。"""
-    w = config.SHADOW_WEIGHTS
+    纯函数(无 IO),便于单元测试与回放。
+    返回 (score, dims): dims 为 6 维子分 dict(权重进化证据采集用)。"""
+    w = weights or config.SHADOW_WEIGHTS
     try:
         wick_s = min(wick / body, 3.0) / 3.0 if body > 0 else 0.0
         depth_s = (max(0.0, 1.0 - abs(price_near_ema - ema20_val) / atr_val)
@@ -67,12 +68,15 @@ def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
         else:
             imb = max(-1.0, min(1.0, float(book_imb)))
             book_s = (imb if direction == "long" else -imb) / 2 + 0.5
+        dims = {"wick": round(wick_s, 4), "depth": round(depth_s, 4),
+                "trend": round(trend_s, 4), "volume": round(vol_s, 4),
+                "funding": round(fund_s, 4), "book": round(book_s, 4)}
         score = 100 * (w.get("wick", 0) * wick_s + w.get("depth", 0) * depth_s
                        + w.get("trend", 0) * trend_s + w.get("volume", 0) * vol_s
                        + w.get("funding", 0) * fund_s + w.get("book", 0) * book_s)
-        return round(score, 1)
+        return round(score, 1), dims
     except Exception:
-        return None
+        return None, None
 
 
 def _book_imbalance(book, depth=10):
@@ -169,18 +173,20 @@ class SignalScanMixin:
                     book_imb = _book_imbalance(_book, config.SHADOW_BOOK_DEPTH)
                 except Exception:
                     pass
-                score = compute_shadow_score(
+                from decision.weight_evolve import effective_weights
+                score, dims = compute_shadow_score(
                     wick, body, price_near_ema, ema20[-1], ema50[-1], atr_val,
-                    vol_last, vol_avg, funding, book_imb, direction)
+                    vol_last, vol_avg, funding, book_imb, direction,
+                    weights=effective_weights(getattr(self, "_db_path", None)))
                 reg = None
                 try:
                     from engines.feature_collector import compute_regime
                     reg = compute_regime(klines, locals().get("c4"))
                 except Exception:
                     reg = None
-                return score, reg
+                return score, dims, reg
             except Exception:
-                return None, None
+                return None, None, None
 
         from decision.scan_evolve import effective_wick_ratio
         ratio = (wick_ratio if wick_ratio is not None
@@ -196,26 +202,26 @@ class SignalScanMixin:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != 1:
                     return None
-                score, regime = _shadow(last["low"], lower_wick, "long")
+                score, dims, regime = _shadow(last["low"], lower_wick, "long")
                 return {"dir": "long", "entry": entry_ref,
                         "stop": entry_ref - config.STOP_ATR_MULT * atr_val,
                         "tp": entry_ref + config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
-                        "shadow_score": score, "regime": regime,
-                        "kline_ts": kline_ts}
+                        "shadow_score": score, "shadow_dims": dims,
+                        "regime": regime, "kline_ts": kline_ts}
         # 做空信号：空头趋势 + 反弹 EMA20 不破 + 拒绝K线（上影线）
         if ema20[-1] < ema50[-1] and last["high"] >= ema20[-1] and last["close"] < ema20[-1]:
             if upper_wick >= body * ratio:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != -1:
                     return None
-                score, regime = _shadow(last["high"], upper_wick, "short")
+                score, dims, regime = _shadow(last["high"], upper_wick, "short")
                 return {"dir": "short", "entry": entry_ref,
                         "stop": entry_ref + config.STOP_ATR_MULT * atr_val,
                         "tp": entry_ref - config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
-                        "shadow_score": score, "regime": regime,
-                        "kline_ts": kline_ts}
+                        "shadow_score": score, "shadow_dims": dims,
+                        "regime": regime, "kline_ts": kline_ts}
         return None
 
     # ---------- 主循环 ----------

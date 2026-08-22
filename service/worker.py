@@ -268,6 +268,19 @@ class TraderWorker:
                                       f"尺子kv {_res['kv_synced']} 条")
                         except Exception:
                             pass
+                    # 2026-08-23 权重进化: 每小时按已平仓样本算逐维 IC,
+                    # 证据达标生成提案(approve 才生效,永不自动改)
+                    if getattr(config, "WEIGHT_EVOLVE_ENABLED", False) \
+                            and time.time() - getattr(self, "_last_weight_propose", 0) \
+                            >= 3600:
+                        self._last_weight_propose = time.time()
+                        try:
+                            from decision.weight_evolve import propose
+                            _st, _msg, _ev = propose(db_path=t._db_path)
+                            if _st in ("accepted", "no_edge", "insufficient"):
+                                print(f"[权重进化] {_st}: {_msg}")
+                        except Exception:
+                            pass
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
                     # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。
                     if time.time() - getattr(self, "_last_reconcile_sweep", 0) >= 3600:

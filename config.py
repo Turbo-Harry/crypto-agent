@@ -122,6 +122,16 @@ SHADOW_WEIGHTS = {"wick": 0.28,    # 拒绝K线强度(影线/实体)
                   "book": 0.10}    # 盘口失衡(前10档,方向对齐)
 SHADOW_VOL_LOOKBACK = 20           # 量能确认的均量窗口
 SHADOW_BOOK_DEPTH = 10             # 盘口失衡统计档位数
+# 权重进化(2026-08-23 用户问"会根据历史经验调整权重吗"):
+# 每笔平仓后按 6 维子分与盈亏的相关性(IC)积累证据,达标才生成提案,
+# 经人工批准才生效(approve 写 kv 覆盖;绝不自动改)。与扫描尺子同纪律。
+WEIGHT_EVOLVE_ENABLED = True       # 证据收集+提案开关
+WEIGHT_EVOLVE_MIN_SAMPLES = 30     # 单维度最少平仓样本才允许提案
+WEIGHT_EVOLVE_MIN_IC = 0.10        # 单维度 |IC| 下限(相关太弱不动)
+WEIGHT_EVOLVE_STEP = 0.02          # 提案步长: 强维 +step,弱维 -step
+WEIGHT_EVOLVE_MAX_SHIFT = 0.10     # 单次提案单维最大变动(防一步跳飞)
+WEIGHT_EVOLVE_KV_KEY = "shadow_weights"   # 批准后的活体权重 kv 键
+SHADOW_DIMS = ("wick", "depth", "trend", "volume", "funding", "book")  # 6 维名
 
 # ============ 费率与手续费（2026-08-23 用户问"会计算费率和手续费吗"） ============
 # 平仓时优先按账户账单(fetch_bills)取【实际】手续费与资金费;

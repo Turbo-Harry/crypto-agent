@@ -70,7 +70,8 @@ def sync_strategy(local_db_path=None, peer_db_path=None):
                 res["threshold_updated"] = updated
         # kv: scan_evolve.* 按 updated_at 新者镜像
         for r in sdb.q("SELECT key, value, updated_at FROM kv "
-                       "WHERE key LIKE 'scan_evolve.%'", db_path=peer_db_path):
+                       "WHERE key LIKE 'scan_evolve.%' OR key = 'shadow_weights'",
+                       db_path=peer_db_path):
             cur = sdb.q1("SELECT updated_at FROM kv WHERE key=?",
                          [r["key"]], db_path=local_db_path)
             if cur is None or (r["updated_at"] or 0) > (cur["updated_at"] or 0):

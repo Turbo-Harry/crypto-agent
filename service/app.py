@@ -302,6 +302,53 @@ def scan_evolve_rollback():
     return out
 
 
+@app.get("/weights/evolve", response_model=dict, tags=["观测"])
+def weights_evolve_status():
+    """权重进化状态：活体权重(批准后 kv 覆盖)/config 基线/待处理提案与证据。
+    只读;权重永不自动改,approve 是唯一写入口。"""
+    from decision.weight_evolve import snapshot
+    return snapshot(_trader()._db_path)
+
+
+@app.post("/weights/evolve/propose", response_model=dict, tags=["控制"],
+          dependencies=[Depends(require_control)])
+def weights_evolve_propose():
+    """按已平仓样本的逐维 IC 生成权重提案(证据达标=accepted 待批准)。
+    不生效——必须再调 /weights/evolve/approve。"""
+    from decision.weight_evolve import propose, snapshot
+    db = _trader()._db_path
+    status, msg, evidence = propose(db_path=db, force=True)
+    out = snapshot(db)
+    out.update({"status": status, "message": msg, "evidence": evidence})
+    return out
+
+
+@app.post("/weights/evolve/approve", response_model=dict, tags=["控制"],
+          dependencies=[Depends(require_control)])
+def weights_evolve_approve():
+    """批准证据达标的权重提案 → kv 覆盖生效(评分立即用新权重)。"""
+    from decision.weight_evolve import approve, snapshot
+    db = _trader()._db_path
+    ok, msg = approve(db_path=db)
+    if not ok:
+        raise HTTPException(409, msg)
+    out = snapshot(db)
+    out["message"] = msg
+    return out
+
+
+@app.post("/weights/evolve/rollback", response_model=dict, tags=["控制"],
+          dependencies=[Depends(require_control)])
+def weights_evolve_rollback():
+    """撤销活体权重覆盖,回到 config.SHADOW_WEIGHTS 基线。"""
+    from decision.weight_evolve import rollback, snapshot
+    db = _trader()._db_path
+    _, msg = rollback(db_path=db)
+    out = snapshot(db)
+    out["message"] = msg
+    return out
+
+
 @app.post("/pause", response_model=ControlOut, tags=["控制"],
            dependencies=[Depends(require_control)])
 def pause():
