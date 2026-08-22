@@ -257,12 +257,16 @@ class PositionMixin:
                                     f"名义不足最小张数(需 {min_qty} 币)")
             return None
         # 余额检查（曾发生 USDT 耗尽事故）
+        # 2026-08-23 修正: 合约按【保证金】检查,不是全额名义——
+        # 10x 杠杆下 BTC 0.01 合约只需 ~77 USDT 保证金,按 756 名义判拒是误杀
         try:
             usdt_free = self.exchange.fetch_balance().usdt_free
-            if usdt_free < qty * price:
-                print(f"⛔ 拒绝开仓 {base}: USDT 可用 {usdt_free:.0f} < 所需 {qty*price:.0f}")
+            margin_needed = qty * price / max(lev, 1)
+            if usdt_free < margin_needed:
+                print(f"⛔ 拒绝开仓 {base}: USDT 可用 {usdt_free:.0f} < "
+                      f"所需保证金 {margin_needed:.0f} ({lev}x)")
                 self._log_scan_decision(base, True, sig["dir"], "open_failed",
-                                        f"USDT 可用 {usdt_free:.0f} < 所需 {qty*price:.0f}")
+                                        f"USDT 可用 {usdt_free:.0f} < 保证金 {margin_needed:.0f}")
                 return None
         except Exception:
             pass

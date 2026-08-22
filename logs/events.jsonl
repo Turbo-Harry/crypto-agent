@@ -254,3 +254,8 @@
 {"ts": 1787421012.311, "type": "open", "payload": {"tid": "txn_1787421012_f0e1", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
 {"ts": 1787421012.508, "type": "open", "payload": {"tid": "txn_1787421012_314c", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
 {"ts": 1787421012.702, "type": "order_fail", "payload": {"base": "BTC", "inst_id": "BTC-USDT-SWAP", "side": "buy", "qty": 1.36, "stage": "open", "error": "模拟下单失败"}}
+{"ts": 1787421191.175, "type": "open", "payload": {"tid": "txn_1787421191_cc92", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.65942857142858, "tp": 112.23428571428572, "qty": 0.68, "lev": 3, "notional": 74.80000000000001}}
+{"ts": 1787421191.401, "type": "open", "payload": {"tid": "txn_1787421191_d10f", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
+{"ts": 1787421191.595, "type": "open", "payload": {"tid": "txn_1787421191_c0ec", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
+{"ts": 1787421191.783, "type": "order_fail", "payload": {"base": "BTC", "inst_id": "BTC-USDT-SWAP", "side": "buy", "qty": 1.36, "stage": "open", "error": "模拟下单失败"}}
+{"ts": 1787421192.371, "type": "open", "payload": {"tid": "txn_1787421192_6891", "symbol": "ANTHROPIC", "dir": "long", "entry": 180.0, "stop": 175.0, "tp": 190.0, "qty": 1.0, "lev": 3, "notional": 180.0}}
