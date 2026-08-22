@@ -219,6 +219,17 @@ class TraderWorker:
                     if time.time() - self._last_snapshot >= 60:
                         self._last_snapshot = time.time()
                         self._save_positions_snapshot()
+                    # 2026-08-23 消息面: 每小时刷新情感快照(决策门控用,
+                    # best-effort,失败保持旧快照)
+                    if time.time() - getattr(self, "_last_sentiment", 0) >= 3600:
+                        self._last_sentiment = time.time()
+                        try:
+                            from decision.sentiment import fetch_sentiment
+                            snap = fetch_sentiment()
+                            print(f"[sentiment] composite={snap.get('composite')} "
+                                  f"F&G={snap.get('fng_value')}")
+                        except Exception:
+                            pass
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
                     # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。
                     if time.time() - getattr(self, "_last_reconcile_sweep", 0) >= 3600:

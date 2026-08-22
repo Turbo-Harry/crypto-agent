@@ -240,6 +240,12 @@ LIVE_CRED_FILE = "~/.crypto_live/okx_live.json"
 EXCHANGE_BACKEND = "ccxt"     # "ccxt" | "native"——引擎构造时选择适配器
                               # (切换需重启;ccxt 已在沙盘全链路冒烟通过)
 
+# ============ 消息面门控（2026-08-23 用户要求'系统加消息面判断'） ============
+SENTIMENT_GATE_ENABLED = True  # 情感门控开关(决策层读 kv 快照,无数据放行)
+SENTIMENT_GREED_CAP = 80       # F&G ≥ 此值 → 拒绝新开多(不追过热顶)
+SENTIMENT_FEAR_FLOOR = 20      # F&G ≤ 此值 → 拒绝新开空(不空恐慌底)
+SENTIMENT_REFRESH_HOURS = 1    # worker 每小时刷新一次情感快照
+
 # ============ 热重载机制（2026-08-21 用户要求'配置动态读取'） ============
 # 改 config.py 保存后,引擎下一拍(≤1s,worker tick 调用 maybe_reload)
 # 自动生效,无需重启。机制: mtime 变化时把本文件重新 exec 进本模块

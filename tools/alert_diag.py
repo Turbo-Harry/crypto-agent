@@ -84,6 +84,9 @@ def build_diagnostics(db=None):
         parts.append("异常中心最新状态(含处置说明):\n" + "\n".join(
             f"- [{r['status']}] {r['source']}: {r['title']} → {r['detail']}"
             for r in an))
+    se = _q(db, "SELECT value FROM kv WHERE key='sentiment_latest'")
+    if se:
+        parts.append("最新消息面情感: " + se[0]["value"][:300])
     ru = _q(db, "SELECT symbol, category, conditions, strength, member_count "
                 "FROM lesson_rollups ORDER BY strength DESC LIMIT 5")
     if ru:

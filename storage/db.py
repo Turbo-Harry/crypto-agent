@@ -89,6 +89,12 @@ CREATE TABLE IF NOT EXISTS combo_trials (
 );
 CREATE INDEX IF NOT EXISTS idx_combo_sig ON combo_trials(signature);
 
+-- 消息面情感快照(2026-08-23 用户要求'系统加消息面判断')
+CREATE TABLE IF NOT EXISTS sentiment_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, composite REAL, fng_value REAL, news_score REAL, detail TEXT
+);
+
 CREATE TABLE IF NOT EXISTS thresholds (
     key TEXT PRIMARY KEY,          -- "dir" / "arb"
     threshold REAL, records TEXT,  -- records: JSON 数组（score→pnl 样本）

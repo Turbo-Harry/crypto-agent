@@ -48,6 +48,34 @@ class SelfEvolvingTrader:
                 f"信号分 {signal_score} < {config.DECIDE_MIN_SCORE}")
             return decision
 
+        # 1.5 消息面门控（2026-08-23 用户要求"系统加消息面判断"）:
+        # F&G 过热不追多(轧空顶),极度恐慌不空(恐慌底)。读 kv 快照零网络,
+        # 无数据/过期自动放行;direction 由 conditions.direction 判定。
+        try:
+            if config.SENTIMENT_GATE_ENABLED:
+                from decision.sentiment import latest_sentiment
+                _raw_bank0 = getattr(self.bank, "bank", self.bank)
+                _dbp = getattr(_raw_bank0, "db_path", None)
+                sent = latest_sentiment(db_path=_dbp)
+                if sent and sent.get("fng_value") is not None:
+                    _dir = (conditions or {}).get("direction")
+                    if (_dir == "long"
+                            and sent["fng_value"] >= config.SENTIMENT_GREED_CAP):
+                        decision["trade"] = False
+                        decision["reason"].append(
+                            f"消息面过热 F&G={sent['fng_value']:.0f}≥"
+                            f"{config.SENTIMENT_GREED_CAP},不追多")
+                        return decision
+                    if (_dir == "short"
+                            and sent["fng_value"] <= config.SENTIMENT_FEAR_FLOOR):
+                        decision["trade"] = False
+                        decision["reason"].append(
+                            f"消息面恐慌 F&G={sent['fng_value']:.0f}≤"
+                            f"{config.SENTIMENT_FEAR_FLOOR},不追空")
+                        return decision
+        except Exception:
+            pass
+
         # 2. 查经验库：该币种【同环境】历史教训（regime 匹配,2026-08-17）
         relevant = self.bank.relevant(symbol=symbol, conditions=conditions)
         if relevant:

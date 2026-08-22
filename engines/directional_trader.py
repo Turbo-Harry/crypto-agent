@@ -165,7 +165,10 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 2026-08-22 实盘快照: 只在启动时读取,运行中改 config.LIVE_MODE
         # 不会切换真实/模拟(防意外真钱交易)。实盘还需凭证文件存在。
         import config as _c
-        self.live_mode = bool(_c.LIVE_MODE)
+        # 2026-08-23: 实盘判定 = LIVE_MODE + 真实交易所适配器 + 凭证存在。
+        # fake/测试适配器(name != okx*)永远不进实盘口径(测试隔离)。
+        _ad_name = getattr(self.exchange, "name", "")
+        self.live_mode = bool(_c.LIVE_MODE) and _ad_name in ("okx", "okx-ccxt")
         if self.live_mode:
             import os as _os
             if not _os.path.exists(_os.path.expanduser(_c.LIVE_CRED_FILE)):
