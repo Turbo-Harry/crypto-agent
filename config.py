@@ -87,7 +87,7 @@ ARB_ROUNDTRIP_COST = 0.003   # 开+平 双向往返总成本占名义比例（�
 # 【风险红线不变】: 单笔 1% 风险 / 名义 ≤150 / 总敞口 ≤600 / 交易所侧止损。
 TRADE_BUDGET_BY_SCORE = [(0.7, 16), (0.5, 12), (0.3, 8), (0.0, 4)]  # (评分阈值, 允许笔数)
 DEFAULT_TRADE_BUDGET = 8      # 无评分（回退池）时的默认笔数
-SIGNAL_COOLDOWN_MINUTES = 30  # 同币信号冷却 30 分钟（激进第二档;原 180→60→30）
+SIGNAL_COOLDOWN_MINUTES = 0   # 同币信号冷却关闭(2026-08-23 用户指示)
 SCAN_INTERVAL_MINUTES = 5     # 信号扫描间隔（2026-08-21 用户指示 15→5 分钟）
 MTF_ENABLED = False           # 多周期共振过滤关闭（采集加速;tf4h_spread 特征已记录,可事后检验;可回滚 True）
 
