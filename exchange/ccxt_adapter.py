@@ -216,6 +216,13 @@ class CCXTAdapter(ExchangeAdapter):
                 continue
             info = p.get("info") or {}
             _base = (p.get("symbol") or "").split("/")[0]
+            # 2026-08-23 fix: 启动瞬间 markets 未加载完时,ccxt 可能把 OKX
+            # 原生 instId(LINK-USDT-SWAP)当 symbol 返回——base 就会带后缀,
+            # 再拼一次 → 'LINK-USDT-SWAP-USDT-SWAP' 双后缀快照(看板出现两条持仓)。
+            for _sfx in ("-USDT-SWAP", "-USDT"):
+                if _base.endswith(_sfx):
+                    _base = _base[:-len(_sfx)]
+                    break
             iid = inst_id or (f"{_base}-USDT-SWAP" if _base else "")
             ct_val = 1.0
             try:
