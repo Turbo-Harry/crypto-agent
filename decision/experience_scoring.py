@@ -35,6 +35,19 @@ import os
 import time
 
 
+def _wilson(p, n, z=0.5244, upper=False):
+    """Wilson score 区间(单侧 70% ≈ z=0.5244,2026-08-23 补理论依据):
+    小样本下比裸胜率稳健——晋升/弃用要看"胜率显著高于/低于 0.5",
+    而不是凑够验证次数。"""
+    import math
+    n = max(int(n), 1)
+    p = min(max(float(p), 0.0), 1.0)
+    denom = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return center + half if upper else center - half
+
+
 def _share_key_of(symbol, category, content, source_trade):
     """经验共享(2026-08-23): 内容身份哈希——两库 id 各自自增会撞车,
     跨库唯一身份用 内容+出处 的 sha1。"""
@@ -160,16 +173,28 @@ class ScoredExperience:
             self._sync_status(l)
 
     def _sync_status(self, l):
-        """状态由 分数+验证次数 决定：≥3次且≥60=trusted；≥3次且<40=discarded；
-        其余保持现状（unverified/candidate/dubious 在凑满 3 次独立验证前不动——
-        Phase0 T0.2：candidate 是打破死锁的采纳通道，不能被 40/60 规则提前改写）。"""
-        if l.get("adoptions", 0) >= 3:
-            if l["score"] >= 60:
-                l["status"] = "trusted"
-            elif l["score"] < 40:
-                l["status"] = "discarded"
-            else:
-                l["status"] = "unverified"
+        """状态由 分数 + 统计显著性 决定(2026-08-23 用户要求"补上理论依据"):
+        ±10 只是点估计,晋升/弃用必须过 Wilson 区间显著性检验——
+        trusted: 验证≥3次 且 分数≥60 且 胜率 Wilson 下界(单侧70%)>0.5
+                 (3/3 全胜 LB≈0.97 ✓;2胜2负 LB≈0.38 不晋升)
+        discarded: 验证≥3次 且 分数<40 且 胜率 Wilson 上界<0.5
+        (candidate/dubious 在凑满 3 次独立验证前保持原状——Phase0 T0.2 语义)。"""
+        if l.get("adoptions", 0) < 3:
+            return
+        good = int(l.get("good", 0) or 0)
+        bad = int(l.get("bad", 0) or 0)
+        n = good + bad
+        if n < 3:
+            return
+        p = good / n
+        lb = _wilson(p, n)
+        ub = _wilson(p, n, upper=True)
+        if l["score"] >= 60 and lb > 0.5:
+            l["status"] = "trusted"
+        elif l["score"] < 40 and ub < 0.5:
+            l["status"] = "discarded"
+        else:
+            l["status"] = "unverified"
 
     def _save(self):
         import storage.db as sdb

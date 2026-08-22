@@ -39,13 +39,14 @@ from strategy.indicators import ema, atr
 def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
                          atr_val, vol_last, vol_avg, funding_rate, book_imb,
                          direction, weights=None):
-    """信号影子连续分(0-100),2026-08-23 用户指示"维度太少了,加"后 3 维→6 维:
-      1. wick    拒绝K线强度(影线/实体,封顶3x)   — 28%
-      2. depth   回踩深度适中(贴EMA20/ATR)      — 27%
-      3. trend   1h 趋势离散度(EMA20-50 带宽)   — 20%
-      4. volume  量能确认(近N根均量比,封顶2x)   — 10%
-      5. funding 资金费顺风(多单负费率/空单正)  — 5%
-      6. book    盘口失衡(前10档,方向对齐)      — 10%
+    """信号影子连续分(0-100),2026-08-23 用户指示"维度太少了,加"后 3 维→6 维,
+    权重按文献证据强度排序的先验(config.SHADOW_WEIGHTS,权重进化再按 IC 校正):
+      1. wick    拒绝K线强度(影线/实体,封顶3x)   — 15% (形态本体,弱证据)
+      2. depth   回踩深度适中(贴EMA20/ATR)      — 16% (业界共识)
+      3. trend   1h 趋势离散度(EMA20-50 带宽)   — 20% (动量,强证据)
+      4. volume  量能确认(近N根均量比,封顶2x)   — 12% (量价,效应弱但真实)
+      5. funding 资金费顺风(多单负费率/空单正)  — 15% (拥挤度,中证据)
+      6. book    盘口失衡(前10档,方向对齐)      — 22% (微观结构,最强证据)
     数据缺失的维度取 0.5 中性,不污染总分;权重和必须=1.0(config.SHADOW_WEIGHTS)。
     纯函数(无 IO),便于单元测试与回放。
     返回 (score, dims): dims 为 6 维子分 dict(权重进化证据采集用)。"""
