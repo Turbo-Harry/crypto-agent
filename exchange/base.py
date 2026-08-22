@@ -44,6 +44,11 @@ class ExchangeAdapter(ABC):
     def fetch_ticker_last(self, inst_id: str) -> float:
         """最新成交价。"""
 
+    def fetch_order_book(self, inst_id: str, depth: int = 10) -> Optional[dict]:
+        """盘口(2026-08-23 信号评分第6维): {"bids":[[价,量]...],"asks":[[价,量]...]}
+        或 None(取不到)。非 abstract——旧实现可缺省返回 None(评分取中性)。"""
+        return None
+
     @abstractmethod
     def fetch_funding_rate(self, inst_id: str) -> float:
         """当前资金费率（每 8 小时，swap）。"""

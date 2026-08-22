@@ -150,6 +150,17 @@ class CCXTAdapter(ExchangeAdapter):
         except Exception:
             return 0.0
 
+    def fetch_order_book(self, inst_id: str, depth: int = 10) -> Optional[dict]:
+        """盘口(2026-08-23 信号评分第6维): 前 depth 档买一/卖一深度。"""
+        self._load()
+        try:
+            ob = self._ccxt.fetch_order_book(self._to_ccxt_symbol(inst_id),
+                                             limit=depth)
+            return {"bids": [[float(b[0]), float(b[1])] for b in (ob.get("bids") or [])],
+                    "asks": [[float(a[0]), float(a[1])] for a in (ob.get("asks") or [])]}
+        except Exception:
+            return None
+
     def fetch_tickers(self, venue: str = "swap") -> List[TickerInfo]:
         self._load()
         try:

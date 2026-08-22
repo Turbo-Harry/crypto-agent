@@ -35,6 +35,60 @@ def _refresh_config():
 
 from strategy.indicators import ema, atr
 
+
+def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
+                         atr_val, vol_last, vol_avg, funding_rate, book_imb,
+                         direction):
+    """信号影子连续分(0-100),2026-08-23 用户指示"维度太少了,加"后 3 维→6 维:
+      1. wick    拒绝K线强度(影线/实体,封顶3x)   — 28%
+      2. depth   回踩深度适中(贴EMA20/ATR)      — 27%
+      3. trend   1h 趋势离散度(EMA20-50 带宽)   — 20%
+      4. volume  量能确认(近N根均量比,封顶2x)   — 10%
+      5. funding 资金费顺风(多单负费率/空单正)  — 5%
+      6. book    盘口失衡(前10档,方向对齐)      — 10%
+    数据缺失的维度取 0.5 中性,不污染总分;权重和必须=1.0(config.SHADOW_WEIGHTS)。
+    纯函数(无 IO),便于单元测试与回放。"""
+    w = config.SHADOW_WEIGHTS
+    try:
+        wick_s = min(wick / body, 3.0) / 3.0 if body > 0 else 0.0
+        depth_s = (max(0.0, 1.0 - abs(price_near_ema - ema20_val) / atr_val)
+                   if atr_val and atr_val > 0 else 0.0)
+        trend_s = (min(abs(ema20_val - ema50_val) / (ema50_val * 0.02), 1.0)
+                   if ema50_val else 0.0)
+        vol_s = (min(vol_last / max(vol_avg, 1e-12), 2.0) / 2.0
+                 if vol_last and vol_avg else 0.5)
+        if funding_rate is None:
+            fund_s = 0.5
+        else:
+            sign = 1.0 if direction == "long" else -1.0
+            fund_s = max(0.0, min(1.0, 0.5 - sign * float(funding_rate) / 0.001))
+        if book_imb is None:
+            book_s = 0.5
+        else:
+            imb = max(-1.0, min(1.0, float(book_imb)))
+            book_s = (imb if direction == "long" else -imb) / 2 + 0.5
+        score = 100 * (w.get("wick", 0) * wick_s + w.get("depth", 0) * depth_s
+                       + w.get("trend", 0) * trend_s + w.get("volume", 0) * vol_s
+                       + w.get("funding", 0) * fund_s + w.get("book", 0) * book_s)
+        return round(score, 1)
+    except Exception:
+        return None
+
+
+def _book_imbalance(book, depth=10):
+    """盘口失衡(2026-08-23): (买深度−卖深度)/(买+卖),[-1,1];正=买盘厚。"""
+    if not book:
+        return None
+    bids = book.get("bids") or []
+    asks = book.get("asks") or []
+    if not bids or not asks:
+        return None
+    b = sum(x[1] for x in bids[:depth])
+    a = sum(x[1] for x in asks[:depth])
+    if b + a <= 0:
+        return None
+    return (b - a) / (b + a)
+
 # 参数别名（统一维护于 config.py,本模块不私藏数值）
 
 
@@ -93,18 +147,31 @@ class SignalScanMixin:
         if entry_ref is None:
             entry_ref = last["close"]
 
-        def _shadow(price_near_ema, wick):
-            """Phase 1 T1.3 影子连续分（0-100，只记录、不进决策——阈值逻辑零改动）:
-            拒绝K线强度 34% + 回踩深度适中 33% + 1h 趋势离散度 33%。
-            同时采集轻量 regime 标签（T1.4:波动率分位+趋势斜率,不用 HMM）。"""
+        def _shadow(price_near_ema, wick, direction):
+            """影子连续分(0-100): 6 维加权(2026-08-23 用户指示'维度太少了,加')。
+            量能/资金费/盘口三个新维度只在信号命中时惰性拉取(信号稀疏,成本低);
+            取不到→该维中性 0.5,不污染总分。"""
             try:
-                wick_s = min(wick / body, 3.0) / 3.0 if body > 0 else 0.0
-                depth_s = (max(0.0, 1.0 - abs(price_near_ema - ema20[-1]) / atr_val)
-                           if atr_val and atr_val > 0 else 0.0)
-                trend_s = (min(abs(ema20[-1] - ema50[-1]) / (ema50[-1] * 0.02), 1.0)
-                           if ema50[-1] else 0.0)
-                score = round(100 * (0.34 * wick_s + 0.33 * depth_s
-                                     + 0.33 * trend_s), 1)
+                vol_last = last.get("volume") or 0
+                vols = [k.get("volume") or 0
+                        for k in klines[-config.SHADOW_VOL_LOOKBACK - 1:-1]]
+                vol_avg = sum(vols) / len(vols) if vols else 0
+                funding = None
+                book_imb = None
+                try:
+                    funding = self.exchange.fetch_funding_rate(
+                        self._inst_id(base))
+                except Exception:
+                    pass
+                try:
+                    _book = self.exchange.fetch_order_book(
+                        self._inst_id(base), config.SHADOW_BOOK_DEPTH)
+                    book_imb = _book_imbalance(_book, config.SHADOW_BOOK_DEPTH)
+                except Exception:
+                    pass
+                score = compute_shadow_score(
+                    wick, body, price_near_ema, ema20[-1], ema50[-1], atr_val,
+                    vol_last, vol_avg, funding, book_imb, direction)
                 reg = None
                 try:
                     from engines.feature_collector import compute_regime
@@ -129,7 +196,7 @@ class SignalScanMixin:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != 1:
                     return None
-                score, regime = _shadow(last["low"], lower_wick)
+                score, regime = _shadow(last["low"], lower_wick, "long")
                 return {"dir": "long", "entry": entry_ref,
                         "stop": entry_ref - config.STOP_ATR_MULT * atr_val,
                         "tp": entry_ref + config.TP_ATR_MULT * atr_val,
@@ -142,7 +209,7 @@ class SignalScanMixin:
                 # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
                 if MTF_ENABLED and tf4h_trend != -1:
                     return None
-                score, regime = _shadow(last["high"], upper_wick)
+                score, regime = _shadow(last["high"], upper_wick, "short")
                 return {"dir": "short", "entry": entry_ref,
                         "stop": entry_ref + config.STOP_ATR_MULT * atr_val,
                         "tp": entry_ref - config.TP_ATR_MULT * atr_val,

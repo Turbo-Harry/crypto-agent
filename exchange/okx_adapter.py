@@ -155,6 +155,20 @@ class OKXAdapter(ExchangeAdapter):
             raise ExchangeError(f"funding-rate 无数据: {inst_id}")
         return float(data[0].get("fundingRate") or 0)
 
+    def fetch_order_book(self, inst_id: str, depth: int = 10) -> Optional[dict]:
+        """盘口(2026-08-23 信号评分第6维)。"""
+        try:
+            resp = self.t.public("/api/v5/market/books",
+                                 {"instId": inst_id, "sz": min(int(depth), 400)})
+            rows = resp.get("data") or []
+            bids, asks = [], []
+            for r in rows:
+                px, sz = float(r[0]), float(r[1])
+                (bids if float(r[3]) > 0 else asks).append([px, sz])
+            return {"bids": bids, "asks": asks}
+        except Exception:
+            return None
+
     def fetch_tickers(self, venue: str = "swap") -> List[TickerInfo]:
         """全市场 ticker。SWAP volCcy24h 是币本位 → × last 才是 USDT
         （pitfalls 2026-08-20 ANTHROPIC 每天被误杀的根因，归一必须在适配层）。"""
