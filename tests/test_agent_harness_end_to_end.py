@@ -5,6 +5,7 @@ from decision.agent_contracts import AgentInput, FinalAction, HarnessConfig, Run
 from decision.agent_harness import run_harness
 from decision.agent_policy import PolicyKernel
 from decision.agent_tools import ReadOnlyToolRouter, snapshot_tools
+from decision.agent_judge import harness_judge
 from storage import db
 
 
@@ -81,6 +82,16 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
             db_path=self.path)
         self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
         self.assertEqual(db.q1("SELECT count(*) AS n FROM agent_steps", db_path=self.path)["n"], 5)
+
+    def test_legacy_entry_can_use_explicit_harness_callback(self):
+        result = harness_judge(
+            {"dir": "long", "stop": 95, "tp": 110}, "BTC", 60, 100, {},
+            model_call=lambda prompt: {"verdict": "reject", "risk_probability": .9,
+                                        "confidence": .8, "reason_codes": ["liquidity_failure"],
+                                        "evidence_ids": ["market:1"], "reason": "spread"},
+            db_path=self.path)
+        self.assertEqual(result.run.final_action.value, "shadow_reject")
+        self.assertFalse(result.policy.veto)
 
 
 if __name__ == "__main__":

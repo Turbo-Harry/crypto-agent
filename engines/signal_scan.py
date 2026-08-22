@@ -385,15 +385,31 @@ class SignalScanMixin:
                     ai_jid = None
                     if getattr(config, "AGENT_JUDGE_ENABLED", False):
                         try:
-                            from decision.agent_judge import judge
                             from decision.sentiment import latest_sentiment
                             _sent = latest_sentiment(
                                 db_path=getattr(self, "_db_path", None))
-                            verdict, ai_reason, ai_jid = judge(
-                                sig=sig, base=base,
-                                score=sig.get("shadow_score") or SIGNAL_SCORE,
-                                price=sig.get("entry"), sentiment=_sent,
-                                db_path=getattr(self, "_db_path", None))
+                            # Harness is opt-in at the call boundary: callers
+                            # must inject a model callback explicitly. This
+                            # prevents a new structured-context egress while
+                            # retaining the legacy provider for existing runs.
+                            _harness_call = getattr(self, "agent_model_call", None)
+                            if getattr(config, "AGENT_HARNESS_ENABLED", False) and _harness_call:
+                                from decision.agent_judge import harness_judge
+                                _hr = harness_judge(
+                                    sig=sig, base=base,
+                                    score=sig.get("shadow_score") or SIGNAL_SCORE,
+                                    price=sig.get("entry"), sentiment=_sent,
+                                    model_call=_harness_call,
+                                    db_path=getattr(self, "_db_path", None))
+                                ai_reason = _hr.policy.reason
+                                verdict = "reject" if _hr.policy.veto else "approve"
+                            else:
+                                from decision.agent_judge import judge
+                                verdict, ai_reason, ai_jid = judge(
+                                    sig=sig, base=base,
+                                    score=sig.get("shadow_score") or SIGNAL_SCORE,
+                                    price=sig.get("entry"), sentiment=_sent,
+                                    db_path=getattr(self, "_db_path", None))
                         except Exception:
                             verdict = "approve"   # AI 异常 → 放行
                     if verdict == "reject":
