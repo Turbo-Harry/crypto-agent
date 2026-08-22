@@ -164,6 +164,15 @@
 
 ## 6. 分阶段实施计划
 
+### 6.0 当前落地进度（2026-08-23）
+
+- H0 已落地：`decision/agent_contracts.py` 定义严格输入/输出/运行状态/最终动作契约；`tests/test_agent_contracts.py` 覆盖范围校验、拒绝证据和 fail-closed 策略。
+- H1 已落地：`storage/db.py` 追加 v12 迁移；`storage/agent_harness.py` 提供幂等 run、step trace、evaluation 写入与只读查询。
+- H2 已落地：`decision/agent_context.py` 固定上下文区段、显式缺失字段、大小预算和稳定 hash。
+- 证据：10 项 Harness 离线单测通过；`python3 tools/ai_repo_check.py` 通过；尚未接入真实交易链，也未改变任何交易参数或下单路径。
+
+对应提交：`1b5b3f3`（H0）、`f5cb357`（H1）、`2fdbe54`（H2）。
+
 ### H0：冻结基线与契约
 
 范围：
