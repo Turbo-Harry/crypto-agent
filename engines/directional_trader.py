@@ -423,6 +423,16 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         """方向中文标签: long→开多, short→开空(2026-08-18 用户要求通知可见方向)。"""
         return "开多" if direction == "long" else "开空"
 
+    def effective_threshold(self):
+        """实盘决策阈值(2026-08-23 用户指示'实盘阈值上调到40'):
+        实盘实例在自适应阈值之上再设 40 分下限(真金更挑信号);
+        模拟盘保持激进,直接用学习器阈值。阈值学习/策略同步照常合并,
+        下限只在决策门处生效。"""
+        base = self.threshold_learner.threshold
+        if getattr(self, "live_mode", False):
+            return max(base, getattr(config, "LIVE_THRESHOLD_FLOOR", 40))
+        return base
+
     def tick(self, run_monitor=True):
         """单拍主循环体（服务模式由 service/worker 线程调用；独立模式由 run() 调用）。
         包含：心跳、每分钟账户风控、2s 止损监控、15min 信号扫描。

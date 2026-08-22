@@ -244,11 +244,16 @@ class SignalScanMixin:
                     gate_score = sig.get("shadow_score")
                     if gate_score is None:
                         gate_score = SIGNAL_SCORE
-                if gate_score < self.threshold_learner.threshold:
-                    print(f"{base}: 信号分 {gate_score} < 自适应阈值 "
-                          f"{self.threshold_learner.threshold}，观望")
+                # 2026-08-23 用户指示"实盘阈值上调到40": 实盘按真实信号分
+                # (shadow_score 0-100)卡 effective_threshold(≥40),只做强信号;
+                # 模拟盘保持激进,原逻辑不变(SIGNAL_SCORE 平级卡学习器阈值)。
+                if getattr(self, "live_mode", False):
+                    gate_score = sig.get("shadow_score") or SIGNAL_SCORE
+                _thr = self.effective_threshold()
+                if gate_score < _thr:
+                    print(f"{base}: 信号分 {gate_score} < 决策阈值 {_thr}，观望")
                     self._log_scan_decision(base, True, sig["dir"], "reject",
-                                            f"信号分 {gate_score} < 阈值 {self.threshold_learner.threshold}")
+                                            f"信号分 {gate_score} < 阈值 {_thr}")
                     continue
                 # 决策（经验库，统一 ScoredExperience — B6）
                 dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0,
@@ -371,7 +376,7 @@ class SignalScanMixin:
             sdb.x("INSERT INTO scan_decisions (ts, base, venue, has_signal, direction, "
                   "threshold, decision, reason) VALUES (?,?,?,?,?,?,?,?)",
                   [time.time(), base, self.exchange.venue_for(base), 1 if has_signal else 0,
-                   direction or "", self.threshold_learner.threshold, decision, reason],
+                   direction or "", self.effective_threshold(), decision, reason],
                   db_path=self._db_path)
         except Exception:
             pass

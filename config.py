@@ -107,6 +107,10 @@ MTF_ENABLED = False           # 多周期共振过滤关闭（采集加速;tf4h_
 SIGNAL_SCORE = 30            # 回踩确认信号基础分（2026-08-21 用户放宽: 80→50→40→30）
 DECIDE_MIN_SCORE = 30        # 决策层最低信号分（与 SIGNAL_SCORE 联动）
 THRESHOLD_INITIAL = 25       # 阈值学习层初始阈值（联动约束: < DECIDE_MIN_SCORE）
+# 2026-08-23 用户指示"实盘阈值上调到40": 实盘实例决策阈值下限——
+# 有效阈值 = max(学习器阈值, 40),真金更挑信号;模拟盘保持激进(25)。
+# 阈值学习/策略同步照常,下限只在实盘决策门生效(热重载秒生效)。
+LIVE_THRESHOLD_FLOOR = 40
 REJECT_WICK_RATIO = 1.0      # 拒绝K线: 影线/实体 最小比（激进第二档 1.5→1.0,信号更多）
 STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR
 TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比）

@@ -153,7 +153,7 @@ def status():
                                   risk_usdt=x.get("risk_usdt")) for x in open_trades],
         risk_halted=not t.risk.can_trade(),
         risk_reason=t.risk.halt_reason,
-        decision_threshold=t.threshold_learner.threshold,
+        decision_threshold=t.effective_threshold(),
         today_trade_count=today_n,
         total_notional_usdt=round(total_notional, 2),
         open_notional_usdt=round(open_notional, 2),

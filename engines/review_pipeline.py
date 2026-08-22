@@ -169,7 +169,7 @@ class ReviewMixin:
                f"原因：{exit_reason_short}\n"
                f"复盘 {len(lessons)} 条新经验（待验证）· "
                f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条\n"
-               f"当前阈值 {self.threshold_learner.threshold}{live_line}")
+               f"当前阈值 {self.effective_threshold()}{live_line}")
         try:
             from service.events import log_event
             log_event("close", {"tid": t.get("id"), "symbol": base,
