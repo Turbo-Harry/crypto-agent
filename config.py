@@ -238,7 +238,7 @@ LIVE_HARD_STOP_USDT = 30      # 累计实亏达 30 USDT(预算30%) → 自动停
 LIVE_LEVERAGE_MAP = {"BTC": 10, "ETH": 10}
 # BTC/ETH 的名义上限=最小合约名义(BTC 0.01≈680 / ETH 0.01≈25),
 # 覆盖 10 USDT 通用上限——否则永远买不起最小张数
-LIVE_SPECIAL_NOTIONAL = {"BTC": 680, "ETH": 25}
+LIVE_SPECIAL_NOTIONAL = {"BTC": 680, "ETH": 230}
 LIVE_CRED_FILE = "~/.crypto_live/okx_live.json"
 
 # ============ 交易所适配后端（2026-08-22 用户指示"用 ccxt 交易库"） ============

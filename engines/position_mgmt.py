@@ -226,8 +226,10 @@ class PositionMixin:
             # BTC/ETH 特殊名义: 1 USDT 风险算出的数量 < 最小合约时,
             # 用最小合约数兜底(用户指示 10x 交易 BTC/ETH——实际单笔风险
             # 随之放大到 ~2-3 USDT,仍在 30 USDT 硬止损内)
-            if base in config.LIVE_SPECIAL_NOTIONAL and inst.min_sz > 0:
-                qty = max(qty, inst.min_sz * inst.ct_val)
+            if base in config.LIVE_SPECIAL_NOTIONAL:
+                # 最小可买 = 1 合约(floor 对齐粒度),不是 min_sz×ct_val
+                # (BTC 0.01 合约粒度 → 0.01 BTC;ETH 0.1 ETH)
+                qty = max(qty, inst.ct_val)
         else:
             qty = (self.exchange.fetch_balance().usdt_total * RISK_PER_TRADE) / (price * stop_dist)
             qty = min(qty, config.MAX_NOTIONAL_PER_TRADE / price)  # 小仓位：名义上限(config)
