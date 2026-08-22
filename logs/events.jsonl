@@ -214,3 +214,7 @@
 {"ts": 1787417936.855, "type": "close", "payload": {"tid": "txn_1787417936_83e1", "symbol": "BTC", "dir": "long", "pnl_usdt": -10.1, "pnl_pct": -0.016031746031746032, "reason": "止损", "lessons": 3}}
 {"ts": 1787417937.024, "type": "open", "payload": {"tid": "txn_1787417937_7684", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 0.68, "lev": 3, "notional": 74.80000000000001}}
 {"ts": 1787417937.406, "type": "close", "payload": {"tid": "txn_1787417937_08df", "symbol": "BTC", "dir": "long", "pnl_usdt": -0.03, "pnl_pct": -0.03, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787418033.484, "type": "close", "payload": {"tid": "txn_1787395179_dc20", "symbol": "XRP", "dir": "long", "pnl_usdt": -1.06, "pnl_pct": -0.0070728142136904084, "reason": "对账:交易所无持仓,闭环台账", "lessons": 2}}
+{"ts": 1787418035.858, "type": "close", "payload": {"tid": "txn_1787395478_9122", "symbol": "DOGE", "dir": "long", "pnl_usdt": 2.21, "pnl_pct": 0.014829570606463125, "reason": "对账:交易所无持仓,闭环台账", "lessons": 3}}
+{"ts": 1787418038.55, "type": "close", "payload": {"tid": "txn_1787402155_049a", "symbol": "BNB", "dir": "long", "pnl_usdt": 0.36, "pnl_pct": 0.0024456912674434353, "reason": "对账:交易所无持仓,闭环台账", "lessons": 3}}
+{"ts": 1787418040.886, "type": "close", "payload": {"tid": "txn_1787404344_445e", "symbol": "SOL", "dir": "long", "pnl_usdt": 0.72, "pnl_pct": 0.004791821957193088, "reason": "对账:交易所无持仓,闭环台账", "lessons": 2}}
