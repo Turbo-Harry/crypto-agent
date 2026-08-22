@@ -69,6 +69,17 @@ PYTHONPATH=lib python3 -m service.main --port 8090
 - 实盘盈亏从基线净值起算（kv `live_pnl_start`），平仓只累计 venue=live 的交易；模拟盘延续历史统计
 - 数据看板（8899）右上角可切换 模拟盘/实盘 视图
 
+### 经验共享（2026-08-23 用户指示"经验共享"）
+
+两实例的教训库（lessons + lesson_rollups）互相镜像：
+
+- 教训以内容哈希 `share_key` 为跨库唯一身份（两库自增 id 会撞车，不依赖 id）
+- 每条教训由**产生它的实例**独占验证（origin='local'）；对端只读镜像（origin='peer'），`validate()` 跳过镜像行，防 good/bad 双重计数
+- 同步时机：引擎启动时 + 每小时（`EXPERIENCE_SHARE_INTERVAL_HOURS`），双向 = 各拉对方
+- 镜像带 `last_update` 前进条件，对端旧镜像不会回滚本地新状态
+- 决策聚合（evidence_strength）对镜像教训按 `EXPERIENCE_PEER_WEIGHT` 加权（默认 1.0 等权）
+- 效果：模拟盘激进采集 → 验证为 trusted 的教训自动流入实盘决策；实盘真金验证的教训回流模拟盘
+
 ## 目录结构（分层）
 
 ```
