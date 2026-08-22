@@ -382,16 +382,18 @@ class SignalScanMixin:
                     # DeepSeek 二判。只否决不放行——reject 才拦,其余一律继续。
                     verdict = "approve"
                     ai_reason = ""
+                    ai_jid = None
                     if getattr(config, "AGENT_JUDGE_ENABLED", False):
                         try:
                             from decision.agent_judge import judge
                             from decision.sentiment import latest_sentiment
                             _sent = latest_sentiment(
                                 db_path=getattr(self, "_db_path", None))
-                            verdict, ai_reason = judge(
+                            verdict, ai_reason, ai_jid = judge(
                                 sig=sig, base=base,
                                 score=sig.get("shadow_score") or SIGNAL_SCORE,
-                                price=sig.get("entry"), sentiment=_sent)
+                                price=sig.get("entry"), sentiment=_sent,
+                                db_path=getattr(self, "_db_path", None))
                         except Exception:
                             verdict = "approve"   # AI 异常 → 放行
                     if verdict == "reject":
@@ -415,6 +417,12 @@ class SignalScanMixin:
                         size_factor=dec.get("size_factor", 1.0),
                         adopted_ids=dec.get("adopted_lesson_ids", []))
                     if tid:
+                        try:
+                            from decision.agent_judge import bind_trade
+                            bind_trade(ai_jid, tid,
+                                       db_path=getattr(self, "_db_path", None))
+                        except Exception:
+                            pass
                         self._log_scan_decision(base, True, sig["dir"], "open",
                                                 reason)
                     # 未成交: open_position 已记 reject_* / open_failed,此处不补 open

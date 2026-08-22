@@ -147,6 +147,12 @@ AGENT_JUDGE_API_URL = "https://api.deepseek.com/chat/completions"
 AGENT_JUDGE_MODEL = "deepseek-chat"
 AGENT_JUDGE_TIMEOUT_SECONDS = 20        # 单次判断超时(信号稀疏,阻塞可控)
 AGENT_JUDGE_TEMPERATURE = 0.2           # 低温度: 判断要稳,不要创作
+# AI 记忆(2026-08-23 用户问"AI会学习历史经验吗"): 每次把关把判断+后续结果
+# 落 ai_judgments,下次判断把带结果的旧案例和该币教训回喂给 AI(RAG 式学习)。
+AGENT_JUDGE_MEMORY_ENABLED = True       # 开关
+AGENT_JUDGE_MEMORY_EXAMPLES = 3         # 回喂的带结果旧案例条数
+AGENT_JUDGE_MEMORY_MIN_HOURS = 24       # 只用 ≥24h 前的判断(结果已沉淀)
+AGENT_JUDGE_LESSONS_TOP = 3             # 回喂的该币 trusted/discarded 教训条数
 # 预测机制(2026-08-23 用户要求"最好能有预测机制"): 1h 对数收益 bootstrap
 # 价格分布 + 触达概率,与历史同向信号实证命中率混合;平仓后自动校准(Brier)。
 FORECAST_ENABLED = True                 # 开关

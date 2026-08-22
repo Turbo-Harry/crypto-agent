@@ -207,6 +207,13 @@ CREATE TABLE IF NOT EXISTS trade_features (
 CREATE INDEX IF NOT EXISTS idx_tf_symbol_ts ON trade_features(symbol, entry_ts);
 
 -- Phase 3 试验注册表（每次参数/规则变更提案必入账;多重检验与 PBO/DSR 证据）
+CREATE TABLE IF NOT EXISTS ai_judgments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, base TEXT, direction TEXT, score REAL, entry_price REAL,
+    verdict TEXT, reason TEXT, trade_id TEXT,
+    outcome_pnl REAL, outcome_ts REAL
+);
+
 CREATE TABLE IF NOT EXISTS forecast_calibration (
     trade_id TEXT PRIMARY KEY,
     ts REAL, p_hit_tp REAL, p_hit_sl REAL,
@@ -435,6 +442,16 @@ def _migrate_v10_forecast(conn):
                  "pnl REAL)")
 
 
+def _migrate_v11_ai_memory(conn):
+    """v11: AI 记忆(2026-08-23 用户问'AI会学习历史经验吗')——
+    ai_judgments 表存每次把关判断+后续结果,下次判断时作为案例回喂 AI。"""
+    conn.execute("CREATE TABLE IF NOT EXISTS ai_judgments ("
+                 "id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, "
+                 "base TEXT, direction TEXT, score REAL, entry_price REAL, "
+                 "verdict TEXT, reason TEXT, trade_id TEXT, "
+                 "outcome_pnl REAL, outcome_ts REAL)")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -447,6 +464,7 @@ MIGRATIONS = (
     (8, _migrate_v8_shadow_dims),
     (9, _migrate_v9_trade_targets),
     (10, _migrate_v10_forecast),
+    (11, _migrate_v11_ai_memory),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

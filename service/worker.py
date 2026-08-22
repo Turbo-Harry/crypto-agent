@@ -283,6 +283,19 @@ class TraderWorker:
                                 notify(f"⚖️ 权重进化·{_st}\n{_msg}")
                         except Exception:
                             pass
+                    # 2026-08-23 AI 记忆: 给满24h的被否决判断回填结果
+                    if getattr(config, "AGENT_JUDGE_MEMORY_ENABLED", False) \
+                            and time.time() - getattr(self, "_last_ai_sweep", 0) \
+                            >= 3600:
+                        self._last_ai_sweep = time.time()
+                        try:
+                            from decision.agent_judge import sweep_outcomes
+                            _n = sweep_outcomes(self.exchange,
+                                                db_path=t._db_path)
+                            if _n:
+                                print(f"[AI记忆] 回填 {_n} 条被否决判断的结果")
+                        except Exception:
+                            pass
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
                     # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。
                     if time.time() - getattr(self, "_last_reconcile_sweep", 0) >= 3600:

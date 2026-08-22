@@ -206,6 +206,13 @@ class ReviewMixin:
                            db_path=self._db_path)
         except Exception:
             pass
+        # 2026-08-23 AI 记忆: 平仓回填把关判断的实际结果(AI 学自己拦对没有)
+        try:
+            from decision.agent_judge import record_trade_outcome
+            record_trade_outcome(t.get("id"), closed.get("pnl"),
+                                 db_path=self._db_path)
+        except Exception:
+            pass
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
         sign = "+" if net_pnl >= 0 else ""
         fee_line = (f"\n手续费 {fees_paid:.4f} · 资金费 {funding_paid:.4f}"
