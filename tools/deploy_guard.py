@@ -73,7 +73,7 @@ def predeploy():
     重启盲窗 2-3 分钟,平仓临界时刻的盲窗会错过离场。"""
     import sqlite3
     ex = _exchange()
-    db = sqlite3.connect(os.path.join(ROOT, "crypto_agent.db"))
+    db = sqlite3.connect(os.path.join(ROOT, os.environ.get("CRYPTO_AGENT_DB") or "crypto_agent.db"))
     db.row_factory = sqlite3.Row
     dangers = []
     for t in db.execute("SELECT * FROM trades WHERE status='open'"):

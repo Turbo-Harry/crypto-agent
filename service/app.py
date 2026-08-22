@@ -116,24 +116,26 @@ def status():
     today_notional = sum(notional(x) for x in t.journal.trades
                          if x.get("entry_time")
                          and time.strftime("%Y-%m-%d", time.localtime(x["entry_time"])) == today)
-    # 实盘盈亏（2026-08-23 用户指示"重新开始计盈亏"）：基线净值 kv 起算
+    # 实盘盈亏（2026-08-23 用户指示"重新开始计盈亏"）：基线净值 kv 起算。
+    # 仅实盘实例展示(模拟盘实例 live_mode=False,不显示实盘盈亏字段)。
     live_real, live_eq_pnl, live_start_eq = None, None, None
-    try:
-        from execution.trade_journal import total_realized_pnl_usdt
-        import storage.db as sdb
-        closed = [x for x in t.journal.trades if x["status"] == "closed"]
-        live_real = total_realized_pnl_usdt(
-            [x for x in closed if (x.get("venue") == "live")])
-        row = sdb.q1("SELECT value FROM kv WHERE key='live_pnl_start'",
-                     db_path=t.journal.db_path)
-        if row:
-            import json as _json
-            base = _json.loads(row["value"])
-            live_start_eq = base.get("equity")
-            if live_start_eq and bal and bal.total_eq > 0:
-                live_eq_pnl = round(bal.total_eq - live_start_eq, 2)
-    except Exception:
-        pass
+    if getattr(t, "live_mode", False):
+        try:
+            from execution.trade_journal import total_realized_pnl_usdt
+            import storage.db as sdb
+            closed = [x for x in t.journal.trades if x["status"] == "closed"]
+            live_real = total_realized_pnl_usdt(
+                [x for x in closed if (x.get("venue") == "live")])
+            row = sdb.q1("SELECT value FROM kv WHERE key='live_pnl_start'",
+                         db_path=t.journal.db_path)
+            if row:
+                import json as _json
+                base = _json.loads(row["value"])
+                live_start_eq = base.get("equity")
+                if live_start_eq and bal and bal.total_eq > 0:
+                    live_eq_pnl = round(bal.total_eq - live_start_eq, 2)
+        except Exception:
+            pass
     return StatusOut(
         balance=BalanceOut(total_equity=bal.total_eq if bal else 0,
                            usdt_free=bal.usdt_free if bal else 0,

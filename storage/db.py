@@ -22,7 +22,9 @@ import threading
 import time
 from contextlib import contextmanager
 
-DB_PATH = "crypto_agent.db"
+# 2026-08-23 双实例: CRYPTO_AGENT_DB 环境变量指定库文件(实盘 crypto_agent_live.db
+# / 模拟盘 crypto_agent.db),两实例互不串库。默认保持历史行为。
+DB_PATH = os.environ.get("CRYPTO_AGENT_DB") or "crypto_agent.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trades (

@@ -54,3 +54,11 @@ lark-cli-local/
 # 运行时进度文件(引擎每拍写入)
 tick_directional.txt
 heartbeat_directional.txt
+
+# ============ 双实例运行时文件（2026-08-23 模拟盘/实盘并行） ============
+*.db-shm
+*.db-wal
+engine_paper.lock
+tick_paper.txt
+evolution_gate_threshold_paper.json
+backups/legacy_json*/

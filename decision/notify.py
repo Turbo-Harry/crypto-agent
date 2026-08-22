@@ -132,9 +132,14 @@ def _stat(kind):
 def notify(msg, title=None, template=None):
     """发飞书。优先 interactive + lark_md;3 次重试后 --text 纯文本兜底。
     2026-08-20 用户反馈'时好时坏': 卡片接口偶发瞬时失败回退纯文本 →
-    部分消息不渲染。重试大幅压缩回退概率,计数供体检观测。"""
+    部分消息不渲染。重试大幅压缩回退概率,计数供体检观测。
+    2026-08-23 双实例: 按 CRYPTO_AGENT_MODE 打【实盘】/【模拟盘】前缀。"""
     if not msg:
         return
+    tag = {"paper": "【模拟盘】", "live": "【实盘】"}.get(
+        os.environ.get("CRYPTO_AGENT_MODE", "live"))
+    if tag and not msg.startswith(tag):
+        msg = f"{tag} {msg}"
     card = build_card(msg, title=title, template=template)
     for attempt in range(3):
         try:

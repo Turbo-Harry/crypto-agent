@@ -66,7 +66,7 @@ def _q(db, sql, params=()):
 
 def build_diagnostics(db=None):
     """收集诊断材料(纯文本,随告警一起发给 AI)。"""
-    db = db or os.path.join(ROOT, "crypto_agent.db")
+    db = db or os.path.join(ROOT, os.environ.get("CRYPTO_AGENT_DB") or "crypto_agent.db")
     parts = []
     of = _q(db, "SELECT base, stage, error, ts FROM order_failures "
                 "ORDER BY ts DESC LIMIT 5")

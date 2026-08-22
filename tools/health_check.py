@@ -17,9 +17,16 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.path.join(ROOT, "crypto_agent.db")
+# 2026-08-23 双实例: 环境变量选择体检对象(com.crypto.healthcheck 查实盘,
+# com.crypto.healthcheck.paper 查模拟盘)。默认实盘库+8090。
+def _abs(p):
+    return p if os.path.isabs(p) else os.path.join(ROOT, p)
+DB = _abs(os.environ.get("CRYPTO_AGENT_DB", os.path.join(ROOT, "crypto_agent.db")))
 MARKET_DB = os.path.join(ROOT, "data", "market.db")
-HEARTBEAT = os.path.join(ROOT, "heartbeat_directional.txt")
+_HEART_NAME = ("paper" if os.environ.get("CRYPTO_AGENT_MODE") == "paper"
+               else "directional")
+HEARTBEAT = os.path.join(ROOT, f"heartbeat_{_HEART_NAME}.txt")
+API_PORT = int(os.environ.get("CRYPTO_API_PORT", "8090"))
 NOTIFY_STATE = "/tmp/crypto-healthcheck.notified"
 
 # Phase 0 断点修复上线的时刻（此后平仓必须带复盘报告）
@@ -113,7 +120,7 @@ check("H6 引擎错误(24h≤12 且 30min 突发<4)",
 try:
     import urllib.request
     st = json.loads(urllib.request.urlopen(
-        "http://127.0.0.1:8090/status", timeout=5).read())
+        f"http://127.0.0.1:{API_PORT}/status", timeout=5).read())
     check("H7 风控未处于熔断停手", not st.get("risk_halted", False),
           st.get("risk_reason", ""))
 except Exception:
@@ -209,7 +216,7 @@ except Exception:
 # (pause/resume/scan) 静默失联。/health 不可达 = HTTP 层故障。
 try:
     import urllib.request as _ur2
-    with _ur2.urlopen("http://127.0.0.1:8090/health", timeout=5) as _r2:
+    with _ur2.urlopen(f"http://127.0.0.1:{API_PORT}/health", timeout=5) as _r2:
         _h_ok = _r2.status == 200
     check("H14 HTTP 控制面 /health 可达", _h_ok,
           "HTTP OK" if _h_ok else "HTTP 层无响应")

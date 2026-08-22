@@ -28,6 +28,9 @@ HEARTBEATS = {
     # 2026-08-16 采集加速后首轮扫描 18 币需数分钟（心跳随 tick 阻塞停更），
     # 30s 超时会误杀正在工作的引擎 → 放宽到 120s（配合 scan 内每币心跳刷新）。
     "directional": {"timeout": 120, "proc": "directional_trader.py"},
+    # 2026-08-23 双实例: 模拟盘引擎(com.crypto.paper)独立监控,
+    # 心跳/PID/tick 文件名为 paper.*(execution/pidfile 按环境映射)。
+    "paper": {"timeout": 120, "proc": "service/main.py"},
     # （2026-08-16 用户决定：套利引擎移除，"arb" 项已随 trading_main.py 归档删除）
 }
 MISSING_TOLERANCE = 3          # 心跳文件连续缺失 N 次才 kill（去抖）
@@ -113,7 +116,7 @@ def _storm_ok(name, state):
     """重启风暴防护(2026-08-19 用户要求健壮性): 15 分钟内 kill ≥3 次 →
     环境性故障(网络黑洞等)重启也修不好,停止自动 kill,告警人工介入。
     风暴窗口滚动后自动恢复。"""
-    kills = state.setdefault("kills", [])
+    kills = state.setdefault(f"kills_{name}", [])
     now = time.time()
     kills = [t for t in kills if now - t < 900]
     state["kills"] = kills
@@ -158,7 +161,7 @@ def check():
                 continue
             _kill(name, pid, f"{cfg['proc']} 主循环 tick 卡死超过 {TICK_TIMEOUT}s"
                              f"（心跳正常，tick 进度停滞）")
-            state.setdefault("kills", []).append(time.time())
+            state.setdefault(f"kills_{name}", []).append(time.time())
             state.pop(name, None)
             continue
         if stale or missing >= MISSING_TOLERANCE:
@@ -170,7 +173,7 @@ def check():
             if not _storm_ok(name, state):
                 continue
             _kill(name, pid, f"{cfg['proc']} 心跳异常（stale={stale}, 缺失{missing}次）")
-            state.setdefault("kills", []).append(time.time())
+            state.setdefault(f"kills_{name}", []).append(time.time())
             state.pop(name, None)
     _save_state(state)
 

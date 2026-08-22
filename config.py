@@ -3,6 +3,15 @@
 核心理念：宁可做对，也不做错；空仓是默认，持仓是例外。
 激进档：最大回撤 15%~20%，单笔风险 1.5%，+5%/-3% 盈亏比。
 """
+import os
+
+# ============ 双实例运行（2026-08-23 用户指示"模拟盘和实盘同时跑"） ============
+# CRYPTO_AGENT_MODE 环境变量决定本进程实例身份:
+#   live  (默认) → 实盘,真实 OKX 账户,数据库 crypto_agent_live.db
+#   paper        → 模拟盘,OKX sandbox,数据库 crypto_agent.db(延续历史)
+# 数据库路径也可用 CRYPTO_AGENT_DB 环境变量直接指定(launchd 双实例互不串库)。
+CRYPTO_MODE = os.environ.get("CRYPTO_AGENT_MODE", "live")
+INSTANCE_NAME = "paper" if CRYPTO_MODE == "paper" else "directional"
 
 # ============ 数据源 ============
 BASE_URL = "https://data-api.binance.vision"  # 币安官方公开数据端点（不受地区限制）
@@ -228,7 +237,7 @@ DEMO_UNTRADABLE = ["BICO", "GRVT", "AEON", "WLD", "WLFI"]
 # 激活条件: 本开关 + ~/.crypto_live/okx_live.json(真实密钥,仓库外)。
 # LIVE_MODE 只在引擎启动时快照(self.live_mode),热重载不改它——
 # 防止运行中途意外切换真实/模拟。
-LIVE_MODE = True              # 实盘开关(2026-08-23 用户拍板 100 USDT 预算)
+LIVE_MODE = (CRYPTO_MODE == "live")   # 实盘开关(由 CRYPTO_AGENT_MODE 决定,2026-08-23 双实例)
 LIVE_BUDGET_USDT = 100        # 总预算
 LIVE_RISK_PER_TRADE = 1.0     # 单笔风险 USDT(预算 1%)
 LIVE_MAX_NOTIONAL = 10        # 单笔名义上限 USDT(2026-08-23 用户指示 20→10)

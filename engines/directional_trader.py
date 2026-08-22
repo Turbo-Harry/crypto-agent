@@ -73,9 +73,13 @@ def connect() -> ExchangeAdapter:
 def acquire_instance_lock(timeout=300.0):
     """单实例互斥(审计:双实例事故):对项目根 engine.lock 加 flock。
     已被持有 → 等待持有者退出(热备用),超时仍未拿到 → 返回 None。
-    拿到 → 返回文件句柄(进程存续期间持锁,退出自动释放)。"""
+    拿到 → 返回文件句柄(进程存续期间持锁,退出自动释放)。
+    2026-08-23 双实例: paper 环境用 engine_paper.lock,与实盘实例互不阻塞。"""
+    lock_name = ("engine_paper.lock"
+                 if os.environ.get("CRYPTO_AGENT_MODE") == "paper"
+                 else "engine.lock")
     lock_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "engine.lock")
+                             lock_name)
     try:
         import fcntl
     except ImportError:
@@ -217,10 +221,12 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                                                   db_path=self._db_path, gated=True)
         # 阈值进化门（DEF-5）: 提案→影子验证→晋升生效→观察期退化回滚基线。
         # 状态文件随 db_path 隔离(测试进临时目录,不污染仓库根)。
+        # 2026-08-23 双实例: paper 后缀 _paper,与实盘门状态文件互不覆盖。
         from decision.evolution_gate import EvolutionGate
+        _sfx = "_paper" if os.environ.get("CRYPTO_AGENT_MODE") == "paper" else ""
         _gate_file = (os.path.join(os.path.dirname(os.path.abspath(self._db_path)),
-                                   "evolution_gate_threshold.json")
-                      if self._db_path else "evolution_gate_threshold.json")
+                                   f"evolution_gate_threshold{_sfx}.json")
+                      if self._db_path else f"evolution_gate_threshold{_sfx}.json")
         self.threshold_gate = EvolutionGate(
             "方向性阈值层", _gate_file,
             min_shadow_samples=config.GATE_MIN_SHADOW,

@@ -20,7 +20,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import config
-DB = os.path.join(ROOT, "crypto_agent.db")
+DB = os.path.join(ROOT, os.environ.get("CRYPTO_AGENT_DB") or "crypto_agent.db")
 
 
 def q(sql, params=()):

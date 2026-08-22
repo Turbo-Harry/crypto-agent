@@ -20,7 +20,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.path.join(ROOT, "crypto_agent.db")
+DB = os.path.join(ROOT, os.environ.get("CRYPTO_AGENT_DB") or "crypto_agent.db")
 OUT = os.path.join(ROOT, "data", "strategy_report_latest.json")
 MIN_SAMPLES = 30          # Tharp 最低样本门槛(S2)
 

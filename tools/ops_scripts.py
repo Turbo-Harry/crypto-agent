@@ -22,19 +22,26 @@ ARCHIVE_DIR = os.path.join(ROOT, "logs")
 KEEP_DAYS = 7
 LOG_MAX_MB = 20
 LOGS = ("/tmp/crypto-agent.out.log", "/tmp/crypto-agent.err.log",
+        "/tmp/crypto-paper.out.log", "/tmp/crypto-paper.err.log",
         "/tmp/crypto-watchdog.out.log", "/tmp/crypto-healthcheck.out.log")
+# 2026-08-23 双实例: 实盘库 + 模拟盘库一起备份
+DBS = ("crypto_agent_live.db", "crypto_agent.db")
 
 
 def backup():
     os.makedirs(BACKUP_DIR, exist_ok=True)
-    db = os.path.join(ROOT, "crypto_agent.db")
-    if not os.path.exists(db):
-        print("❌ 无数据库文件")
-        return 1
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    dst = os.path.join(BACKUP_DIR, f"crypto_agent_{stamp}.db.gz")
-    with open(db, "rb") as src, gzip.open(dst, "wb") as out:
-        shutil.copyfileobj(src, out)
+    n_ok = 0
+    for name in DBS:
+        db = os.path.join(ROOT, name)
+        if not os.path.exists(db):
+            print(f"⚠️ 跳过备份(无文件): {name}")
+            continue
+        dst = os.path.join(BACKUP_DIR, f"{name}_{stamp}.db.gz")
+        with open(db, "rb") as src, gzip.open(dst, "wb") as out:
+            shutil.copyfileobj(src, out)
+        n_ok += 1
+        print(f"✅ 备份完成: {dst} ({os.path.getsize(dst)/1024:.0f} KB)")
     # 过期清理(保留 KEEP_DAYS 天)
     cutoff = time.time() - KEEP_DAYS * 86400
     removed = 0
@@ -43,9 +50,8 @@ def backup():
         if os.path.getmtime(p) < cutoff:
             os.remove(p)
             removed += 1
-    size = os.path.getsize(dst)
-    print(f"✅ 备份完成: {dst} ({size/1024:.0f} KB), 清理过期 {removed} 份")
-    return 0
+    print(f"清理过期 {removed} 份")
+    return 0 if n_ok else 1
 
 
 def rotate():
