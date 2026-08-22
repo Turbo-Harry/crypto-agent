@@ -228,7 +228,7 @@ DEMO_UNTRADABLE = ["BICO", "GRVT", "AEON", "WLD", "WLFI"]
 # 激活条件: 本开关 + ~/.crypto_live/okx_live.json(真实密钥,仓库外)。
 # LIVE_MODE 只在引擎启动时快照(self.live_mode),热重载不改它——
 # 防止运行中途意外切换真实/模拟。
-LIVE_MODE = False             # 实盘开关
+LIVE_MODE = True              # 实盘开关(2026-08-23 用户拍板 100 USDT 预算)
 LIVE_BUDGET_USDT = 100        # 总预算
 LIVE_RISK_PER_TRADE = 1.0     # 单笔风险 USDT(预算 1%)
 LIVE_MAX_NOTIONAL = 20        # 单笔名义上限 USDT

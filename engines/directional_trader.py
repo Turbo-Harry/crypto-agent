@@ -56,8 +56,10 @@ def connect() -> ExchangeAdapter:
     2026-08-22: 用户指示改用 ccxt 交易库(config.EXCHANGE_BACKEND="ccxt"),
     native 手写传输层保留可回滚(EXCHANGE_BACKEND="native")。"""
     import config
+    import os as _os
     live = config.LIVE_MODE
-    cred = (config.LIVE_CRED_FILE if live else "okx_config.json")
+    cred = (_os.path.expanduser(config.LIVE_CRED_FILE)
+            if live else "okx_config.json")
     cfg = json.load(open(cred))
     if config.EXCHANGE_BACKEND == "ccxt":
         from exchange.ccxt_adapter import CCXTAdapter
