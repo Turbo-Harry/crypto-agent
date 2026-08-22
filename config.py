@@ -258,6 +258,15 @@ EXCHANGE_BACKEND = "ccxt"     # "ccxt" | "native"——引擎构造时选择适�
 REALTIME_BACKEND = "ccxtpro"  # "ccxtpro"(watch_ticker) | "okx"(原生WS,可回滚)
                               # (切换需重启)
 
+# ============ 经验共享（2026-08-23 用户指示"经验共享"——双实例教训互同步） ============
+# 模拟盘激进采集 → 教训/验证状态镜像到实盘库参与决策;实盘真金验证 → 镜像回模拟盘。
+# 每条教训由【产生它的实例】拥有并验证(origin),对端只读镜像,避免双重计数。
+EXPERIENCE_SHARE_ENABLED = True   # 开关
+EXPERIENCE_PEER_DB = os.environ.get("CRYPTO_AGENT_PEER_DB", "")
+                                  # 对端实例库路径(launchd 环境变量注入)
+EXPERIENCE_SHARE_INTERVAL_HOURS = 1   # 同步周期(启动时 + 每小时)
+EXPERIENCE_PEER_WEIGHT = 1.0      # 对端镜像教训在决策聚合中的权重(1.0=等权)
+
 # ============ 消息面门控（2026-08-23 用户要求'系统加消息面判断'） ============
 SENTIMENT_GATE_ENABLED = True  # 情感门控开关(决策层读 kv 快照,无数据放行)
 SENTIMENT_GREED_CAP = 80       # F&G ≥ 此值 → 拒绝新开多(不追过热顶)

@@ -191,6 +191,20 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 带评分的经验库（历史经验不一定对，用交易结果验证）
         from decision.experience_scoring import ScoredExperience
         self.exp_bank = ScoredExperience()
+        # 2026-08-23 经验共享(用户指示): 启动时把对端实例的教训/归纳镜像进
+        # 本库参与决策;镜像行 origin='peer',本实例只读不验证(防双重计数)。
+        if getattr(config, "EXPERIENCE_SHARE_ENABLED", False) \
+                and getattr(config, "EXPERIENCE_PEER_DB", ""):
+            try:
+                from decision.experience_scoring import sync_peer_lessons
+                _a, _u, _r = sync_peer_lessons(
+                    self.exp_bank.db_path, config.EXPERIENCE_PEER_DB)
+                if _a or _u or _r:
+                    self.exp_bank._load()
+                    print(f"[经验共享] 启动同步: 新增 {_a} 条教训, "
+                          f"更新 {_u} 条, 归纳 {_r} 条")
+            except Exception as e:
+                print(f"[经验共享] 启动同步失败: {e}")
         # 统一经验库：evolver 的决策也走 ScoredExperience（B6）
         self.evolver.bank = _ExpAdapter(self.exp_bank)
         # 持仓所有权账本（R1-12）：组合总敞口 ≤600 + claim/release

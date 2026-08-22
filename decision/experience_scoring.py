@@ -35,6 +35,93 @@ import os
 import time
 
 
+def _share_key_of(symbol, category, content, source_trade):
+    """经验共享(2026-08-23): 内容身份哈希——两库 id 各自自增会撞车,
+    跨库唯一身份用 内容+出处 的 sha1。"""
+    import hashlib
+    raw = "|".join(str(x or "") for x in (symbol, category, content, source_trade))
+    return "l-" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _rollup_share_key_of(symbol, category, conditions):
+    import hashlib
+    raw = "|".join(str(x or "") for x in (symbol, category, conditions))
+    return "r-" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def sync_peer_lessons(local_db_path=None, peer_db_path=None):
+    """经验共享(2026-08-23 用户指示): 把对端实例的教训/场景归纳镜像到本地库。
+    以 share_key 为身份 upsert(幂等,可反复跑);镜像行 origin='peer'——
+    本地 validate() 跳过 peer 行(教训由产生它的实例拥有并验证,防双重计数)。
+    双向共享 = 两个实例各自定期拉取对方。
+    返回 (新增教训数, 更新教训数, 新增归纳数)。"""
+    import storage.db as sdb
+    if not peer_db_path or not os.path.exists(peer_db_path):
+        return (0, 0, 0)
+    sdb.init_db(local_db_path)
+    sdb.init_db(peer_db_path)
+    added = updated = r_added = 0
+    try:
+        for r in sdb.q("SELECT * FROM lessons", db_path=peer_db_path):
+            key = r.get("share_key") or _share_key_of(
+                r.get("symbol"), r.get("category"),
+                r.get("content"), r.get("source_trade"))
+            cur = sdb.q1("SELECT id, origin FROM lessons WHERE share_key=?",
+                         [key], db_path=local_db_path)
+            if cur is None:
+                sdb.x("INSERT INTO lessons (symbol,category,content,score,adoptions,"
+                      "good,bad,status,source_trade,regime,conditions,hist_evidence,"
+                      "share_key,origin,ts,last_update) "
+                      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      [r.get("symbol"), r.get("category"), r.get("content"),
+                       r.get("score", 50), r.get("adoptions", 0),
+                       r.get("good", 0), r.get("bad", 0),
+                       r.get("status", "unverified"), r.get("source_trade"),
+                       r.get("regime"), r.get("conditions", ""),
+                       r.get("hist_evidence", ""), key, "peer",
+                       r.get("ts"), r.get("last_update")],
+                      db_path=local_db_path)
+                added += 1
+            else:
+                # 镜像只随 origin 状态走;带 last_update 前进条件——
+                # 防止对端旧镜像把本地更新的行"回滚"(2026-08-23)。
+                sdb.x("UPDATE lessons SET score=?,adoptions=?,good=?,bad=?,"
+                      "status=?,last_update=?,conditions=?,hist_evidence=? "
+                      "WHERE share_key=? AND COALESCE(last_update,0) < ?",
+                      [r.get("score", 50), r.get("adoptions", 0),
+                       r.get("good", 0), r.get("bad", 0),
+                       r.get("status", "unverified"), r.get("last_update"),
+                       r.get("conditions", ""), r.get("hist_evidence", ""),
+                       key, r.get("last_update") or 0],
+                      db_path=local_db_path)
+                updated += 1
+        for r in sdb.q("SELECT * FROM lesson_rollups", db_path=peer_db_path):
+            key = r.get("share_key") or _rollup_share_key_of(
+                r.get("symbol"), r.get("category"), r.get("conditions"))
+            cur = sdb.q1("SELECT id FROM lesson_rollups WHERE share_key=?",
+                         [key], db_path=local_db_path)
+            if cur is None:
+                sdb.x("INSERT INTO lesson_rollups (symbol,category,conditions,"
+                      "strength,member_count,member_ids,share_key,origin,ts,"
+                      "last_update) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      [r.get("symbol"), r.get("category"), r.get("conditions", ""),
+                       r.get("strength", 0), r.get("member_count", 0),
+                       r.get("member_ids", "[]"), key, "peer",
+                       r.get("ts"), r.get("last_update")],
+                      db_path=local_db_path)
+                r_added += 1
+            else:
+                sdb.x("UPDATE lesson_rollups SET strength=?,member_count=?,"
+                      "member_ids=?,last_update=? WHERE share_key=? "
+                      "AND COALESCE(last_update,0) < ?",
+                      [r.get("strength", 0), r.get("member_count", 0),
+                       r.get("member_ids", "[]"), r.get("last_update"), key,
+                       r.get("last_update") or 0],
+                      db_path=local_db_path)
+    except Exception:
+        pass
+    return (added, updated, r_added)
+
 
 class ScoredExperience:
     """带评分的经验库（v2：对称评分、40/60 分离、时间衰减、discarded 复活）。
@@ -91,14 +178,16 @@ class ScoredExperience:
             cond_s = cond if isinstance(cond, str) else \
                 json.dumps(cond or {}, ensure_ascii=False)
             sdb.x("INSERT OR REPLACE INTO lessons (id,symbol,category,content,score,"
-                  "adoptions,good,bad,status,source_trade,regime,conditions,hist_evidence,ts,last_update) "
-                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  "adoptions,good,bad,status,source_trade,regime,conditions,hist_evidence,"
+                  "share_key,origin,ts,last_update) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                   [l.get("id"), l.get("symbol"), l.get("category"), l.get("content"),
                    l.get("score", 50), l.get("adoptions", 0), l.get("good", 0),
                    l.get("bad", 0), l.get("status", "unverified"), l.get("source_trade"),
                    l.get("regime"), cond_s,
                    l.get("hist_evidence") if isinstance(l.get("hist_evidence"), str)
                    else json.dumps(l.get("hist_evidence") or {}, ensure_ascii=False),
+                   l.get("share_key"), l.get("origin", "local"),
                    l.get("ts"), l.get("last_update")],
                   db_path=self.db_path)
 
@@ -113,8 +202,14 @@ class ScoredExperience:
         hist_evidence(2026-08-21 用户要求'经验从历史看是否有符合的'):
         教训诞生时的历史先验(同场景历史交易表现),只观测不进 ±10 验证循环。"""
         now = time.time()
+        import storage.db as sdb
+        # id 用 MAX(id)+1(2026-08-23 fix: 镜像行混入后 len()+1 会撞已有 id
+        # → INSERT OR REPLACE 误覆盖别人)
+        row = sdb.q1("SELECT COALESCE(MAX(id),0)+1 m FROM lessons",
+                     db_path=self.db_path)
+        next_id = row["m"] if row else len(self.lessons) + 1
         lesson = {
-            "id": len(self.lessons) + 1,
+            "id": next_id,
             "symbol": symbol,
             "category": category,
             "content": content,
@@ -129,6 +224,8 @@ class ScoredExperience:
                           if conditions else "",
             "hist_evidence": json.dumps(hist_evidence, ensure_ascii=False)
                              if hist_evidence else "",
+            "share_key": _share_key_of(symbol, category, content, source_trade),
+            "origin": "local",
             "ts": now,
             "last_update": now,
         }
@@ -142,6 +239,10 @@ class ScoredExperience:
         now = time.time()
         for l in self.lessons:
             if l["id"] == lesson_id:
+                if l.get("origin") == "peer":
+                    print(f"[经验共享] 跳过 peer 教训验证 id={lesson_id}"
+                          f"(由对端实例拥有)")
+                    return None
                 # 先做时间衰减再加减分
                 l["score"] = self._decay(l.get("score", 50), l.get("last_update", now), now)
                 l["adoptions"] += 1
@@ -301,7 +402,11 @@ def evidence_strength(bank, symbol, category, conditions=None, now=None):
     for l in bank.trusted(symbol, conditions=conditions):
         if l.get("category") != category:
             continue
-        total += _evidence_weight(l, now)
+        w = _evidence_weight(l, now)
+        # 2026-08-23 经验共享: 对端镜像教训按 EXPERIENCE_PEER_WEIGHT 加权
+        if l.get("origin") == "peer":
+            w *= getattr(config, "EXPERIENCE_PEER_WEIGHT", 1.0)
+        total += w
     return round(total, 2)
 
 

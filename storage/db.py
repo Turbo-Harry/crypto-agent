@@ -57,10 +57,13 @@ CREATE TABLE IF NOT EXISTS lessons (
     regime TEXT,                        -- Phase 4: 教训产生的市场环境标签(兼容旧数据)
     conditions TEXT DEFAULT '',         -- 2026-08-17 场景条件向量 JSON(direction/vol_band/trend/signal_type)
     hist_evidence TEXT DEFAULT '',      -- 2026-08-21 历史先验 JSON(同场景历史表现,只观测)
+    share_key TEXT,                     -- 2026-08-23 经验共享: 内容身份哈希(跨库唯一)
+    origin TEXT DEFAULT 'local',        -- 2026-08-23 经验共享: local=本实例产生, peer=对端镜像
     ts REAL, last_update REAL
 );
 CREATE INDEX IF NOT EXISTS idx_lessons_symbol ON lessons(symbol);
 CREATE INDEX IF NOT EXISTS idx_lessons_status ON lessons(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lessons_share ON lessons(share_key);
 
 -- 场景归纳教训(2026-08-17 用户要求'多维度经验总结'): 同 symbol+类别+场景
 -- 条件的 trusted 教训 ≥ROLLUP_MIN_MEMBERS 时,日度沉淀一条归纳结论。
@@ -72,9 +75,12 @@ CREATE TABLE IF NOT EXISTS lesson_rollups (
     strength REAL DEFAULT 0,     -- 验证强度加权和
     member_count INTEGER DEFAULT 0,
     member_ids TEXT,             -- 成员教训 id JSON 数组
+    share_key TEXT,              -- 2026-08-23 经验共享: 内容身份哈希
+    origin TEXT DEFAULT 'local',
     ts REAL, last_update REAL
 );
 CREATE INDEX IF NOT EXISTS idx_rollups_key ON lesson_rollups(symbol, category);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rollups_share ON lesson_rollups(share_key);
 
 -- 组合试验(2026-08-21 用户洞察"单条不盈利,combo 可能盈利"):
 -- 每笔平仓实际采纳的教训组合(≥2 条)记一行,真实交易结果作验证样本。
@@ -353,6 +359,41 @@ def _migrate_v5_lesson_hist_evidence(conn):
     _add_column_if_missing(conn, "lessons", "hist_evidence", "TEXT")
 
 
+def _migrate_v6_experience_sharing(conn):
+    """v6: 经验共享(2026-08-23 用户指示'经验共享'——双实例教训互同步):
+    lessons/lesson_rollups 加 share_key(内容哈希,跨库唯一身份)与
+    origin(local/peer),并给存量行回填 share_key。"""
+    import hashlib as _h
+    for table in ("lessons", "lesson_rollups"):
+        _add_column_if_missing(conn, table, "share_key", "TEXT")
+        _add_column_if_missing(conn, table, "origin", "TEXT DEFAULT 'local'")
+    # 存量行回填 share_key(内容身份,与 id 无关——两库 id 会撞车)
+    try:
+        rows = conn.execute(
+            "SELECT id, symbol, category, content, source_trade FROM lessons "
+            "WHERE share_key IS NULL").fetchall()
+        for r in rows:
+            key = _h.sha1("|".join(
+                str(r[i] or "") for i in range(len(r))).encode("utf-8")).hexdigest()[:16]
+            conn.execute("UPDATE lessons SET share_key=? WHERE id=?",
+                         [f"l-{key}", r[0]])
+        rrows = conn.execute(
+            "SELECT id, symbol, category, conditions FROM lesson_rollups "
+            "WHERE share_key IS NULL").fetchall()
+        for r in rrows:
+            key = _h.sha1("|".join(
+                str(r[i] or "") for i in range(len(r))).encode("utf-8")).hexdigest()[:16]
+            conn.execute("UPDATE lesson_rollups SET share_key=? WHERE id=?",
+                         [f"r-{key}", r[0]])
+        conn.commit()
+    except Exception:
+        pass
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_lessons_share "
+                 "ON lessons(share_key)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rollups_share "
+                 "ON lesson_rollups(share_key)")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -360,6 +401,7 @@ MIGRATIONS = (
     (3, _migrate_v3_shadow_settle),
     (4, _migrate_v4_engine_errors_archived),
     (5, _migrate_v5_lesson_hist_evidence),
+    (6, _migrate_v6_experience_sharing),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -389,7 +431,14 @@ def init_db(db_path=None):
             is_fresh = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='trades'"
             ).fetchone() is None
-            conn.executescript(SCHEMA)
+            try:
+                conn.executescript(SCHEMA)
+            except sqlite3.OperationalError as e:
+                # 老库: SCHEMA 里引用了仅迁移才加的列(如 lessons.share_key 的
+                # 唯一索引),executescript 会报 no such column——吞掉,交给
+                # _run_migrations 补列+补索引(2026-08-23 v6 经验共享)。
+                if "no such column" not in str(e).lower():
+                    raise
             if is_fresh:
                 _set_user_version(conn, SCHEMA_VERSION)
             else:

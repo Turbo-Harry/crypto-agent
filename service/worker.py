@@ -231,6 +231,23 @@ class TraderWorker:
                                   f"F&G={snap.get('fng_value')}")
                         except Exception:
                             pass
+                    # 2026-08-23 经验共享(用户指示): 定期把对端实例的教训
+                    # 镜像进来(两个实例各拉对方 = 双向共享)
+                    if getattr(config, "EXPERIENCE_SHARE_ENABLED", False) \
+                            and getattr(config, "EXPERIENCE_PEER_DB", "") \
+                            and time.time() - getattr(self, "_last_exp_share", 0) \
+                            >= config.EXPERIENCE_SHARE_INTERVAL_HOURS * 3600:
+                        self._last_exp_share = time.time()
+                        try:
+                            from decision.experience_scoring import sync_peer_lessons
+                            _a, _u, _r = sync_peer_lessons(
+                                t.exp_bank.db_path, config.EXPERIENCE_PEER_DB)
+                            if _a or _u or _r:
+                                t.exp_bank._load()
+                                print(f"[经验共享] 定时同步: 新增 {_a} 条教训, "
+                                      f"更新 {_u} 条, 归纳 {_r} 条")
+                        except Exception:
+                            pass
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
                     # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。
                     if time.time() - getattr(self, "_last_reconcile_sweep", 0) >= 3600:
