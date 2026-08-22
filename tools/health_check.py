@@ -136,8 +136,16 @@ except Exception:
 # ---------- H8 日度分析新鲜 ----------
 ana = q(DB, "SELECT MAX(ts) m FROM analyses")
 a_age = time.time() - (ana[0]["m"] or 0)
-check("H8 日度分析新鲜(<26h)", a_age < 26 * 3600,
-      f"{a_age/3600:.1f} 小时前")
+# 2026-08-23 双实例: 全新库(实盘库)首份日度分析未生成时,分析表为空
+# → age=now 恒红。引擎活着(快照在流)就只提示,不判死(误报曾触发统一异常中心)。
+if ana[0]["m"] is None:
+    _snap = q(DB, "SELECT MAX(ts) m FROM position_snapshots")
+    _engine_alive = bool(_snap[0]["m"]) and time.time() - _snap[0]["m"] < 300
+    check("H8 日度分析新鲜(<26h)", True if _engine_alive else False,
+          "首份日度分析未生成(引擎运行中)" if _engine_alive else "无分析且引擎无快照")
+else:
+    check("H8 日度分析新鲜(<26h)", a_age < 26 * 3600,
+          f"{a_age/3600:.1f} 小时前")
 
 # ---------- H9 仓位快照新鲜 ----------
 snap = q(DB, "SELECT MAX(ts) m FROM position_snapshots")
@@ -240,7 +248,10 @@ if failed:
                 time.time() - os.path.getmtime(NOTIFY_STATE) > 1800:
             sys.path.insert(0, ROOT)
             from tools import alert_diag
-            alert_diag.diagnose_and_alert(failed)
+            # 2026-08-23 双实例: 告警带实例标签,会话/飞书里能分清是哪条链
+            _tag = "【模拟盘】" if os.environ.get("CRYPTO_AGENT_MODE") == "paper" \
+                else "【实盘】"
+            alert_diag.diagnose_and_alert([f"{_tag} {x}" for x in failed])
             open(NOTIFY_STATE, "w").write(str(time.time()))
     except Exception:
         pass
