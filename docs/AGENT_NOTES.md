@@ -13,4 +13,5 @@
 ## 活跃占用（机器维护，勿手改）
 
 <!-- AGENT_CLAIMS_BEGIN -->
+- codex-entry-accuracy-plan | 1787435943 | docs/README.md,docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md | 
 <!-- AGENT_CLAIMS_END -->
