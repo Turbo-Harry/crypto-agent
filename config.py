@@ -266,6 +266,9 @@ EXPERIENCE_PEER_DB = os.environ.get("CRYPTO_AGENT_PEER_DB", "")
                                   # 对端实例库路径(launchd 环境变量注入)
 EXPERIENCE_SHARE_INTERVAL_HOURS = 1   # 同步周期(启动时 + 每小时)
 EXPERIENCE_PEER_WEIGHT = 1.0      # 对端镜像教训在决策聚合中的权重(1.0=等权)
+STRATEGY_SYNC_ENABLED = True      # 2026-08-23 用户指示"策略也保持一致":
+                                  # 阈值学习状态 + 扫描尺子进化状态双向合并
+STRATEGY_SYNC_MAX_RECORDS = 500   # 阈值校准样本并集上限(与学习器 max_history 一致)
 
 # ============ 消息面门控（2026-08-23 用户要求'系统加消息面判断'） ============
 SENTIMENT_GATE_ENABLED = True  # 情感门控开关(决策层读 kv 快照,无数据放行)

@@ -248,6 +248,26 @@ class TraderWorker:
                                       f"更新 {_u} 条, 归纳 {_r} 条")
                         except Exception:
                             pass
+                    # 2026-08-23 策略保持一致(用户指示): 定时合并对端实例的
+                    # 阈值/校准样本/扫描尺子,与经验共享同一节奏
+                    if getattr(config, "STRATEGY_SYNC_ENABLED", False) \
+                            and getattr(config, "EXPERIENCE_PEER_DB", "") \
+                            and time.time() - getattr(self, "_last_strategy_sync", 0) \
+                            >= config.EXPERIENCE_SHARE_INTERVAL_HOURS * 3600:
+                        self._last_strategy_sync = time.time()
+                        try:
+                            from decision.strategy_sync import sync_strategy
+                            _res = sync_strategy(t._db_path,
+                                                 config.EXPERIENCE_PEER_DB)
+                            if _res["records_added"] or _res["threshold_updated"]:
+                                t.threshold_learner._load()
+                                print(f"[策略同步] 定时合并: 样本+"
+                                      f"{_res['records_added']}, 阈值"
+                                      f"{'更新' if _res['threshold_updated'] else '保持'} "
+                                      f"→ {t.threshold_learner.threshold}, "
+                                      f"尺子kv {_res['kv_synced']} 条")
+                        except Exception:
+                            pass
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
                     # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。
                     if time.time() - getattr(self, "_last_reconcile_sweep", 0) >= 3600:

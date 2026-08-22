@@ -248,6 +248,21 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             batch_size=config.GATE_OBSERVE_BATCH,
             on_rollback=lambda: self.threshold_learner.apply_threshold(
                 config.THRESHOLD_INITIAL))
+        # 2026-08-23 策略保持一致(用户指示): 启动时合并对端实例的策略演化
+        # 状态(阈值+校准样本+扫描尺子),两实例用同一套反哺产物做决策。
+        if getattr(config, "STRATEGY_SYNC_ENABLED", False) \
+                and getattr(config, "EXPERIENCE_PEER_DB", ""):
+            try:
+                from decision.strategy_sync import sync_strategy
+                _res = sync_strategy(self._db_path, config.EXPERIENCE_PEER_DB)
+                if _res["records_added"] or _res["threshold_updated"]:
+                    self.threshold_learner._load()
+                    print(f"[策略同步] 启动合并: 样本+{_res['records_added']}, "
+                          f"阈值{'更新' if _res['threshold_updated'] else '保持'} "
+                          f"→ {self.threshold_learner.threshold}, "
+                          f"尺子kv {_res['kv_synced']} 条")
+            except Exception as e:
+                print(f"[策略同步] 启动合并失败: {e}")
         # 账户级风控（审计 CR-2：RiskManager 必须真正接线）
         from risk.risk_manager import RiskManager
         try:
