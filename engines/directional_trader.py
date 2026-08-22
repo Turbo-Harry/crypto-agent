@@ -292,6 +292,37 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             # 以 journal 聚合值为准:部分补账残留也会被覆盖修正
             self.ledger.restore(sym, side, "dir", p["qty"], p["notional"])
             print(f"🔧 启动对账:补账 {key} qty={p['qty']} notional={p['notional']:.0f}")
+        # 2026-08-23 反向对账: journal 开着的交易在交易所已无持仓(人工平仓/
+        # 实盘切换/回报丢失)→ 按现价闭环台账。交易所是唯一事实源,持仓没了
+        # 台账还开着才是幽灵(此前这些孤儿永悬,实盘切换前 4 笔 demo 即此例)。
+        for t in open_journal:
+            base = t["symbol"]
+            has_pos = any(
+                p.base == base and p.side == (t.get("direction") or "long")
+                and p.base_qty > 0 for p in positions)
+            if has_pos:
+                continue
+            try:
+                px = self._ticker_last(base)
+            except Exception:
+                px = None
+            if not px:
+                continue
+            closed = self.journal.log_exit(t["id"], px, "对账:交易所无持仓,闭环台账")
+            if closed:
+                try:
+                    self.ledger.release(
+                        f"{base}/USDT:USDT", t.get("direction") or "long",
+                        "dir", float(t.get("size") or 0),
+                        float(t.get("size") or 0) * float(t.get("entry_price") or 0))
+                except Exception:
+                    pass
+                print(f"🧾 启动对账:闭环孤儿台账 {t['id']} {base} @ {px}")
+                self._notify(f"🧾 启动对账:闭环孤儿台账 {t['id']} {base} @ {px}")
+                try:
+                    self._post_close_review(closed, t)
+                except Exception:
+                    pass
         for p in positions:
             if p.base_qty <= 0:
                 continue
