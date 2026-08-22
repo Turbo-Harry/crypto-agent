@@ -58,11 +58,12 @@ class TraderWorker:
         # 共享依赖：一个适配器、一条 WebSocket（方向性引擎使用）
         self.exchange = connect_dir()
         try:
-            from data.realtime_okx import OKXRealtime
+            from data.realtime import make_realtime
             # 2026-08-17: WS 覆盖全回退池(此前硬编码 5 币,池外下单无秒级行情)
-            self.rt = OKXRealtime(
+            # 2026-08-23: 后端按 config.REALTIME_BACKEND 切换(ccxtpro/okx)
+            self.rt = make_realtime(
                 config.SYMBOLS, fetch_candles=self.exchange.fetch_candles).start()
-            print("共享 WebSocket 实时行情已接入")
+            print(f"共享实时行情已接入（后端 {config.REALTIME_BACKEND}）")
         except Exception as e:
             print(f"WebSocket 启动失败，REST 兜底: {e}")
             self.rt = None

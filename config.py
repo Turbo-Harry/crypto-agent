@@ -245,6 +245,10 @@ LIVE_CRED_FILE = "~/.crypto_live/okx_live.json"
 EXCHANGE_BACKEND = "ccxt"     # "ccxt" | "native"——引擎构造时选择适配器
                               # (切换需重启;ccxt 已在沙盘全链路冒烟通过)
 
+# ============ 实时行情后端（2026-08-23 用户指示"换"用 ccxt 实时监听接口） ============
+REALTIME_BACKEND = "ccxtpro"  # "ccxtpro"(watch_ticker) | "okx"(原生WS,可回滚)
+                              # (切换需重启)
+
 # ============ 消息面门控（2026-08-23 用户要求'系统加消息面判断'） ============
 SENTIMENT_GATE_ENABLED = True  # 情感门控开关(决策层读 kv 快照,无数据放行)
 SENTIMENT_GREED_CAP = 80       # F&G ≥ 此值 → 拒绝新开多(不追过热顶)

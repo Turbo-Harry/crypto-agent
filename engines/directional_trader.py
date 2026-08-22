@@ -243,12 +243,13 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # WebSocket 实时价格（tick 级止损止盈监控，替代 6 小时轮询 — OP-1）
         # 服务模式下由 service 注入共享 rt（与套利引擎共用一条 WS 连接）
         self.rt = rt
-        if self.rt is None and getattr(self.exchange, "name", "") == "okx":
+        if self.rt is None and getattr(self.exchange, "name", "") in ("okx", "okx-ccxt"):
             try:
-                from data.realtime_okx import OKXRealtime
-                self.rt = OKXRealtime(
+                from data.realtime import make_realtime
+                # 2026-08-23: 后端按 config.REALTIME_BACKEND 切换(ccxtpro/okx)
+                self.rt = make_realtime(
                     SYMBOLS, fetch_candles=self.exchange.fetch_candles).start()
-                print("WebSocket 实时价格已接入（止损止盈 tick 级监控）")
+                print("实时价格已接入（止损止盈 tick 级监控）")
             except Exception as e:
                 print(f"WebSocket 启动失败，止损监控退回 REST 轮询: {e}")
 
