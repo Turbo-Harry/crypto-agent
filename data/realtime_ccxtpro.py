@@ -99,13 +99,17 @@ class OKXRealtime:
             pass
         self._seed_candles_from_rest()
         tasks = {}
+        f_tasks = {}
         while not self._shutdown:
             for base in list(self.subscribed):
                 if base in tasks and not tasks[base].done():
                     continue
                 tasks[base] = asyncio.ensure_future(self._watch_one(ex, base))
+                if base not in f_tasks or f_tasks[base].done():
+                    f_tasks[base] = asyncio.ensure_future(
+                        self._watch_funding(ex, base))
             await asyncio.sleep(1)
-        for t in tasks.values():
+        for t in list(tasks.values()) + list(f_tasks.values()):
             t.cancel()
 
     async def _watch_one(self, ex, base):
@@ -121,6 +125,21 @@ class OKXRealtime:
                     self._last_msg_ts = time.time()
             except Exception:
                 await asyncio.sleep(2)   # 单币任务容错,不影响其它币
+
+    async def _watch_funding(self, ex, base):
+        """资金费率频道(2026-08-23 用户问'会计算费率吗'): 费率进 latest,
+        /realtime 可见。首帧即返回当前值,后续随结算/变更推送。"""
+        sym = f"{base}/USDT:USDT"
+        while not self._shutdown:
+            try:
+                fr = await ex.watch_funding_rate(sym)
+                v = fr.get("fundingRate")
+                if v is not None:
+                    self.latest.setdefault(base, {})
+                    self.latest[base]["funding"] = float(v)
+                    self.latest[base]["funding_ts"] = time.time()
+            except Exception:
+                await asyncio.sleep(10)
 
     def _seed_candles_from_rest(self):
         """冷启动预热(与旧模块同语义): REST 拉最近 15 根 1m K 线算 vol_15m。"""
@@ -157,7 +176,8 @@ class OKXRealtime:
         d = dict(self.latest.get(base, {}))
         if max_age:
             now = time.time()
-            for field, ts_key in (("price", "price_ts"), ("vol_15m", "vol_ts")):
+            for field, ts_key in (("price", "price_ts"), ("vol_15m", "vol_ts"),
+                                  ("funding", "funding_ts")):
                 ts = d.get(ts_key, 0)
                 if not ts or now - ts > max_age:
                     d.pop(field, None)

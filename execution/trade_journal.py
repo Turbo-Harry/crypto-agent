@@ -57,6 +57,50 @@ def total_realized_pnl_usdt(trades):
     return round(total, 2)
 
 
+def estimate_fees_usdt(trade):
+    """手续费估算兜底(2026-08-23,账户账单取不到时用):
+    市价单双边 taker——入场名义 + 出场名义 各收一次 FEE_RATE_TAKER。
+    出场名义: 多单 = 入场名义×(1+pnl);空单名义不变(盈亏在等额名义上)。"""
+    import config
+    if not trade or trade.get("pnl") is None:
+        return 0.0
+    notional = trade.get("notional_usdt")
+    if notional is None:
+        notional = float(trade.get("size") or 0) * float(trade.get("entry_price") or 0)
+    try:
+        pnl = float(trade["pnl"])
+        exit_notional = notional * (1 + pnl) \
+            if (trade.get("direction") or "long") == "long" else notional
+        rate = getattr(config, "FEE_RATE_TAKER", 0.0005)
+        return round((float(notional) + float(exit_notional)) * rate, 4)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def net_realized_pnl_usdt(trade):
+    """净盈亏(2026-08-23): 毛盈亏 − 手续费 − 资金费。
+    fees_usdt/funding_usdt 由平仓复盘按账户账单写入 trades 行;
+    老数据无这两列 → 0(不追溯扣)。"""
+    gross = realized_pnl_usdt(trade)
+    if gross is None:
+        return None
+    fees = float(trade.get("fees_usdt") or 0)
+    funding = float(trade.get("funding_usdt") or 0)
+    return round(gross - fees - funding, 4)
+
+
+def total_net_realized_pnl_usdt(trades):
+    """已平仓合计净盈亏（USDT,扣费后）。"""
+    total = 0.0
+    for t in trades or []:
+        if t.get("status") != "closed":
+            continue
+        v = net_realized_pnl_usdt(t)
+        if v is not None:
+            total += v
+    return round(total, 4)
+
+
 class TradeJournal:
     def __init__(self, path="trade_journal.json", db_path=None):
         # path 兼容保留：默认值走共享库 crypto_agent.db；显式传路径（测试隔离）时

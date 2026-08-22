@@ -121,10 +121,10 @@ def status():
     live_real, live_eq_pnl, live_start_eq = None, None, None
     if getattr(t, "live_mode", False):
         try:
-            from execution.trade_journal import total_realized_pnl_usdt
+            from execution.trade_journal import total_net_realized_pnl_usdt
             import storage.db as sdb
             closed = [x for x in t.journal.trades if x["status"] == "closed"]
-            live_real = total_realized_pnl_usdt(
+            live_real = total_net_realized_pnl_usdt(
                 [x for x in closed if (x.get("venue") == "live")])
             row = sdb.q1("SELECT value FROM kv WHERE key='live_pnl_start'",
                          db_path=t.journal.db_path)
@@ -188,13 +188,15 @@ def signal_for(base: str):
 @app.get("/journal", response_model=JournalOut, tags=["观测"])
 def journal(limit: int = 20):
     """最近交易台账（含盈亏）。"""
-    from execution.trade_journal import realized_pnl_usdt, total_realized_pnl_usdt
+    from execution.trade_journal import (realized_pnl_usdt,
+                                          total_realized_pnl_usdt,
+                                          total_net_realized_pnl_usdt)
     t = _trader()
     trades = t.journal.trades[-limit:]
     closed = [x for x in t.journal.trades if x["status"] == "closed"]
     wins = [x for x in closed if (x.get("pnl") or 0) > 0]
     # 实盘盈亏单独计数(venue=live,2026-08-23 用户指示"重新开始计盈亏")
-    live_total = total_realized_pnl_usdt(
+    live_total = total_net_realized_pnl_usdt(
         [x for x in closed if (x.get("venue") == "live")])
     return JournalOut(
         total=len(t.journal.trades), closed=len(closed),

@@ -129,9 +129,48 @@ class ReviewMixin:
         # 2026-08-23 fix: pnl_usdt 提前到硬止损块之前——此前 live 首笔平仓会
         # UnboundLocalError 被吞,硬止损静默失效。
         pnl_usdt = realized_pnl_usdt(closed) or 0.0
+        # 2026-08-23 用户问"会计算费率和手续费吗": 平仓按账户账单取【实际】
+        # 手续费/资金费;账单取不到用 FEE_RATE_TAKER 估算兜底;落 trades 行,
+        # 实盘硬止损与实盘盈亏全部改按净额计。
+        fees_paid = funding_paid = 0.0
+        try:
+            if getattr(config, "FEE_ACCOUNTING_ENABLED", False):
+                _entry_ts = t.get("entry_time") or 0
+                _bills = self.exchange.fetch_bills(
+                    "USDT", since_ms=int(_entry_ts * 1000)) or []
+                _exit_ms = int((closed.get("exit_time") or time.time()) * 1000) \
+                    + 60_000   # 1 分钟宽限,账单可能有毫秒级延迟
+                _fees = 0.0
+                _funding = 0.0
+                for b in _bills:
+                    if (b.get("ts") or 0) > _exit_ms:
+                        continue
+                    if b.get("type") == "fee":        # OKX 账单 type8=资金费率
+                        _funding += float(b.get("amount") or 0)
+                    elif b.get("type") == "trade":
+                        try:
+                            _info = b.get("info") or {}
+                            _f = _info.get("fee")
+                            _fees += abs(float(_f or 0))
+                        except Exception:
+                            pass
+                if _bills:
+                    fees_paid = round(_fees, 4)
+                    funding_paid = round(-_funding, 4)   # amount 为负=实付
+                else:
+                    from execution.trade_journal import estimate_fees_usdt
+                    fees_paid = estimate_fees_usdt(closed)
+                import storage.db as sdb
+                sdb.init_db(self._db_path)
+                sdb.x("UPDATE trades SET fees_usdt=?, funding_usdt=? WHERE id=?",
+                      [fees_paid, funding_paid, t.get("id")],
+                      db_path=self._db_path)
+        except Exception:
+            pass
+        net_pnl = round(pnl_usdt - fees_paid - funding_paid, 4)
         # 2026-08-22 实盘硬止损: 累计实亏达 LIVE_HARD_STOP_USDT → 停手。
         # 用 kv 持久化(重启不重置),与账户总权益无关(账户大时 1.5% 日线
-        # 熔断金额会超过预算,此线才是可靠边界)。
+        # 熔断金额会超过预算,此线才是可靠边界)。2026-08-23 起按净额累计。
         live_real = None
         if getattr(self, "live_mode", False):
             try:
@@ -139,7 +178,7 @@ class ReviewMixin:
                 sdb.init_db(self._db_path)
                 cur = sdb.q1("SELECT value FROM kv WHERE key='live_realized'",
                              db_path=self._db_path)
-                live_real = (float(cur["value"]) if cur else 0.0) + pnl_usdt
+                live_real = (float(cur["value"]) if cur else 0.0) + net_pnl
                 sdb.x("INSERT OR REPLACE INTO kv (key, value) VALUES ('live_realized', ?)",
                       [f"{live_real:.6f}"], db_path=self._db_path)
                 if live_real <= -config.LIVE_HARD_STOP_USDT:
@@ -161,11 +200,15 @@ class ReviewMixin:
         except Exception:
             pass
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
-        sign = "+" if pnl_usdt >= 0 else ""
+        sign = "+" if net_pnl >= 0 else ""
+        fee_line = (f"\n手续费 {fees_paid:.4f} · 资金费 {funding_paid:.4f}"
+                    if fees_paid or funding_paid else "")
         live_line = (f"\n实盘累计盈亏 **{live_real:+.2f} USDT**"
                      if live_real is not None else "")
         msg = (f"📊 平仓 {base} {self._dir_cn(t.get('direction') or 'long')}\n"
-               f"盈亏 **{sign}{pnl_usdt:.2f} USDT**（{closed['pnl']*100:+.1f}%）\n"
+               f"盈亏 **{sign}{pnl_usdt:.2f} USDT**（{closed['pnl']*100:+.1f}%）"
+               f"{fee_line}\n"
+               f"净盈亏 **{net_pnl:+.4f} USDT**\n"
                f"原因：{exit_reason_short}\n"
                f"复盘 {len(lessons)} 条新经验（待验证）· "
                f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条\n"
@@ -175,6 +218,9 @@ class ReviewMixin:
             log_event("close", {"tid": t.get("id"), "symbol": base,
                                 "dir": t.get("direction"),
                                 "pnl_usdt": pnl_usdt,
+                                "fees_usdt": fees_paid,
+                                "funding_usdt": funding_paid,
+                                "net_pnl_usdt": net_pnl,
                                 "pnl_pct": closed.get("pnl"),
                                 "reason": exit_reason_short,
                                 "lessons": len(lessons)})

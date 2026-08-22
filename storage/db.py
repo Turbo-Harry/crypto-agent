@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS trades (
     entry_time REAL,
     exit_price REAL, exit_time REAL, exit_reason TEXT,
     pnl REAL, status TEXT DEFAULT 'open',
+    fees_usdt REAL DEFAULT 0,          -- 2026-08-23 手续费(平仓复盘按账单写入)
+    funding_usdt REAL DEFAULT 0,       -- 2026-08-23 资金费(持仓期间结算,同)
     review TEXT, review_ts REAL
 );
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
@@ -394,6 +396,14 @@ def _migrate_v6_experience_sharing(conn):
                  "ON lesson_rollups(share_key)")
 
 
+def _migrate_v7_trade_fees(conn):
+    """v7: 交易费/资金费落账(2026-08-23 用户问'会计算费率和手续费吗')——
+    trades 加 fees_usdt(手续费)/funding_usdt(资金费),平仓复盘时按账户账单
+    实际值写入,净盈亏 = pnl_usdt - fees - funding。"""
+    _add_column_if_missing(conn, "trades", "fees_usdt", "REAL DEFAULT 0")
+    _add_column_if_missing(conn, "trades", "funding_usdt", "REAL DEFAULT 0")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -402,6 +412,7 @@ MIGRATIONS = (
     (4, _migrate_v4_engine_errors_archived),
     (5, _migrate_v5_lesson_hist_evidence),
     (6, _migrate_v6_experience_sharing),
+    (7, _migrate_v7_trade_fees),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

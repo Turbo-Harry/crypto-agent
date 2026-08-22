@@ -370,15 +370,37 @@ class CCXTAdapter(ExchangeAdapter):
 
     def fetch_bills(self, ccy: str = "USDT", since_ms: int = 0,
                     bill_type: str = "") -> List[dict]:
+        """账户账单(2026-08-23 改走 OKX bills 原始端点——ccxt fetch_ledger
+        对 OKX 返回空)。行格式统一:
+          type='fee'     → 资金费率结算(balChg=amount,负=实付)
+          type='trade'   → 成交账单,手续费在 info.fee(负=实付)
+        按 since_ms 过滤,只返回最近 100 条(日内短线足够)。"""
         self._load()
         try:
-            rows = self._ccxt.fetch_ledger(ccy, since=since_ms or None)
+            params = {}
+            if bill_type:
+                params["type"] = bill_type
+            if since_ms:
+                params["begin"] = str(int(since_ms))
+            resp = self._ccxt.private_get_account_bills(params)
+            rows = resp.get("data") or []
         except Exception:
             return []
         out = []
-        for r in rows:
-            out.append({"ts": r.get("timestamp") or 0,
-                        "amount": float(r.get("amount") or 0),
-                        "type": r.get("type") or "",
-                        "info": r.get("info") or {}})
+        for b in rows:
+            try:
+                raw_type = str(b.get("type") or "")
+                if raw_type == "8":       # 资金费率结算
+                    out.append({"ts": int(b.get("ts") or 0),
+                                "amount": float(b.get("balChg") or 0),
+                                "type": "fee",
+                                "info": {"instId": b.get("instId") or ""}})
+                elif raw_type == "2":     # 成交
+                    out.append({"ts": int(b.get("ts") or 0),
+                                "amount": float(b.get("balChg") or 0),
+                                "type": "trade",
+                                "info": {"fee": b.get("fee"),
+                                         "instId": b.get("instId") or ""}})
+            except Exception:
+                continue
         return out
