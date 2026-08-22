@@ -10,6 +10,12 @@ CCXT 适配器（2026-08-22 用户指示"用 ccxt 那个交易库"）——
     (引擎 _recover_order 反查语义不变)
   - 条件单 slTriggerPx/tpTriggerPx + slOrdPx/tpOrdPx=-1(市场触发)
   - 空值防御(坏 K 线跳过、ticker 空值抛错)
+  - 标准错误码(2026-08-22 用户要求'同步 ccxt 标准错误码'): 用 ccxt
+    标准异常层级分类——网络类(NetworkError/RequestTimeout/…)→ 抛
+    ExchangeError 走重试反查;业务类(InvalidOrder/InsufficientFunds/
+    OrderNotFound/… )→ OrderResult(ok=False),消息保留 OKX 原始
+    sCode(引擎的黑名单 51001/51087/51155、51169 竞态、51279 预达成
+    等字符串匹配语义不变)
 
 沙盘验证过的原语: create_order(market/conditional)、fetch_open_orders(ordType
 passthrough)、cancel_order(trigger)、fetch_positions(mgnMode)、fetch_balance。
@@ -22,14 +28,26 @@ from exchange.models import (BalanceInfo, Candle, Instrument, OrderResult,
                              PositionInfo, TickerInfo, floor_to_lot)
 
 
-def _is_business_reject(e) -> bool:
-    """ccxt 异常里区分业务拒绝(→ok=False)与网络/其它(→抛 ExchangeError)。
-    OKX 业务拒绝的消息形如 'okx 51169 ...' 或含 'sCode'/'code' 文本。"""
-    msg = str(e)
-    if isinstance(e, getattr(__import__("ccxt"), "NetworkError", type(None))):
-        return False
-    return ("okx " in msg or "sCode" in msg
-            or ("code" in msg and "HTTP" not in msg))
+def _classify(e):
+    """按 ccxt 标准异常层级分类(2026-08-22 用户要求'同步标准错误码'):
+    返回 (kind, class_name)。kind: 'network' → 抛 ExchangeError 走重试/
+    反查;'business' → OrderResult(ok=False)。消息保留 OKX 原始 sCode,
+    引擎层字符串匹配(黑名单/51169/51279)语义不变。"""
+    import ccxt
+    if isinstance(e, (ccxt.NetworkError, ccxt.RequestTimeout,
+                      ccxt.DDoSProtection, ccxt.ExchangeNotAvailable,
+                      ccxt.OnMaintenance)):
+        return "network", type(e).__name__
+    for cls in (ccxt.InvalidOrder, ccxt.InsufficientFunds, ccxt.OrderNotFound,
+                ccxt.BadSymbol, ccxt.PermissionDenied, ccxt.DuplicateOrderId,
+                ccxt.OrderImmediatelyFillable, ccxt.OrderNotFillable,
+                ccxt.ContractUnavailable, ccxt.InvalidAddress,
+                ccxt.ArgumentsRequired, ccxt.NotSupported, ccxt.BadRequest,
+                ccxt.OperationFailed, ccxt.OperationRejected):
+        if isinstance(e, cls):
+            return "business", type(e).__name__
+    # ccxt 基类 ExchangeError(OKX code=1 包装): 消息含 sCode,按业务拒绝处理
+    return "business", type(e).__name__
 
 
 class CCXTAdapter(ExchangeAdapter):
@@ -71,7 +89,9 @@ class CCXTAdapter(ExchangeAdapter):
         unified = self._to_ccxt_symbol(inst_id)
         m = self._ccxt.markets.get(unified)
         if not m:
-            raise ExchangeError(f"未知工具: {inst_id}")
+            # 语义同 OKX 51001(沙盘无合约): 引擎 _log_order_failure 按此
+            # 自动登记动态黑名单,新未知币一次失败即免疫(与 native 同语义)
+            raise ExchangeError(f"51001 沙盘无合约: {inst_id}")
         ct_val = m.get("contractSize") or 1
         lot_sz = 10 ** (-m["precision"]["amount"]) if m["precision"].get("amount") else 1e-8
         base = m["base"]
@@ -258,10 +278,11 @@ class CCXTAdapter(ExchangeAdapter):
                                         contracts if venue == "swap" else sz,
                                         params=params)
         except Exception as e:
-            if _is_business_reject(e):
-                return OrderResult(ok=False, qty=qty, cl_ord_id=cl_ord_id,
-                                   message=str(e))
-            raise ExchangeError(f"下单异常: {e}")   # 网络类 → 抛,引擎反查
+            kind, cls_name = _classify(e)
+            if kind == "network":
+                raise ExchangeError(f"下单异常[{cls_name}]: {e}")  # 重试/反查
+            return OrderResult(ok=False, qty=qty, cl_ord_id=cl_ord_id,
+                               message=f"[{cls_name}] {e}")
         return OrderResult(ok=True, ord_id=str(o.get("id") or ""),
                            cl_ord_id=cl_ord_id, qty=qty)
 
@@ -288,9 +309,10 @@ class CCXTAdapter(ExchangeAdapter):
             o = self._ccxt.create_order(sym, "market", side, contracts,
                                         params=params)
         except Exception as e:
-            if _is_business_reject(e):
-                return OrderResult(ok=False, qty=qty, message=str(e))
-            raise ExchangeError(f"条件单异常: {e}")
+            kind, cls_name = _classify(e)
+            if kind == "network":
+                raise ExchangeError(f"条件单异常[{cls_name}]: {e}")
+            return OrderResult(ok=False, qty=qty, message=f"[{cls_name}] {e}")
         return OrderResult(ok=True, algo_id=str(o.get("id") or ""), qty=qty)
 
     def pending_algo_ids(self, inst_id: str) -> List[str]:
