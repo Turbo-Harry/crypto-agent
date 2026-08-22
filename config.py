@@ -163,6 +163,10 @@ AGENT_HARNESS_MAX_TOOL_CALLS = 3
 AGENT_HARNESS_MAX_STEPS = 8
 AGENT_HARNESS_TIMEOUT_MS = 4000
 AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
+# 记忆退层：证据保留在库中，过期只标 stale 并退出检索；重新验证可重新提升。
+AGENT_HARNESS_EPISODIC_TTL_DAYS = 90
+AGENT_HARNESS_SEMANTIC_TTL_DAYS = 180
+AGENT_HARNESS_MEMORY_MIN_STRENGTH = 0.2
 # 预测机制(2026-08-23 用户要求"最好能有预测机制"): 1h 对数收益 bootstrap
 # 价格分布 + 触达概率,与历史同向信号实证命中率混合;平仓后自动校准(Brier)。
 FORECAST_ENABLED = True                 # 开关

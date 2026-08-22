@@ -169,13 +169,13 @@
 - H0 已落地：`decision/agent_contracts.py` 定义严格输入/输出/运行状态/最终动作契约；`tests/test_agent_contracts.py` 覆盖范围校验、拒绝证据和 fail-closed 策略。
 - H1 已落地：`storage/db.py` 追加 v12 迁移；`storage/agent_harness.py` 提供幂等 run、step trace、evaluation 写入与只读查询。
 - H2 已落地：`decision/agent_context.py` 固定上下文区段、显式缺失字段、大小预算和稳定 hash。
-- H3 已落地：`decision/agent_memory.py` + `storage/agent_memory.py` 提供 episodic/semantic/procedural 三层记忆；pending 结果不入检索，按方向/regime/时效过滤并做多样性约束。
+- H3 已落地：`decision/agent_memory.py` + `storage/agent_memory.py` 提供 episodic/semantic/procedural 三层记忆；pending 结果不入检索，按方向/regime/时效过滤并做多样性约束。记忆按配置 TTL 和证据强度自动退层为 `stale`，保留原文与审计元数据但退出检索。
 - H4 已落地：`decision/agent_tools.py` 提供预注册只读工具、schema 边界、调用/时间预算和 trace；Harness 支持显式注入工具调用，不发现 exchange 执行方法。
 - H5 已落地：`decision/agent_policy.py` + `decision/agent_harness.py` 实现 context→memory→tool→model→schema→policy 编排；默认 `shadow_reject`，显式 veto 才能 `agent_reject`。
 - H6 已落地：`decision/agent_evaluation.py` 与 `tools/eval_agent_harness.py` 支持 TP/SL 首触、timeout、ambiguous、MFE/MAE、Brier、机会成本和同输入配对评测。
 - H7 已落地：`decision/agent_lifecycle.py` + `storage/agent_lifecycle.py` 实现 candidate→shadow→validated→active-veto→observing→kept/rolled-back 和样本门。
 - 只读观测已接入：`GET /agent/status`、`GET /agent/runs`、`GET /agent/evaluation`；`decision/agent_judge.py` 与 `engines/signal_scan.py` 新增仅显式注入模型回调的兼容适配，不新增外部网络出站路径。
-- 证据：32 项 Harness 专项测试通过；工作区 Python 运行时全量 discover 通过 32 项、1 项服务测试因环境缺少 `fastapi` 无法导入；`params_lint`、`code_graph --check`、`test_isolation_lint`、`fix_guard`、`ai_repo_check` 全部通过。
+- 证据：34 项 Harness 专项测试通过；工作区 Python 运行时全量 discover 通过 33 项，服务 API 直接回归 32 项全绿；`params_lint`、`code_graph --check`、`test_isolation_lint`、`fix_guard`、`ai_repo_check` 全部通过。
 
 对应提交：`1b5b3f3`（H0）、`f5cb357`（H1）、`2fdbe54`（H2）、`2dda065`（H3-H7、评测、观测与回归）、`f2e780a`（显式 Harness 接线）。
 

@@ -28,7 +28,7 @@ def upsert_memory(*, memory_type: str, source_id: str, content: str,
 
     if memory_type not in {"episodic", "semantic", "procedural"}:
         raise ValueError("unknown memory_type")
-    if status not in {"pending", "mature", "trusted", "discarded"}:
+    if status not in {"pending", "mature", "trusted", "discarded", "stale"}:
         raise ValueError("unknown memory status")
     evidence_id = _evidence_id(memory_type, source_id)
     ts = time.time() if created_ts is None else float(created_ts)
@@ -82,6 +82,40 @@ def promote_mature_legacy_memories(*, db_path: str | None = None,
                       "conditions": row.get("conditions")}, db_path=db_path)
         count += 1
     return count
+
+
+def decay_memories(*, episodic_ttl_days: float, semantic_ttl_days: float,
+                   min_strength: float, now_ts: float | None = None,
+                   db_path: str | None = None) -> int:
+    """Demote old/weak memories without deleting audit evidence.
+
+    ``stale`` rows remain queryable for audit and can be re-promoted only by a
+    new independently settled observation; retrieval excludes them.
+    """
+
+    db.init_db(db_path)
+    now = time.time() if now_ts is None else float(now_ts)
+    changed = 0
+    rows = db.q("SELECT evidence_id,memory_type,status,created_ts,evidence_strength,metadata_json "
+                "FROM agent_memories WHERE status IN ('mature','trusted','discarded')",
+                db_path=db_path)
+    for row in rows:
+        ttl = float(episodic_ttl_days) if row["memory_type"] == "episodic" else float(semantic_ttl_days)
+        age_days = max(0.0, (now - float(row.get("created_ts") or now)) / 86400.0)
+        weak = float(row.get("evidence_strength") or 0.0) < float(min_strength)
+        if age_days <= ttl and not weak:
+            continue
+        try:
+            metadata = json.loads(row.get("metadata_json") or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        metadata.update({"decay_reason": "ttl" if age_days > ttl else "weak_evidence",
+                         "decayed_at": now, "age_days": round(age_days, 3)})
+        db.x("UPDATE agent_memories SET status='stale', metadata_json=? WHERE evidence_id=?",
+             [json.dumps(metadata, ensure_ascii=False, sort_keys=True), row["evidence_id"]],
+             db_path=db_path)
+        changed += 1
+    return changed
 
 
 def procedural_policies() -> list[dict[str, Any]]:
