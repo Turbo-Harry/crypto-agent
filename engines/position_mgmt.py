@@ -179,7 +179,8 @@ class PositionMixin:
                 entry_price=price, stop_loss=sig["stop"], take_profit=sig["tp"],
                 size=qty, direction="long", score=score,
                 adopted_lesson_ids=adopted_ids, atr_value=sig["atr"],
-                signal_price=sig["entry"], venue="spot")
+                signal_price=sig["entry"],
+                venue=("live" if getattr(self, "live_mode", False) else "spot"))
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
                 from engines.feature_collector import collect_entry_features
@@ -346,7 +347,7 @@ class PositionMixin:
                 size=qty, direction=sig["dir"], score=score,
                 adopted_lesson_ids=adopted_ids,          # R2-3：本笔实际采纳的经验
                 atr_value=sig["atr"], signal_price=sig["entry"],
-                venue="swap")  # 合约腿
+                venue=("live" if getattr(self, "live_mode", False) else "swap"))  # 合约腿；实盘标 live(2026-08-23 重新计盈亏)
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
                 from engines.feature_collector import collect_entry_features

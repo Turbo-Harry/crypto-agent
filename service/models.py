@@ -54,6 +54,10 @@ class StatusOut(BaseModel):
     total_notional_usdt: float        # 累计投注额（全部交易）
     open_notional_usdt: float         # 当前未平仓投注额
     today_notional_usdt: float        # 今日投注额
+    # 实盘盈亏（2026-08-23 用户指示"重新开始计盈亏"——从实盘基线起算）
+    live_realized_pnl_usdt: Optional[float] = None   # 实盘已平仓累计盈亏 USDT
+    live_equity_pnl_usdt: Optional[float] = None     # 账户净值 − 实盘基线净值
+    live_pnl_start_equity: Optional[float] = None    # 实盘基线净值（计盈亏起点）
 
 
 class WatchItem(BaseModel):
@@ -94,7 +98,8 @@ class JournalOut(BaseModel):
     total: int
     closed: int
     win_rate: Optional[float]
-    total_pnl_usdt: Optional[float] = None  # 已平仓合计实际盈亏 USDT
+    total_pnl_usdt: Optional[float] = None  # 已平仓合计实际盈亏 USDT（历史全量）
+    live_total_pnl_usdt: Optional[float] = None  # 实盘已平仓合计盈亏 USDT（venue=live）
     trades: List[TradeItem]
 
 

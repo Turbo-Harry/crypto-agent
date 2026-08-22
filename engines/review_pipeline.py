@@ -125,16 +125,21 @@ class ReviewMixin:
         # 2026-08-20 DEF-5 闭环: 校准不再直接生效,走进化门(提案→影子→晋升/回滚)。
         score = t.get("score") or SIGNAL_SCORE
         self._threshold_gate_step(score, closed["pnl"])
+        # 2026-08-18 用户要求: 平仓通知展示具体收益金额(USDT),不是只有百分比。
+        # 2026-08-23 fix: pnl_usdt 提前到硬止损块之前——此前 live 首笔平仓会
+        # UnboundLocalError 被吞,硬止损静默失效。
+        pnl_usdt = realized_pnl_usdt(closed) or 0.0
         # 2026-08-22 实盘硬止损: 累计实亏达 LIVE_HARD_STOP_USDT → 停手。
         # 用 kv 持久化(重启不重置),与账户总权益无关(账户大时 1.5% 日线
         # 熔断金额会超过预算,此线才是可靠边界)。
+        live_real = None
         if getattr(self, "live_mode", False):
             try:
                 import storage.db as sdb
                 sdb.init_db(self._db_path)
                 cur = sdb.q1("SELECT value FROM kv WHERE key='live_realized'",
                              db_path=self._db_path)
-                live_real = (float(cur["value"]) if cur else 0.0) + (pnl_usdt or 0.0)
+                live_real = (float(cur["value"]) if cur else 0.0) + pnl_usdt
                 sdb.x("INSERT OR REPLACE INTO kv (key, value) VALUES ('live_realized', ?)",
                       [f"{live_real:.6f}"], db_path=self._db_path)
                 if live_real <= -config.LIVE_HARD_STOP_USDT:
@@ -155,16 +160,16 @@ class ReviewMixin:
                 self.risk.update_equity(eq, time.strftime("%Y-%m-%d"))
         except Exception:
             pass
-        # 2026-08-18 用户要求: 平仓通知展示具体收益金额(USDT),不是只有百分比。
-        pnl_usdt = realized_pnl_usdt(closed) or 0.0
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
         sign = "+" if pnl_usdt >= 0 else ""
+        live_line = (f"\n实盘累计盈亏 **{live_real:+.2f} USDT**"
+                     if live_real is not None else "")
         msg = (f"📊 平仓 {base} {self._dir_cn(t.get('direction') or 'long')}\n"
                f"盈亏 **{sign}{pnl_usdt:.2f} USDT**（{closed['pnl']*100:+.1f}%）\n"
                f"原因：{exit_reason_short}\n"
                f"复盘 {len(lessons)} 条新经验（待验证）· "
                f"验证了 {len(t.get('adopted_lesson_ids') or [])} 条\n"
-               f"当前阈值 {self.threshold_learner.threshold}")
+               f"当前阈值 {self.threshold_learner.threshold}{live_line}")
         try:
             from service.events import log_event
             log_event("close", {"tid": t.get("id"), "symbol": base,

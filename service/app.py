@@ -116,6 +116,24 @@ def status():
     today_notional = sum(notional(x) for x in t.journal.trades
                          if x.get("entry_time")
                          and time.strftime("%Y-%m-%d", time.localtime(x["entry_time"])) == today)
+    # 实盘盈亏（2026-08-23 用户指示"重新开始计盈亏"）：基线净值 kv 起算
+    live_real, live_eq_pnl, live_start_eq = None, None, None
+    try:
+        from execution.trade_journal import total_realized_pnl_usdt
+        import storage.db as sdb
+        closed = [x for x in t.journal.trades if x["status"] == "closed"]
+        live_real = total_realized_pnl_usdt(
+            [x for x in closed if (x.get("venue") == "live")])
+        row = sdb.q1("SELECT value FROM kv WHERE key='live_pnl_start'",
+                     db_path=t.journal.db_path)
+        if row:
+            import json as _json
+            base = _json.loads(row["value"])
+            live_start_eq = base.get("equity")
+            if live_start_eq and bal and bal.total_eq > 0:
+                live_eq_pnl = round(bal.total_eq - live_start_eq, 2)
+    except Exception:
+        pass
     return StatusOut(
         balance=BalanceOut(total_equity=bal.total_eq if bal else 0,
                            usdt_free=bal.usdt_free if bal else 0,
@@ -137,7 +155,10 @@ def status():
         today_trade_count=today_n,
         total_notional_usdt=round(total_notional, 2),
         open_notional_usdt=round(open_notional, 2),
-        today_notional_usdt=round(today_notional, 2))
+        today_notional_usdt=round(today_notional, 2),
+        live_realized_pnl_usdt=live_real,
+        live_equity_pnl_usdt=live_eq_pnl,
+        live_pnl_start_equity=live_start_eq)
 
 
 @app.get("/watchlist", response_model=WatchlistOut, tags=["观测"])
@@ -170,10 +191,14 @@ def journal(limit: int = 20):
     trades = t.journal.trades[-limit:]
     closed = [x for x in t.journal.trades if x["status"] == "closed"]
     wins = [x for x in closed if (x.get("pnl") or 0) > 0]
+    # 实盘盈亏单独计数(venue=live,2026-08-23 用户指示"重新开始计盈亏")
+    live_total = total_realized_pnl_usdt(
+        [x for x in closed if (x.get("venue") == "live")])
     return JournalOut(
         total=len(t.journal.trades), closed=len(closed),
         win_rate=round(len(wins) / len(closed), 3) if closed else None,
         total_pnl_usdt=total_realized_pnl_usdt(closed),
+        live_total_pnl_usdt=live_total,
         trades=[TradeItem(id=x["id"], symbol=x["symbol"],
                           direction=x.get("direction") or "long",
                           entry_price=x.get("entry_price"),
