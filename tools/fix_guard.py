@@ -99,6 +99,44 @@ GUARDS = [
      lambda: "永不自动改尺子" in _read("decision/scan_evolve.py")
              and "def approve" in _read("decision/scan_evolve.py")
              and "/scan/evolve/approve" in _read("service/app.py")),
+    # G14 ccxt 切换后适配器名从 okx 变为 okx-ccxt，交易通知不能被误静音
+    ("G14 原生/ccxt OKX 均启用交易通知",
+     lambda: "TRADE_NOTIFY_ADAPTERS" in _read("decision/notify.py")
+             and '"okx-ccxt"' in _read("config.py")
+             and "trade_notifications_enabled(_ad_name)" in
+             _read("engines/directional_trader.py")),
+    # G15 事件实现属于 execution；FakeAdapter 的外部事件通道由宿主自动静音
+    ("G15 引擎事件无 service 反向依赖且支持隔离",
+     lambda: "service.events" not in _read("engines/directional_trader.py")
+             and "service.events" not in _read("engines/position_mgmt.py")
+             and "service.events" not in _read("engines/review_pipeline.py")
+             and "def event_path" in _read("execution/events.py")
+             and "self._log_event" in _read("engines/directional_trader.py")),
+    # G16 交易所下单 API 故障(50001/503)退避——故障期不刷失败行/不重试下单
+    ("G16 下单 API 故障退避在位",
+     lambda: "_open_backoff_until" in _read("engines/signal_scan.py")
+             and "exchange_backoff" in _read("engines/signal_scan.py")),
+    # G17 长扫描逐币插拍(心跳/tick/快照)——网络黑洞不能把止损监控拖失明
+    ("G17 长扫描逐币插拍在位",
+     lambda: "_long_scan_progress" in _read("engines/signal_scan.py")
+             and "write_heartbeat" in _read("engines/signal_scan.py")),
+    # G18 每小时对账巡查——交易所故障期成交回报丢失的幽灵仓不必等重启
+    ("G18 每小时对账巡查在位",
+     lambda: "_reconcile_sweep" in _read("service/worker.py")
+             and "_reconcile_startup" in _read("engines/directional_trader.py")),
+    # G19 tick 级止损监控(实时价 max_age=60)——平仓决策不许拿旧价
+    ("G19 tick 级止损监控在位",
+     lambda: "max_age=60" in _read("engines/risk_monitor.py")
+             and "rt.get" in _read("engines/risk_monitor.py")),
+    # G20 策略参数集中化——全部参数在 config.py,禁止模块级私藏
+    ("G20 参数集中化在位",
+     lambda: "私藏参数" in _read("tools/params_lint.py")
+             and os.path.exists(os.path.join(ROOT, "config.py"))),
+    # G21 实盘硬止损按净额累计(扣费后)——预算 30 USDT 红线
+    ("G21 实盘硬止损净额累计在位",
+     lambda: "LIVE_HARD_STOP_USDT" in _read("engines/review_pipeline.py")
+             and "net_pnl" in _read("engines/review_pipeline.py")
+             and "fees_usdt" in _read("engines/review_pipeline.py")),
 ]
 
 
