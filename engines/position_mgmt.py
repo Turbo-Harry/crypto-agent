@@ -183,6 +183,8 @@ class PositionMixin:
                 signal_price=sig["entry"],
                 shadow_dims=json.dumps(sig.get("shadow_dims") or {},
                                        ensure_ascii=False),
+                targets=json.dumps(sig.get("targets") or {},
+                                   ensure_ascii=False),
                 venue=("live" if getattr(self, "live_mode", False) else "spot"))
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
@@ -352,6 +354,8 @@ class PositionMixin:
                 atr_value=sig["atr"], signal_price=sig["entry"],
                 shadow_dims=json.dumps(sig.get("shadow_dims") or {},
                                        ensure_ascii=False),
+                targets=json.dumps(sig.get("targets") or {},
+                                   ensure_ascii=False),
                 venue=("live" if getattr(self, "live_mode", False) else "swap"))  # 合约腿；实盘标 live(2026-08-23 重新计盈亏)
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
@@ -373,9 +377,27 @@ class PositionMixin:
                         t["tp_missing"] = True
                 self.journal._save()
                 self._notify(f"⚠️ {base} TP 条件单挂失败（本地 monitor 止盈兜底）")
+            # 2026-08-23 目标价位带 + 历史命中率(用户问"会预测会升到哪吗")
+            _tg_line = ""
+            try:
+                _tg = sig.get("targets") or {}
+                _tg_line = (f"目标 T1 {_tg['t1']:.2f} · T2 {_tg['t2']:.2f}"
+                            + (f" · T3(结构位) {_tg['t3']:.2f}"
+                               if _tg.get("t3") else "")
+                            + "\n")
+            except Exception:
+                pass
+            _hit_line = ""
+            try:
+                from decision.target_stats import describe
+                _hit_line = describe(getattr(self, "_db_path", None),
+                                     sig.get("dir")) + "\n"
+            except Exception:
+                pass
             msg = (f"🎯 {self._dir_cn(sig['dir'])} {base}\n"
                    f"入场 **{price:.2f}**\n"
                    f"止损 {sig['stop']:.2f}  ·  止盈 {sig['tp']:.2f}\n"
+                   f"{_tg_line}{_hit_line}"
                    f"盈亏比 2:1  ·  杠杆 {lev}x  ·  数量 {qty}  ·  名义 {qty * price:.0f} USDT")
             try:
                 from service.events import log_event

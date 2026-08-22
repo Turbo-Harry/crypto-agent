@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS trades (
     fees_usdt REAL DEFAULT 0,          -- 2026-08-23 手续费(平仓复盘按账单写入)
     funding_usdt REAL DEFAULT 0,       -- 2026-08-23 资金费(持仓期间结算,同)
     shadow_dims TEXT,                  -- 2026-08-23 开仓时 6 维子分 JSON(权重进化证据)
+    targets TEXT,                      -- 2026-08-23 目标价位带 T1/T2/T3 JSON
     review TEXT, review_ts REAL
 );
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
@@ -411,6 +412,12 @@ def _migrate_v8_shadow_dims(conn):
     _add_column_if_missing(conn, "trades", "shadow_dims", "TEXT")
 
 
+def _migrate_v9_trade_targets(conn):
+    """v9: 目标价位带(2026-08-23 用户问'会预测会升到什么价位吗')——
+    trades 加 targets(T1/T2/T3 JSON,开仓时计算)。"""
+    _add_column_if_missing(conn, "trades", "targets", "TEXT")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -421,6 +428,7 @@ MIGRATIONS = (
     (6, _migrate_v6_experience_sharing),
     (7, _migrate_v7_trade_fees),
     (8, _migrate_v8_shadow_dims),
+    (9, _migrate_v9_trade_targets),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -565,7 +573,7 @@ _TRADE_COLS = ("id", "symbol", "signal", "reason", "entry_price", "stop_loss",
                "adopted_lesson_ids", "atr_value", "signal_price", "notional_usdt",
                "risk_usdt", "entry_time", "exit_price", "exit_time", "exit_reason",
                "pnl", "status", "fees_usdt", "funding_usdt", "shadow_dims",
-               "review", "review_ts")
+               "targets", "review", "review_ts")
 
 
 def q(sql, params=(), db_path=None):

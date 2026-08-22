@@ -79,6 +79,23 @@ def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
         return None, None
 
 
+def compute_targets(entry, atr, direction, swing_level=None):
+    """目标价位带(2026-08-23 用户问"会预测会升到什么价位吗"):
+    T1=1×ATR(第一目标) / T2=2×ATR(现役止盈位) / T3=结构位(近20根摆动高低点,
+    超出 T2 才列入——结构位是对"会升到哪"的实证参照,不是保证)。
+    纯函数,便于测试与回放。"""
+    t1 = entry + atr if direction == "long" else entry - atr
+    t2 = entry + 2 * atr if direction == "long" else entry - 2 * atr
+    t3 = None
+    if swing_level:
+        if direction == "long" and swing_level > t2:
+            t3 = swing_level
+        elif direction == "short" and swing_level < t2:
+            t3 = swing_level
+    return {"t1": round(t1, 6), "t2": round(t2, 6),
+            "t3": round(t3, 6) if t3 else None}
+
+
 def _book_imbalance(book, depth=10):
     """盘口失衡(2026-08-23): (买深度−卖深度)/(买+卖),[-1,1];正=买盘厚。"""
     if not book:
@@ -191,6 +208,18 @@ class SignalScanMixin:
         from decision.scan_evolve import effective_wick_ratio
         ratio = (wick_ratio if wick_ratio is not None
                  else effective_wick_ratio(getattr(self, "_db_path", None)))
+        # 2026-08-23 目标价位带: 近20根摆动结构位(不含当前未收线K)
+        _swing = None
+        try:
+            if len(klines) >= 21:
+                _swing = (max(k["high"] for k in klines[-21:-1])
+                          if ema20[-1] > ema50[-1]
+                          else min(k["low"] for k in klines[-21:-1]))
+        except Exception:
+            _swing = None
+        _targets = compute_targets(entry_ref, atr_val,
+                                   "long" if ema20[-1] > ema50[-1] else "short",
+                                   swing_level=_swing)
         kline_ts = last.get("ts") if isinstance(last, dict) else None
         # last 来自 klines dict 无 ts；用原始 kl 最后一根
         if kline_ts is None and kl:
@@ -208,6 +237,7 @@ class SignalScanMixin:
                         "tp": entry_ref + config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
                         "shadow_score": score, "shadow_dims": dims,
+                        "targets": _targets,
                         "regime": regime, "kline_ts": kline_ts}
         # 做空信号：空头趋势 + 反弹 EMA20 不破 + 拒绝K线（上影线）
         if ema20[-1] < ema50[-1] and last["high"] >= ema20[-1] and last["close"] < ema20[-1]:
@@ -221,6 +251,7 @@ class SignalScanMixin:
                         "tp": entry_ref - config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
                         "shadow_score": score, "shadow_dims": dims,
+                        "targets": _targets,
                         "regime": regime, "kline_ts": kline_ts}
         return None
 

@@ -86,11 +86,13 @@ def judge(sig, base, score, price, sentiment, analyzer=None):
         return "approve", ""
     dims = sig.get("shadow_dims") or {}
     sent = sentiment or {}
+    tg = sig.get("targets") or {}
     user = (f"标的: {base} 永续合约\n"
             f"方向: {'开多' if sig.get('dir') == 'long' else '开空'}\n"
             f"信号分: {score}\n"
             f"6维子分: {json.dumps(dims, ensure_ascii=False)}\n"
             f"现价: {price}  止损: {sig.get('stop')}  止盈: {sig.get('tp')}\n"
+            f"目标价位: {json.dumps(tg, ensure_ascii=False)}\n"
             f"消息面: F&G={sent.get('fng_value')} 新闻情感={sent.get('news')} "
             f"合成={sent.get('composite')}\n"
             f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
