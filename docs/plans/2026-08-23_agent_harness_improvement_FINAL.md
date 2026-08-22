@@ -174,10 +174,10 @@
 - H5 已落地：`decision/agent_policy.py` + `decision/agent_harness.py` 实现 context→memory→tool→model→schema→policy 编排；默认 `shadow_reject`，显式 veto 才能 `agent_reject`。
 - H6 已落地：`decision/agent_evaluation.py` 与 `tools/eval_agent_harness.py` 支持 TP/SL 首触、timeout、ambiguous、MFE/MAE、Brier、机会成本和同输入配对评测。
 - H7 已落地：`decision/agent_lifecycle.py` + `storage/agent_lifecycle.py` 实现 candidate→shadow→validated→active-veto→observing→kept/rolled-back 和样本门。
-- 只读观测已接入：`GET /agent/status`、`GET /agent/runs`、`GET /agent/evaluation`；`decision/agent_judge.py` 新增仅显式注入模型回调的兼容适配，不新增外部网络出站路径。
+- 只读观测已接入：`GET /agent/status`、`GET /agent/runs`、`GET /agent/evaluation`；`decision/agent_judge.py` 与 `engines/signal_scan.py` 新增仅显式注入模型回调的兼容适配，不新增外部网络出站路径。
 - 证据：32 项 Harness 专项测试通过；工作区 Python 运行时全量 discover 通过 32 项、1 项服务测试因环境缺少 `fastapi` 无法导入；`params_lint`、`code_graph --check`、`test_isolation_lint`、`fix_guard`、`ai_repo_check` 全部通过。
 
-对应提交：`1b5b3f3`（H0）、`f5cb357`（H1）、`2fdbe54`（H2）、`2dda065`（H3-H7、评测、观测与回归）。
+对应提交：`1b5b3f3`（H0）、`f5cb357`（H1）、`2fdbe54`（H2）、`2dda065`（H3-H7、评测、观测与回归）、`f2e780a`（显式 Harness 接线）。
 
 ### H0：冻结基线与契约
 
