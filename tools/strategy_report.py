@@ -56,12 +56,23 @@ def compute():
         max_dd = max(max_dd, peak - cum)
     max_dd = round(max_dd, 6)
 
-    # SQN = √N × mean(R)/std(R)；R 来自 trade_features.r_multiple（无则回退 pnl）
+    # SQN = √N × mean(R)/std(R)；R 来自 trade_features.r_multiple（无则回退
+    # pnl/止损距——与 tools/readiness.py 同口径,避免特征缺失的币被排除在
+    # 样本外(SQN 长期"样本不足"的根因,2026-08-22)。
     feats = {f["trade_id"]: f for f in q(
         "SELECT trade_id, r_multiple, mfe_r, mae_r, features_missing, regime_tag "
         "FROM trade_features")}
-    rs = [feats[t["id"]]["r_multiple"] for t in closed
-          if t["id"] in feats and feats[t["id"]]["r_multiple"] is not None]
+    rs = []
+    for t in closed:
+        f = feats.get(t["id"])
+        if f and f["r_multiple"] is not None:
+            rs.append(f["r_multiple"])
+            continue
+        e, s, pnl = t.get("entry_price"), t.get("stop_loss"), t.get("pnl")
+        if e and s and pnl is not None and abs(e - s) > 0:
+            sd_ = abs(e - s) / e
+            if sd_ > 0:
+                rs.append(pnl / sd_)
     sqn = None
     if n >= MIN_SAMPLES and len(rs) >= MIN_SAMPLES:
         m = sum(rs) / len(rs)
@@ -111,7 +122,7 @@ def compute():
         "mfe_dist": dist(mfe),
         "mae_dist": dist(mae),
         "features_missing_rate": missing_rate,
-        "regimes": {r["regime_tag"]: c for r, c in
+        "regimes": {r["regime_tag"]: r["c"] for r in
                     q("SELECT regime_tag, COUNT(*) c FROM trade_features "
                       "GROUP BY regime_tag") if r["regime_tag"]},
     }
