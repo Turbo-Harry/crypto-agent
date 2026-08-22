@@ -8,6 +8,17 @@
 
 ## 1. 目标与非目标
 
+## 0. 可借鉴的公开实现（仅借鉴 Harness，不引入依赖）
+
+本方案不直接照搬任何交易机器人，而是借鉴已经验证过的 Agent 运行时模式：
+
+- OpenAI Agents SDK：把输入/输出/工具 guardrail、结构化输出、trace/span 和确定性测试作为一等能力；对应本方案的 Schema Validator、Tool Router、Decision Recorder 与回归集。
+- LangGraph：用 checkpoint、thread/run 标识、可恢复执行和幂等副作用支撑长流程；对应本方案的 `run_id`、`agent_steps`、重试/恢复和审计重放。
+- OpenAI Evals/脚本化模型测试：把 orchestration 与真实模型行为拆开，先用固定输出测试工具、策略和错误路径；对应本方案的离线 fixture、shadow 回放和 champion/challenger。
+- 量化交易系统的 paper/shadow 模式：策略核保留最终权限，模型只能做风险评审；所有模型输出必须经过硬风控、版本化和成熟结果评价。
+
+这些参考实现的共同点是“可恢复、可观测、可拒绝、可回放”，而不是多 Agent 自由讨论。当前仓库优先采用轻量本地实现，避免为了 Harness 引入新的运行时依赖。
+
 ### 1.1 目标
 
 1. 把当前“一次同步 LLM 二判”升级为可复现、可审计、可评测、可回滚的 Agent Harness。
