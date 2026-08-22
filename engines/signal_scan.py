@@ -333,6 +333,32 @@ class SignalScanMixin:
                                           journal=self.journal,
                                           conditions=_build_trade_conditions(sig))
                 if dec["trade"]:
+                    # 2026-08-23 AI 把关(用户问"agent也会加入判断吗"): 下单前
+                    # DeepSeek 二判。只否决不放行——reject 才拦,其余一律继续。
+                    verdict = "approve"
+                    ai_reason = ""
+                    if getattr(config, "AGENT_JUDGE_ENABLED", False):
+                        try:
+                            from decision.agent_judge import judge
+                            from decision.sentiment import latest_sentiment
+                            _sent = latest_sentiment(
+                                db_path=getattr(self, "_db_path", None))
+                            verdict, ai_reason = judge(
+                                sig=sig, base=base,
+                                score=sig.get("shadow_score") or SIGNAL_SCORE,
+                                price=sig.get("entry"), sentiment=_sent)
+                        except Exception:
+                            verdict = "approve"   # AI 异常 → 放行
+                    if verdict == "reject":
+                        print(f"🤖 AI 把关否决 {base}: {ai_reason}")
+                        self._log_scan_decision(base, True, sig["dir"],
+                                                "ai_reject", ai_reason)
+                        try:
+                            self._notify(f"🤖 AI 把关否决 {base} "
+                                         f"{self._dir_cn(sig['dir'])}: {ai_reason}")
+                        except Exception:
+                            pass
+                        continue
                     # 2026-08-20: 先下单,成交入账后才记 open。此前先记 open 再
                     # 调 open_position,下单失败(51001 等)会虚增"开仓"——看账
                     # 开仓 159 vs 台账 24 笔(ALLO 当天即复现)。

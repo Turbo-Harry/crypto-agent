@@ -135,6 +135,13 @@ WEIGHT_EVOLVE_AUTO_APPLY = True    # 2026-08-23 用户指示: 证据达标自动
 WEIGHT_EVOLVE_OBSERVE_MIN = 15     # 生效后观察期: 至少 N 笔新平仓才允许再动
 WEIGHT_EVOLVE_ROLLBACK_IC = -0.10  # 增权维度观察期 IC ≤ 此值 → 自动回滚基线
 WEIGHT_EVOLVE_KV_KEY = "shadow_weights"   # 活体权重 kv 键
+# AI 把关(2026-08-23 用户问"agent也会加入判断吗"): 下单前 DeepSeek 二判,
+# 只否决不放行(approve/abstain/超时/解析失败一律放行,交易链不被 AI 可用性绑架)。
+AGENT_JUDGE_ENABLED = True              # 开关
+AGENT_JUDGE_API_URL = "https://api.deepseek.com/chat/completions"
+AGENT_JUDGE_MODEL = "deepseek-chat"
+AGENT_JUDGE_TIMEOUT_SECONDS = 20        # 单次判断超时(信号稀疏,阻塞可控)
+AGENT_JUDGE_TEMPERATURE = 0.2           # 低温度: 判断要稳,不要创作
 SHADOW_DIMS = ("wick", "depth", "trend", "volume", "funding", "book")  # 6 维名
 
 # ============ 费率与手续费（2026-08-23 用户问"会计算费率和手续费吗"） ============
