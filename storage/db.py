@@ -214,6 +214,72 @@ CREATE TABLE IF NOT EXISTS ai_judgments (
     outcome_pnl REAL, outcome_ts REAL
 );
 
+-- Agent Harness trace ledger.  These tables are append-oriented and contain
+-- no order/exchange mutation capability; the policy kernel remains separate.
+CREATE TABLE IF NOT EXISTS agent_runs (
+    run_id TEXT PRIMARY KEY,
+    signal_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    created_ts REAL NOT NULL,
+    completed_ts REAL,
+    runtime_status TEXT NOT NULL,
+    final_action TEXT NOT NULL,
+    model_verdict TEXT,
+    run_role TEXT NOT NULL DEFAULT 'champion',
+    parent_run_id TEXT,
+    prompt_version TEXT,
+    model_version TEXT,
+    context_version TEXT,
+    schema_version TEXT,
+    retrieval_version TEXT,
+    input_hash TEXT,
+    response_hash TEXT,
+    latency_ms INTEGER,
+    model_latency_ms INTEGER,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    estimated_cost REAL,
+    error_type TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_signal ON agent_runs(signal_id, created_ts);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(runtime_status, created_ts);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+    run_id TEXT NOT NULL,
+    step_no INTEGER NOT NULL,
+    step_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_ts REAL NOT NULL,
+    finished_ts REAL,
+    tool_name TEXT,
+    input_hash TEXT,
+    output_hash TEXT,
+    evidence_ids TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    error_type TEXT,
+    fallback_action TEXT,
+    PRIMARY KEY (run_id, step_no)
+);
+
+CREATE TABLE IF NOT EXISTS agent_evaluations (
+    run_id TEXT PRIMARY KEY,
+    lifecycle_status TEXT NOT NULL DEFAULT 'pending',
+    label TEXT,
+    settle_ts REAL,
+    tp_first INTEGER,
+    sl_first INTEGER,
+    timeout INTEGER,
+    ambiguous INTEGER,
+    pnl_r REAL,
+    mfe_r REAL,
+    mae_r REAL,
+    incremental_ev REAL,
+    saved_loss REAL,
+    missed_profit REAL,
+    evaluation_version TEXT,
+    label_source TEXT
+);
+
 CREATE TABLE IF NOT EXISTS forecast_calibration (
     trade_id TEXT PRIMARY KEY,
     ts REAL, p_hit_tp REAL, p_hit_sl REAL,
@@ -452,6 +518,40 @@ def _migrate_v11_ai_memory(conn):
                  "outcome_pnl REAL, outcome_ts REAL)")
 
 
+def _migrate_v12_agent_harness(conn):
+    """v12: durable Agent Harness runs, steps and mature evaluations."""
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        run_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE, created_ts REAL NOT NULL,
+        completed_ts REAL, runtime_status TEXT NOT NULL,
+        final_action TEXT NOT NULL, model_verdict TEXT,
+        run_role TEXT NOT NULL DEFAULT 'champion', parent_run_id TEXT,
+        prompt_version TEXT, model_version TEXT, context_version TEXT,
+        schema_version TEXT, retrieval_version TEXT, input_hash TEXT,
+        response_hash TEXT, latency_ms INTEGER, model_latency_ms INTEGER,
+        input_tokens INTEGER, output_tokens INTEGER, estimated_cost REAL,
+        error_type TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_signal ON agent_runs(signal_id, created_ts);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(runtime_status, created_ts);
+    CREATE TABLE IF NOT EXISTS agent_steps (
+        run_id TEXT NOT NULL, step_no INTEGER NOT NULL, step_type TEXT NOT NULL,
+        status TEXT NOT NULL, started_ts REAL NOT NULL, finished_ts REAL,
+        tool_name TEXT, input_hash TEXT, output_hash TEXT, evidence_ids TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0, error_type TEXT,
+        fallback_action TEXT, PRIMARY KEY (run_id, step_no)
+    );
+    CREATE TABLE IF NOT EXISTS agent_evaluations (
+        run_id TEXT PRIMARY KEY, lifecycle_status TEXT NOT NULL DEFAULT 'pending',
+        label TEXT, settle_ts REAL, tp_first INTEGER, sl_first INTEGER,
+        timeout INTEGER, ambiguous INTEGER, pnl_r REAL, mfe_r REAL, mae_r REAL,
+        incremental_ev REAL, saved_loss REAL, missed_profit REAL,
+        evaluation_version TEXT, label_source TEXT
+    );
+    """)
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -465,6 +565,7 @@ MIGRATIONS = (
     (9, _migrate_v9_trade_targets),
     (10, _migrate_v10_forecast),
     (11, _migrate_v11_ai_memory),
+    (12, _migrate_v12_agent_harness),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
