@@ -7,15 +7,17 @@
 
 | 目录 | 内容 | 文档 |
 |---|---|---|
-| [architecture/](architecture/) | 架构设计 | [exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计）、[code_graph.md](architecture/code_graph.md)（代码知识图谱：三层建模+影响面查询）、[ai_friendly_repo.md](architecture/ai_friendly_repo.md)（AI 友好仓库调研与落地） |
+| [architecture/](architecture/) | 架构设计 | [exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计）、[code_graph.md](architecture/code_graph.md)（代码知识图谱：三层建模+影响面查询）、[ai_friendly_repo.md](architecture/ai_friendly_repo.md)（AI 接手路径/事实优先级/机器守卫） |
 | [plans/](plans/) | 优化/实施计划与简报 | Agent B R1/R2 方案及终审稿、D 批次实施简报（brief_template / launch_brief_draft / batch2_brief / r2_brief）、**自进化系统设计方案**（2026-08-16_self_evolution_design，复盘驱动改进 + 业界标准验收） |
 | [reports/](reports/) | 研究报告与收敛报告 | research_report_round2/3、optimization_report、convergence_report、final_report、evolution_loop_report、optimization_notes（实施日志）、backtest_report、**pitfalls（踩坑档案，写代码前必读）** |
 | [ops/](ops/) | 运维与验证手册 | watchdog_launchd（进程守护）、tp_sandbox_verify（止盈沙盘验证清单）、subaccount_test_plan（子账户测试计划）、data_collection_schedule（数据采集调度） |
 | [prompts/](prompts/) | AI 提示词 | evolution_loop_prompt（进化循环提示词）、factor_mining_goal_prompt（因子挖掘完善，验证门标准） |
+| [AGENT_NOTES.md](AGENT_NOTES.md) | Agent 协作 | 多 Agent 文件占用协议与当前 claim（机器维护） |
 
-根目录保留三个入口文档（不在 docs/ 内）：`README.md`（项目总览）、`AGENTS.md`（AI 协作模型）、`docs/README.md`（本索引）。
+仓库四个入口：根目录 `README.md`（人类总览）、`AGENTS.md`（AI 安全与协作规则）、
+`llms.txt`（机器可读地图），以及 `docs/README.md`（文档索引）。
 
-## 二、按时间线（全部 29 篇）
+## 二、按时间线（全部 31 篇，不含本索引）
 
 | 时间 | 文档 | 一句话 |
 |---|---|---|
@@ -37,6 +39,7 @@
 | 08-16 08:26 | [plans/optimization_plan_agentB_R2_FINAL.md](plans/optimization_plan_agentB_R2_FINAL.md) | R2 终审稿（权威实施稿） |
 | 08-16 08:32 | [ops/subaccount_test_plan.md](ops/subaccount_test_plan.md) | 子账户沙盘测试计划 |
 | 08-16 08:39 | [ops/tp_sandbox_verify.md](ops/tp_sandbox_verify.md) | TP 沙盘验证清单 |
+| 08-16 08:40 | [ops/watchdog_launchd.md](ops/watchdog_launchd.md) | 进程守护与 launchd 配置 |
 | 08-16 08:42 | [reports/evolution_loop_report.md](reports/evolution_loop_report.md) | 进化循环报告（18 实施 + 3 驳回） |
 | 08-16 14:28 | [reports/convergence_report.md](reports/convergence_report.md) | 收敛报告 |
 | 08-16 14:39 | [reports/optimization_notes.md](reports/optimization_notes.md) | 实施日志（R1/R2/OP/CR/RES 全记录） |
@@ -48,10 +51,11 @@
 | 08-16 19:40 | [reports/2026-08-16_strategy_research.md](reports/2026-08-16_strategy_research.md) | 业界策略调研：订单流/聪明钱/分场景选策略（Agent A 格式，附来源） |
 | 08-16 21:20 | [prompts/2026-08-16_factor_mining_goal_prompt.md](prompts/2026-08-16_factor_mining_goal_prompt.md) | 因子挖掘完善目标 prompt（验证门/试验日志/影子政策） |
 | 08-16 22:10 | [architecture/trade_features_schema.md](architecture/trade_features_schema.md) | Phase 1 特征采集 schema（MFE/MAE/R 倍数/regime/订单流/影子分） |
+| 08-21 | [AGENT_NOTES.md](AGENT_NOTES.md) | 多 Agent 单写者占用协议（活文档） |
 
 ## 三、命名约定
 
 - 新增文档：`YYYY-MM-DD_功能名.md`，放进对应功能目录。
-- **例外（活文档，追加式更新，不加日期前缀）**：`reports/pitfalls.md`（踩坑档案）、`reports/optimization_notes.md`（实施日志）。
+- **例外（活文档，追加式更新，不加日期前缀）**：`reports/pitfalls.md`（踩坑档案）、`reports/optimization_notes.md`（实施日志）、`AGENT_NOTES.md`（机器维护的协作占用）。
 - 同一方案多轮迭代：保留草稿（如 `optimization_plan_agentB_R1.md`）＋终审稿（`..._FINAL.md`），终审稿在文件名与内容里标注"权威实施稿"。
 - 被代码引用的文档路径改动后，必须同步更新引用（`tools/watchdog.py`、`engines/directional_trader.py` 等）。

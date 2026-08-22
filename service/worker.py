@@ -190,7 +190,7 @@ class TraderWorker:
                     if _changed:
                         print(f"[config] 热重载生效: {_changed}")
                         try:
-                            from service.events import log_event
+                            from execution.events import log_event
                             log_event("config_reload", {"changed": _changed})
                         except Exception:
                             pass

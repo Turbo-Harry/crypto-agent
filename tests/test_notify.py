@@ -8,7 +8,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from decision.notify import to_lark_md, plain, build_card, notify, _template_of
+from decision.notify import (to_lark_md, plain, build_card, notify,
+                             _template_of, trade_notifications_enabled)
 import decision.notify as nmod
 
 passed = failed = 0
@@ -25,9 +26,10 @@ def check(name, cond, detail=""):
 
 
 class _Run:
-    def __init__(self, code=0):
+    def __init__(self, code=0, recover=True):
         self.calls = []
         self.code = code
+        self.recover = recover
 
     def __call__(self, args, **kw):
         self.calls.append(list(args))
@@ -35,8 +37,8 @@ class _Run:
             pass
         r = R()
         r.returncode = self.code
-        # 第一次失败后，后续调用视为成功，避免无限兜底
-        self.code = 0
+        if self.recover:
+            self.code = 0
         return r
 
 
@@ -77,6 +79,9 @@ def test_card():
 
 def test_notify_cli():
     print("== notify 走卡片，失败才纯文本 ==")
+    old_stat = nmod._stat
+    # 通知格式/重试单测不应写共享 kv 统计；这里只验证 CLI 调用语义。
+    nmod._stat = lambda *_: None
     fake = _Run(code=0)
     old = nmod.subprocess.run
     nmod.subprocess.run = fake
@@ -92,16 +97,65 @@ def test_notify_cli():
     finally:
         nmod.subprocess.run = old
 
-    fake = _Run(code=1)
+    # 瞬时失败：第二次卡片重试成功，不应过早退回纯文本。
+    fake = _Run(code=1, recover=True)
+    nmod.subprocess.run = fake
+    old_sleep = nmod.time.sleep
+    nmod.time.sleep = lambda _: None
+    try:
+        notify("盈亏 **+1.2 USDT**")
+        check("瞬时失败后重试卡片成功", len(fake.calls) == 2,
+              str(len(fake.calls)))
+        check("第二次仍是 interactive", "--msg-type" in fake.calls[1]
+              and "--text" not in fake.calls[1])
+    finally:
+        nmod.subprocess.run = old
+
+    # 持续失败：3 次卡片都失败后才退回去标记纯文本。
+    fake = _Run(code=1, recover=False)
     nmod.subprocess.run = fake
     try:
         notify("盈亏 **+1.2 USDT**")
-        check("卡片失败后兜底", len(fake.calls) == 2, str(len(fake.calls)))
-        check("兜底是 --text", "--text" in fake.calls[1])
-        txt = fake.calls[1][fake.calls[1].index("--text") + 1]
+        check("持续失败共 3 次卡片 + 1 次兜底", len(fake.calls) == 4,
+              str(len(fake.calls)))
+        check("兜底是 --text", "--text" in fake.calls[3])
+        txt = fake.calls[3][fake.calls[3].index("--text") + 1]
         check("兜底已剥星号", "**" not in txt and "+1.2" in txt, txt)
     finally:
         nmod.subprocess.run = old
+        nmod.time.sleep = old_sleep
+        nmod._stat = old_stat
+
+
+def test_adapter_and_event_isolation():
+    print("== 适配器通知判断 + JSONL 测试隔离 ==")
+    check("原生 OKX 发通知", trade_notifications_enabled("okx"))
+    check("ccxt OKX 发通知", trade_notifications_enabled("okx-ccxt"))
+    check("FakeAdapter 自动静音", not trade_notifications_enabled("fake"))
+
+    import tempfile
+    import execution.events as events
+    old_file = events.EVENTS_FILE
+    old_env = os.environ.pop("CRYPTO_AGENT_EVENTS_FILE", None)
+    try:
+        with tempfile.TemporaryDirectory(prefix="event_isolation_") as tmp:
+            db = os.path.join(tmp, "case.db")
+            default_file = os.path.join(tmp, "global-events.jsonl")
+            events.EVENTS_FILE = default_file
+            check("临时 db 事件写入成功",
+                  events.log_event("open", {"symbol": "BTC"}, db_path=db))
+            isolated = db + ".events.jsonl"
+            check("事件落在临时 db 同生命周期文件",
+                  os.path.exists(isolated), isolated)
+            check("默认活体事件文件未被触碰",
+                  not os.path.exists(default_file))
+            rows = events.tail_events(db_path=db)
+            check("隔离事件可回读",
+                  len(rows) == 1 and rows[0]["type"] == "open")
+    finally:
+        events.EVENTS_FILE = old_file
+        if old_env is not None:
+            os.environ["CRYPTO_AGENT_EVENTS_FILE"] = old_env
 
 
 if __name__ == "__main__":
@@ -110,5 +164,6 @@ if __name__ == "__main__":
     test_plain()
     test_card()
     test_notify_cli()
+    test_adapter_and_event_isolation()
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)

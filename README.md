@@ -1,7 +1,8 @@
 # 加密货币自动化交易系统（宁可做对，不可做错）
 
 以「宁可错过、不可做错」为核心哲学的自动化交易 agent。
-OKX 模拟盘（虚拟资金），方向性日内短线（2026-08-16 用户决定：资金费率套利引擎移除，代码归档 legacy/）。
+代码包含 paper/live 双实例能力；仓库内 AI 的默认授权边界仍是 OKX 模拟盘，具体以
+[AGENTS.md](AGENTS.md) 的安全不变量为准。方向性日内短线处于活跃线，资金费率套利已归档到 legacy/。
 完整功能收在 FastAPI 服务端进程里，HTTP 只读观测 + 最小控制面。
 
 > ⚠️ 重要声明：没有任何系统能"保证"收益率。本系统保证的是**风险上限**
@@ -42,9 +43,12 @@ OKX 模拟盘（虚拟资金），方向性日内短线（2026-08-16 用户决�
 
 ```bash
 cd crypto-agent
-PYTHONPATH=lib python3 -m service.main            # 前台
-PYTHONPATH=lib python3 -m service.main --port 8090
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 ```
+
+不要省略 `CRYPTO_AGENT_MODE=paper`：当前代码的模式默认值不是 AI 操作授权。涉及 live
+实例时必须先回到 AGENTS.md 核对权限；文档与代码冲突时停止操作并向用户确认。
 
 一个进程承载全部功能：
 
@@ -54,7 +58,7 @@ PYTHONPATH=lib python3 -m service.main --port 8090
 | 实时行情 | ccxt.pro watch_ticker（config.REALTIME_BACKEND 可切回原生 WS） |
 | HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback |
 
-### 双实例并行（2026-08-23 模拟盘 + 实盘同时跑）
+### 双实例实现现状（不是 AI 的 live 操作授权）
 
 环境变量决定实例身份，两实例状态完全隔离：
 
@@ -128,6 +132,7 @@ crypto-agent/
 ```bash
 PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（FakeAdapter 离线）
 PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（TestClient 离线）
+python3 tools/ai_repo_check.py                         # AI 入口/链接/索引守卫
 python3 -m py_compile <改动的文件>
 ```
 
@@ -135,9 +140,9 @@ python3 -m py_compile <改动的文件>
 
 ## 数据源与交易所
 
-- 交易所：OKX 模拟盘（sandbox，虚拟资金），原生 REST 直连（无 ccxt）
+- AI 默认允许的交易所路径：OKX 模拟盘（sandbox，虚拟资金）
 - 交易路径 REST：一律走 `exchange/`（适配层 `fetch_tickers`/`fetch_candles`/下单）；`engines/` 禁止裸打 OKX URL
-- 行情：OKX 原生 WebSocket（tickers/funding-rate/trades）+ 适配层 REST 预热
+- 行情：由 `config.REALTIME_BACKEND` 选择 ccxt.pro 或原生 OKX WebSocket，适配层 REST 预热
 - 历史数据（研究/回测）：`data/fetch_okx.py` 的 `/market/history-candles`（约 6 年）
 - 本地库：`crypto_agent.db`（SQLite）。流水日志保留 90 天（`config.DB_RETENTION_DAYS`），每天扫完候选池后自动清理；交易台账、经验库、研究表永久保留。未处理的告警不会被清掉。
 - 飞书通知：开仓/平仓/告警走交互卡片（`lark_md`），不是 GitHub Markdown。普通 `--text` 在飞书里不会加粗。每日看账和交易台账的「总盈亏」是已平仓合计的**实际 USDT**（名义投注额 × 盈亏比例），不是把各笔百分比加起来。
@@ -146,7 +151,7 @@ python3 -m py_compile <改动的文件>
 
 - **6 个月历史回测当前为负期望**：裸信号 -0.306R（2482 笔）、完整管线（每日筛选+冷却）-0.372R（715 笔），含 10bps 成本、无未来函数（`tools/replay_pipeline.py`，先跑 `backfill_history.py` 回填数据）。按自定"证伪权"条款（回测只能证伪、不能证实），策略处于**退役评估**阶段
 - 系统只承诺"亏损有界"，不承诺收益；本项目为研究/教育用途，**不构成投资建议**
-- 美股代币仅现货者（XNVDA 等）只做多、无杠杆；ANTHROPIC-USDT-SWAP 有合约走合约路径
+- `SWAP_ONLY=True`：无合约场所的标的一律拒绝开仓；现货路径保留但不可达
 - 沙盘市场清单可能与生产有差异（如 XIAOMI-USDT-SWAP 沙盘暂缺）
 
 详见 [AGENTS.md](AGENTS.md)。

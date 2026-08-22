@@ -12,37 +12,36 @@ DEF-8 曾两次以"冷不丁"方式暴露（test_decision_loop 阈值85 行 / te
 运行：cd crypto-agent && python3 tools/test_isolation_lint.py
 退出码：0=全部隔离完整；1=存在未隔离调用（列出文件与行号）。
 """
+import ast
 import os
-import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(ROOT, "tests")
 
 RULES = [
-    # (构造器名, 必含的关键字参数)
-    ("DirectionalTrader", ("db_path",)),
-    ("ServiceTrader", ("db_path",)),
-    ("TradeJournal", ("path", "db_path")),
-    ("ScoredExperience", ("path", "db_path")),
-    ("PositionLedger", ("path", "db_path")),
-    ("ThresholdLearner", ("path", "db_path")),
+    # (构造器名, 隔离关键字, db/path 的位置参数索引)
+    ("DirectionalTrader", ("db_path",), 2),
+    ("ServiceTrader", ("db_path",), 2),
+    ("TradeJournal", ("path", "db_path"), 0),
+    ("ScoredExperience", ("path", "db_path"), 0),
+    ("PositionLedger", ("path", "db_path"), 0),
+    ("ThresholdLearner", ("path", "db_path"), 0),
 ]
 
 
 def find_calls(src, name):
-    """极简调用点扫描：找到 Name( 后配平括号取参数段。"""
+    """用 AST 找构造调用，正确识别关键字和位置参数。"""
+    tree = ast.parse(src)
     out = []
-    for m in re.finditer(rf"\b{name}\s*\(", src):
-        i = m.end()
-        depth, start = 1, i
-        while i < len(src) and depth > 0:
-            if src[i] in "([{":
-                depth += 1
-            elif src[i] in ")]}":
-                depth -= 1
-            i += 1
-        out.append((m.start(), src[start:i - 1]))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        called = fn.id if isinstance(fn, ast.Name) else \
+            fn.attr if isinstance(fn, ast.Attribute) else None
+        if called == name:
+            out.append(node)
     return out
 
 
@@ -52,15 +51,16 @@ for fn in sorted(os.listdir(TESTS)):
         continue
     path = os.path.join(TESTS, fn)
     src = open(path, encoding="utf-8").read()
-    for name, required in RULES:
-        for pos, args in find_calls(src, name):
-            # 允许注释掉的样例（__main__ 自测段常用字符串展示）
-            if any(kw + "=" in args for kw in required):
+    for name, required, positional_index in RULES:
+        for call in find_calls(src, name):
+            if any(kw.arg in required for kw in call.keywords if kw.arg):
                 continue
-            line = src.count("\n", 0, pos) + 1
+            if positional_index is not None and len(call.args) > positional_index:
+                continue
+            line = call.lineno
             problems += 1
             print(f"❌ {fn}:{line} {name}(...) 未显式隔离"
-                  f"（缺少 {required}）")
+                  f"（缺少 {required} 或位置参数 {positional_index + 1}）")
 
 if problems:
     print(f"\n发现 {problems} 处未隔离调用 —— 任何新测试漏隔离都会在此被拦截")

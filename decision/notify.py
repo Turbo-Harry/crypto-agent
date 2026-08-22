@@ -15,8 +15,16 @@ import re
 import subprocess
 import time
 
+import config
+
 LARK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".lark")
 FEISHU_USER_ID = "ou_3c597d18937078f2587b56adb8b960d2"
+TRADE_NOTIFY_ADAPTERS = config.TRADE_NOTIFY_ADAPTERS
+
+
+def trade_notifications_enabled(adapter_name):
+    """真实 OKX 适配器才发交易通知；FakeAdapter/测试自动静音。"""
+    return str(adapter_name or "") in TRADE_NOTIFY_ADAPTERS
 
 
 def plain(text):

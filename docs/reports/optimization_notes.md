@@ -632,5 +632,33 @@
 - 证据: tests/test_decision_loop.py「已实现盈亏按实际 USDT」；
   test_service_api `/journal` 单笔与合计 USDT。
 
+## 2026-08-23 AI 友好仓库第二轮完善（入口契约 + 漂移守卫）
+- 体检发现: `llms.txt` 有 1 条已归档模块失效链接；AI 友好文档仍写不存在的
+  dependency_graph 命令；AGENTS/README 裸启动命令会落到代码的 live 默认模式；
+  docs 索引漏 `AGENT_NOTES.md` 与 watchdog 手册；扫描节奏/行情后端说明已漂移。
+- 协作契约: 重写 `docs/architecture/ai_friendly_repo.md`，补 60 秒接手路径、事实优先级、
+  高风险冲突 fail-closed 规则、按任务路由和证据矩阵；AGENTS 增最短路径与 agent claim 协议。
+- 安全入口: README/AGENTS 启动示例显式 `CRYPTO_AGENT_MODE=paper`；代码能力与 AI 操作授权
+  分离。本轮不改交易模式、策略参数、活体配置，不启动/重启任何服务。
+- 机器执行: 新增纯标准库 `tools/ai_repo_check.py`，检查根入口、根目录散装 Markdown、
+  本地链接存在且不越界、llms 关键入口、docs 全索引、AGENTS 关键操作护栏；新增
+  `tests/test_ai_repo_check.py` 以失效链接/孤儿文档变异自证；CI 接线并纳入 27 脚本全套件。
+- 文档收敛: 移除 llms 的 `engines/trading_main.py` 失效入口，补 ccxt_adapter、协作协议、
+  AI 守卫；docs/README 索引数修正为 31（不含自身），补齐两篇漏项。
+- 验证: AI 自检通过；新测试 6/6（失效链接/孤儿文档/散装文档/AGENTS 护栏/链接越界）；
+  py_compile 2 文件通过（PYCACHE 隔离到 /tmp）；
+  code_graph 无违规；params_lint 0 违规；test_isolation_lint 全通过；fix_guard 21/21；
+  全量 27 个离线测试脚本在独立 `/tmp` 数据库/事件文件中运行，累计 382 项通过、0 失败。
 
-
+## 2026-08-23 通知、事件隔离、分层与 CI P1 收敛
+- 通知判断：真实输出由 `config.TRADE_NOTIFY_ADAPTERS` 集中配置，覆盖 `okx` 与
+  `okx-ccxt`；FakeAdapter 保持静音，不触碰飞书或事件文件。
+- 事件分层：JSONL 实现从 `service` 下沉 `execution`，引擎只调用注入的
+  `_log_event`；测试 `db_path` 自动派生独立事件文件，CI 额外为每个脚本设置独立
+  `CRYPTO_AGENT_DB` 与 `CRYPTO_AGENT_EVENTS_FILE`。
+- 测试修复：通知重试覆盖瞬时恢复、持续失败和纯文本兜底；统计写入、等待、CLI
+  均替换；隔离 lint 改 AST，正确识别关键字与位置参数。
+- CI：原 26 个脚本全部接入；同期新增 AI 仓库守卫后按 27 个全量运行，并包含
+  compile、参数集中化、代码图分层、测试隔离和修复护栏。依赖补
+  `ccxt>=4.5,<5`，验证项目 `lib` 中 ccxt 4.5.64 与 `ccxt.pro` 均可导入。
+- 安全边界：未改 sandbox、风险参数、下单/止损逻辑，未启动或重启活体进程。

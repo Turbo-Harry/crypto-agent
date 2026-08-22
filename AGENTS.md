@@ -4,7 +4,9 @@
 
 ## 1. 这是什么
 
-自动化加密货币交易系统（OKX 模拟盘，虚拟资金）。
+自动化加密货币交易系统。代码中存在 paper/live 双实例能力，但本文件对 AI 的授权边界仍是
+**仅 OKX 模拟盘（虚拟资金）**；未经用户对当前任务的明确授权，AI 不得启动、切换或操作
+live 实例。代码、README 与本安全约束冲突时，先停手并向用户确认。
 策略线：**方向性日内短线**（活跃）。（2026-08-16 用户决定：资金费率套利引擎整线移除，
 代码归档 `legacy/`——trading_main/trading_agent/funding_arb/weight_learning/scoring 与对应测试。）
 
@@ -13,6 +15,17 @@
 - 抓最佳时机进出，不频繁交易
 - 防止过拟合；不夸大收益；诚实地报亏损
 - 小仓位慢跑（单笔风险 1%，名义 ≤150 USDT）
+
+### AI 接手的 60 秒路径
+
+1. 读 `llms.txt` 选任务入口；涉及写入时再读本文件第 7～10 节。
+2. 运行 `python3 tools/agent_notes.py status` 和 `git status --short`，确认占用与用户改动。
+3. 写代码前读 `docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md` 和相关架构文档。
+4. 改动前用 `python3 tools/code_graph.py --query ...` 查影响面；改动后运行第 4 节证据命令。
+5. AI 文档或入口有改动时运行 `python3 tools/ai_repo_check.py`。
+
+完整的任务路由、事实优先级与交付清单见
+`docs/architecture/ai_friendly_repo.md`。
 
 ## 2. 分层架构（物理分层已落地）
 
@@ -46,14 +59,12 @@ execution/         执行与台账层
   └─ position_ownership.py    持仓所有权账本（总敞口≤600）
 
 storage/           数据持久化层（SQLite，全仓数据唯一落点）
-  └─ db.py         crypto_agent.db：trades/lessons/thresholds/watchlist/
-                   position_snapshots/arb_positions/ownership/kv 八张表，
-                   WAL + busy_timeout，每操作独立短连接（线程安全）；
-                   首启自动迁移旧 JSON（幂等）
+  └─ db.py         表结构/迁移/事务原语；WAL + busy_timeout，短连接线程安全
 
 exchange/          交易所访问四层（见 docs/architecture/exchange_layers.md）
-  transport.py     OKX 原生 REST：HMAC 签名/模拟盘/限速/错误归一
+  transport.py     OKX 原生 REST：HMAC 签名/限速/错误归一
   okx_adapter.py   单位换算(ctVal/lotSz/成交额)/场所探测/响应翻译
+  ccxt_adapter.py  ccxt.pro 行情/交易适配（由 config.REALTIME_BACKEND 选择）
   base.py          抽象接口 ExchangeAdapter + ExchangeError
   models.py        领域模型（含 TickerInfo）+ floor_to_lot
   fake_adapter.py  内存假交易所（单测注入）
@@ -78,13 +89,13 @@ llms.txt           AI 入口索引（llmstxt 标准，指向 AGENTS/README/docs 
 
 ```bash
 cd crypto-agent
-PYTHONPATH=lib python3 -m service.main            # 前台
-PYTHONPATH=lib python3 -m service.main --port 8090
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 ```
 
 一个进程承载全部功能：
-- 方向性引擎：2s 止损监控 + 15min 信号扫描（tick 由 run() 抽取，逻辑不重复）
-- WebSocket 实时行情；心跳文件沿用 watchdog 命名
+- 方向性引擎：1s 止损监控 + `config.SCAN_INTERVAL_MINUTES` 信号扫描（当前 5min）
+- 实时行情后端由 `config.REALTIME_BACKEND` 选择；心跳/PID/数据库按实例隔离
 
 HTTP 接口（127.0.0.1，Swagger 文档在 `GET /docs`）：
 
@@ -110,6 +121,9 @@ HTTP 接口（127.0.0.1，Swagger 文档在 `GET /docs`）：
 ```bash
 PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（FakeAdapter 离线全链路）
 PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（TestClient 离线）
+python3 tests/test_ai_repo_check.py                    # AI 入口/链接/索引守卫
+python3 tools/ai_repo_check.py                         # 同一守卫的命令行入口
+python3 tools/code_graph.py --check                    # 分层/循环依赖/共享状态检查
 python3 -m py_compile <改动的文件>                      # 改动后必跑
 ```
 改交易逻辑后：先单测，再沙盘实测一条下单链路（开仓→挂止损→pending→撤单→平仓），最后才重启活体进程。
@@ -159,6 +173,8 @@ python3 -m py_compile <改动的文件>                      # 改动后必跑
 ## 9. 代码最佳实践（本仓库约定）
 
 - 单写者：同一文件同一时刻只有一个协作者写；并行任务只做只读验证。
+- 写入前按 `docs/AGENT_NOTES.md` 运行 `python3 tools/agent_notes.py status` 并 claim；
+  结束时 release，避免多条 agent 线覆盖同一文件。
 - 失败语义两级：网络/签名→抛 `ExchangeError`（fail-closed）；业务拒绝→返回 `OrderResult(ok=False, message)`。
 - 数量只向下取整（floor_to_lot），绝不超发。
 - 所有对外接口写类型标注 + Pydantic 模型；关键决策注释写"为什么"。

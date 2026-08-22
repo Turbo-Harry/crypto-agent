@@ -408,15 +408,11 @@ class PositionMixin:
                    f"止损 {sig['stop']:.2f}  ·  止盈 {sig['tp']:.2f}\n"
                    f"{_tg_line}{_fc_line}{_hit_line}"
                    f"盈亏比 2:1  ·  杠杆 {lev}x  ·  数量 {qty}  ·  名义 {qty * price:.0f} USDT")
-            try:
-                from service.events import log_event
-                log_event("open", {"tid": tid, "symbol": base,
-                                   "dir": sig["dir"], "entry": price,
-                                   "stop": sig["stop"], "tp": sig["tp"],
-                                   "qty": qty, "lev": lev,
-                                   "notional": qty * price})
-            except Exception:
-                pass
+            self._log_event("open", {"tid": tid, "symbol": base,
+                                     "dir": sig["dir"], "entry": price,
+                                     "stop": sig["stop"], "tp": sig["tp"],
+                                     "qty": qty, "lev": lev,
+                                     "notional": qty * price})
             print(msg)
             self._notify(msg)
             return tid
@@ -462,11 +458,8 @@ class PositionMixin:
                 return True
             if "51279" in str(res.message):
                 print(f"  ⚡ {base}: TP 价已被现价越过(51279),本地监控即刻市价止盈")
-                try:
-                    from service.events import log_event
-                    log_event("tp_prepassed", {"base": base, "tp": sig["tp"]})
-                except Exception:
-                    pass
+                self._log_event("tp_prepassed", {"base": base,
+                                                  "tp": sig["tp"]})
                 return False
             print(f"  ⚠️ TP 挂单失败（本地 monitor 止盈兜底）: {res.message}")
             self._log_order_failure(base, inst_id, "tp", qty, "tp_order", res.message)
@@ -516,13 +509,10 @@ class PositionMixin:
                   "stage, error) VALUES (?,?,?,?,?,?,?)",
                   [time.time(), base, inst_id, side, qty, stage,
                    str(error)[:300]], db_path=self._db_path)
-            try:
-                from service.events import log_event
-                log_event("order_fail", {"base": base, "inst_id": inst_id,
-                                         "side": side, "qty": qty,
-                                         "stage": stage, "error": str(error)[:200]})
-            except Exception:
-                pass
+            self._log_event("order_fail", {"base": base, "inst_id": inst_id,
+                                           "side": side, "qty": qty,
+                                           "stage": stage,
+                                           "error": str(error)[:200]})
             # 2026-08-17: 沙盘永久不可交易符号自动登记——错误码已由 transport
             # 穿透进 error 文本,解析到即入动态黑名单。覆盖永久类错误码:
             #   51001 无合约 / 51087 已退市 / 51155 本地合规限制(RE 案例)

@@ -42,7 +42,7 @@ def _refresh_config():
 
 
 
-from decision.notify import notify
+from decision.notify import notify, trade_notifications_enabled
 from decision.self_evolving_trader import SelfEvolvingTrader
 from execution.trade_journal import TradeJournal
 from exchange.base import ExchangeAdapter, ExchangeError
@@ -161,6 +161,8 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                         RiskMonitorMixin, ReviewMixin):
     def __init__(self, exchange: ExchangeAdapter = None, rt=None, db_path=None):
         self.exchange = exchange or connect()
+        # 审计/事件输出共享同一隔离路径：测试 db_path → <db>.events.jsonl。
+        self._db_path = db_path
         # 2026-08-19 线程分离: 监控线程与主循环共享 journal/ledger 突变,
         # RLock 保护(监控线程每 1s 拿锁跑 monitor,主循环只在开仓/强平
         # 突变点拿锁——监控不再被扫描阻塞,扫描也不被监控饿死)。
@@ -181,11 +183,16 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 2026-08-16 结构性修复: 测试/fake 适配器必须静音飞书通知——
         # 此前 test_decision_loop 等跑套件时把假开仓单真的发到了用户飞书
         # (与 DEF-8 生产库污染同类的泄漏,这次是通知通道)。
-        self._notify = notify if getattr(self.exchange, "name", "") == "okx" \
-            else (lambda *a, **k: None)
+        _external_output = trade_notifications_enabled(_ad_name)
+        self._notify = notify if _external_output else (lambda *a, **k: None)
+        if _external_output:
+            from execution.events import log_event as _write_event
+            self._log_event = lambda event_type, payload=None: _write_event(
+                event_type, payload, db_path=self._db_path)
+        else:
+            self._log_event = lambda *a, **k: False
         # Phase0 T0.4：审计/日志表隔离。db_path=None → 生产共享库（默认）；
         # 测试必须传隔离路径（防 scan_decisions 等污染生产表，见 pitfalls）。
-        self._db_path = db_path
         self.journal = TradeJournal()
         self.evolver = SelfEvolvingTrader()
         # 带评分的经验库（历史经验不一定对，用交易结果验证）
@@ -454,12 +461,8 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                     self._halt_notified = True
                     msg = (f"⛔ 风控熔断: {self.risk.halt_reason}\n"
                            f"正在强制平掉本策略全部持仓…")
-                    try:
-                        from service.events import log_event
-                        log_event("halt", {"reason": self.risk.halt_reason,
-                                           "equity": eq})
-                    except Exception:
-                        pass
+                    self._log_event("halt", {"reason": self.risk.halt_reason,
+                                             "equity": eq})
                     print(msg)
                     self._notify(msg)
                     self._log_risk_event("halt", self.risk.halt_reason, eq)

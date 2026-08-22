@@ -1,14 +1,16 @@
-# Crypto Agent — 自动化加密货币交易系统（OKX 模拟盘）
+# Crypto Agent — 自动化加密货币交易系统
 
-> 方向性日内短线 + 资金费率套利（停用）的自动化交易 agent。FastAPI 服务端承载双引擎，
-> 分层架构 + 原生 OKX REST（无 ccxt）。模拟盘虚拟资金，单笔风险 1%、名义 ≤150 USDT、
-> 组合总敞口 ≤600、交易所侧止损。宁可做对，也不做错。
+> 方向性日内短线交易 agent；资金费率套利已归档。代码包含 paper/live 双实例能力，
+> AI 权限与安全边界只认 AGENTS.md。单笔风险 1%、名义 ≤150 USDT、组合总敞口 ≤600、
+> 交易所侧止损。宁可做对，也不做错。
 
 ## 入口文档（AI 必读）
 
 - [AGENTS.md](AGENTS.md): AI 协作模型 —— 分层架构、入口、安全不变量、文档路径约束、写码前读经验、写码时记踩坑、10 条红线
-- [README.md](README.md): 项目总览与快速开始（服务端唯一入口 `python3 -m service.main`）
+- [README.md](README.md): 项目总览与快速开始（AI 启动必须显式 `CRYPTO_AGENT_MODE=paper`）
 - [docs/README.md](docs/README.md): 文档中心索引（按功能分类 + 按时间线）
+- [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md): 多 Agent 文件占用协议（写入前 status/claim，完成后 release）
+- [docs/architecture/ai_friendly_repo.md](docs/architecture/ai_friendly_repo.md): AI 接手路径、事实优先级、任务路由与证据清单
 
 ## 架构
 
@@ -19,7 +21,7 @@
 
 ## 经验与踩坑（写代码前必读）
 
-- [docs/reports/pitfalls.md](docs/reports/pitfalls.md): 踩坑档案（现象/根因/修复/预防，15 条）
+- [docs/reports/pitfalls.md](docs/reports/pitfalls.md): 踩坑档案（现象/根因/修复/预防，持续追加）
 - [docs/reports/optimization_notes.md](docs/reports/optimization_notes.md): 历史实施记录（R1/R2/OP/CR/RES）
 - [docs/reports/final_report.md](docs/reports/final_report.md): 系统交付终报
 
@@ -46,11 +48,12 @@
 - [engines/position_mgmt.py](engines/position_mgmt.py): 仓位管理功能块（PositionMixin）
 - [engines/risk_monitor.py](engines/risk_monitor.py): 风控监控功能块（RiskMonitorMixin）
 - [engines/review_pipeline.py](engines/review_pipeline.py): 复盘管道功能块（ReviewMixin）
-- [engines/trading_main.py](engines/trading_main.py): 套利引擎（事件驱动，ENABLE_FUNDING_ARB=False 停用）
 - [engines/daily_scan.py](engines/daily_scan.py): 每日全市场候选扫描（走 ExchangeAdapter，禁止裸打 OKX）
 - [exchange/okx_adapter.py](exchange/okx_adapter.py): OKX 原生 REST 适配器
+- [exchange/ccxt_adapter.py](exchange/ccxt_adapter.py): ccxt.pro 适配器（后端选择见 config.REALTIME_BACKEND）
 - [tests/test_exchange_layers.py](tests/test_exchange_layers.py): 分层单测（FakeAdapter 离线）
 - [tests/test_service_api.py](tests/test_service_api.py): 服务端接口单测（TestClient 离线）
+- [tools/ai_repo_check.py](tools/ai_repo_check.py): AI 入口、Markdown 链接、llms 与 docs 索引守卫
 
 ## 运维
 
