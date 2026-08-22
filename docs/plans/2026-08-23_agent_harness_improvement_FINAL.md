@@ -177,7 +177,7 @@
 - 只读观测已接入：`GET /agent/status`、`GET /agent/runs`、`GET /agent/evaluation`；`decision/agent_judge.py` 新增仅显式注入模型回调的兼容适配，不新增外部网络出站路径。
 - 证据：32 项 Harness 专项测试通过；工作区 Python 运行时全量 discover 通过 32 项、1 项服务测试因环境缺少 `fastapi` 无法导入；`params_lint`、`code_graph --check`、`test_isolation_lint`、`fix_guard`、`ai_repo_check` 全部通过。
 
-对应提交：`1b5b3f3`（H0）、`f5cb357`（H1）、`2fdbe54`（H2）；H3-H7 正在本批次提交。
+对应提交：`1b5b3f3`（H0）、`f5cb357`（H1）、`2fdbe54`（H2）、`2dda065`（H3-H7、评测、观测与回归）。
 
 ### H0：冻结基线与契约
 
