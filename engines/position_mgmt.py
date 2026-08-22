@@ -234,6 +234,10 @@ class PositionMixin:
             qty = (self.exchange.fetch_balance().usdt_total * RISK_PER_TRADE) / (price * stop_dist)
             qty = min(qty, config.MAX_NOTIONAL_PER_TRADE / price)  # 小仓位：名义上限(config)
         qty *= size_factor          # 连亏半仓等经验决策真正生效（B6）
+        # 特殊币(BTC/ETH)半仓后会跌破 1 合约再被 floor 到 0——兜底必须在
+        # size_factor 之后(2026-08-23 BTC 连续 reject_min_size 的真因)
+        if getattr(self, "live_mode", False) and base in config.LIVE_SPECIAL_NOTIONAL:
+            qty = max(qty, inst.ct_val)
         # 市场最大下单量限制（市价单，张→币）
         if inst.max_mkt_sz > 0:
             qty = min(qty, inst.max_mkt_sz * inst.ct_val * 0.9)
