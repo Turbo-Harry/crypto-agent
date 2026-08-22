@@ -52,8 +52,15 @@ from exchange.base import ExchangeAdapter, ExchangeError
 
 
 def connect() -> ExchangeAdapter:
-    """构建交易所适配器（OKX 模拟盘）。策略层只见 ExchangeAdapter 接口。"""
+    """构建交易所适配器（OKX 模拟盘）。策略层只见 ExchangeAdapter 接口。
+    2026-08-22: 用户指示改用 ccxt 交易库(config.EXCHANGE_BACKEND="ccxt"),
+    native 手写传输层保留可回滚(EXCHANGE_BACKEND="native")。"""
+    import config
     cfg = json.load(open("okx_config.json"))
+    if config.EXCHANGE_BACKEND == "ccxt":
+        from exchange.ccxt_adapter import CCXTAdapter
+        return CCXTAdapter(cfg["apiKey"], cfg["secret"], cfg["password"],
+                           sandbox=True)
     from exchange.okx_adapter import OKXAdapter
     return OKXAdapter(cfg["apiKey"], cfg["secret"], cfg["password"], sandbox=True)
 

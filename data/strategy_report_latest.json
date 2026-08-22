@@ -1,17 +1,35 @@
 {
-  "generated_ts": 1786883275.4542239,
-  "n_closed": 1,
-  "sample_status": "insufficient",
+  "generated_ts": 1787379746.449265,
+  "n_closed": 32,
+  "sample_status": "ok",
   "min_samples": 30,
-  "win_rate": 0.0,
-  "profit_factor": 0.0,
-  "expectancy_pnl": -0.000955,
-  "expectancy_r": null,
-  "max_drawdown": 0.000955,
-  "sqn": null,
-  "sqn_verdict": null,
-  "mfe_dist": null,
-  "mae_dist": null,
-  "features_missing_rate": 0.0,
-  "regimes": {}
+  "win_rate": 0.5625,
+  "profit_factor": 5.572,
+  "expectancy_pnl": 0.01945,
+  "expectancy_r": 0.8085,
+  "max_drawdown": 0.058017,
+  "sqn": 2.797,
+  "sqn_verdict": "好",
+  "mfe_dist": {
+    "n": 28,
+    "min": -0.39,
+    "p25": 0.328,
+    "median": 1.692,
+    "p75": 2.312,
+    "max": 3.485
+  },
+  "mae_dist": {
+    "n": 28,
+    "min": -1.768,
+    "p25": 0.044,
+    "median": 0.615,
+    "p75": 0.984,
+    "max": 1.395
+  },
+  "features_missing_rate": 0.0082,
+  "regimes": {
+    "high_vol": 18,
+    "low_vol": 4,
+    "mid_vol": 10
+  }
 }
