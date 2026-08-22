@@ -206,6 +206,8 @@ class PositionMixin:
         # LEVERAGE_HIGH_SCORE 且 C 该币战绩数据验证(≥N 笔平仓且胜率≥阈值)
         # → 5x;否则 3x;最终钳制 [LEVERAGE_MIN, LEVERAGE_MAX]。
         lev = leverage_for(base, score, self.journal.trades)
+        if getattr(self, "live_mode", False):
+            lev = config.LIVE_LEVERAGE_MAP.get(base, lev)   # BTC/ETH 10x
         inst = self.exchange.instrument(inst_id)
         for side in ["long", "short"]:
             try:
@@ -218,7 +220,9 @@ class PositionMixin:
         # 名义上限 LIVE_MAX_NOTIONAL;模拟盘维持原口径(账户1%风险)。
         if getattr(self, "live_mode", False):
             qty = config.LIVE_RISK_PER_TRADE / (price * stop_dist)
-            qty = min(qty, config.LIVE_MAX_NOTIONAL / price)
+            _notional_cap = config.LIVE_SPECIAL_NOTIONAL.get(
+                base, config.LIVE_MAX_NOTIONAL)
+            qty = min(qty, _notional_cap / price)
         else:
             qty = (self.exchange.fetch_balance().usdt_total * RISK_PER_TRADE) / (price * stop_dist)
             qty = min(qty, config.MAX_NOTIONAL_PER_TRADE / price)  # 小仓位：名义上限(config)

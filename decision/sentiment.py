@@ -14,19 +14,21 @@
 import json
 import os
 import re
+import sys
 import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FNG_URL = "https://api.alternative.me/fng/?limit=1"
+sys.path.insert(0, ROOT)
+import config
+
+FNG_URL = config.SENTIMENT_FNG_URL
 RSS_FEEDS = [
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "https://cointelegraph.com/rss",
 ]
-BULL_WORDS = ("rally", "surge", "soar", "bull", "breakout", "record",
-              "gain", "rebound", "adopt", "pump", "high", "rise", "recover")
-BEAR_WORDS = ("crash", "plunge", "bear", "liquidat", "fear", "dump",
-              "hack", "ban", "lawsuit", "selloff", "fall", "drop", "loss")
+BULL_WORDS = config.SENTIMENT_BULL_WORDS
+BEAR_WORDS = config.SENTIMENT_BEAR_WORDS
 
 
 def _get(url, timeout=12):

@@ -234,6 +234,11 @@ LIVE_RISK_PER_TRADE = 1.0     # 单笔风险 USDT(预算 1%)
 LIVE_MAX_NOTIONAL = 10        # 单笔名义上限 USDT(2026-08-23 用户指示 20→10)
 LIVE_MAX_TOTAL = 100          # 总敞口上限 USDT
 LIVE_HARD_STOP_USDT = 30      # 累计实亏达 30 USDT(预算30%) → 自动停手
+# 2026-08-23 用户指示: BTC/ETH 用 10x 杠杆(其余币 B+C 分档 3x-5x)
+LIVE_LEVERAGE_MAP = {"BTC": 10, "ETH": 10}
+# BTC/ETH 的名义上限=最小合约名义(BTC 0.01≈680 / ETH 0.01≈25),
+# 覆盖 10 USDT 通用上限——否则永远买不起最小张数
+LIVE_SPECIAL_NOTIONAL = {"BTC": 680, "ETH": 25}
 LIVE_CRED_FILE = "~/.crypto_live/okx_live.json"
 
 # ============ 交易所适配后端（2026-08-22 用户指示"用 ccxt 交易库"） ============
@@ -245,6 +250,13 @@ SENTIMENT_GATE_ENABLED = True  # 情感门控开关(决策层读 kv 快照,无�
 SENTIMENT_GREED_CAP = 80       # F&G ≥ 此值 → 拒绝新开多(不追过热顶)
 SENTIMENT_FEAR_FLOOR = 20      # F&G ≤ 此值 → 拒绝新开空(不空恐慌底)
 SENTIMENT_REFRESH_HOURS = 1    # worker 每小时刷新一次情感快照
+SENTIMENT_FNG_URL = "https://api.alternative.me/fng/?limit=1"
+SENTIMENT_BULL_WORDS = ("rally", "surge", "soar", "bull", "breakout", "record",
+                        "gain", "rebound", "adopt", "pump", "high", "rise",
+                        "recover")
+SENTIMENT_BEAR_WORDS = ("crash", "plunge", "bear", "liquidat", "fear", "dump",
+                        "hack", "ban", "lawsuit", "selloff", "fall", "drop",
+                        "loss")
 
 # ============ 热重载机制（2026-08-21 用户要求'配置动态读取'） ============
 # 改 config.py 保存后,引擎下一拍(≤1s,worker tick 调用 maybe_reload)
