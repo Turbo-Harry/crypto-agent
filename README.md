@@ -51,8 +51,23 @@ PYTHONPATH=lib python3 -m service.main --port 8090
 | 组件 | 说明 |
 |---|---|
 | 方向性引擎 | 2s 止损监控 + 5min 回踩信号扫描 + 每日候选刷新 |
-| 实时行情 | 原生 WebSocket |
+| 实时行情 | ccxt.pro watch_ticker（config.REALTIME_BACKEND 可切回原生 WS） |
 | HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback |
+
+### 双实例并行（2026-08-23 模拟盘 + 实盘同时跑）
+
+环境变量决定实例身份，两实例状态完全隔离：
+
+| 环境变量 | live（实盘，8090） | paper（模拟盘，8091） |
+|---|---|---|
+| `CRYPTO_AGENT_MODE` | live | paper |
+| `CRYPTO_AGENT_DB` | crypto_agent_live.db（独立，实盘盈亏基线起算） | crypto_agent.db（延续历史模拟数据） |
+
+- 库、engine.lock / engine_paper.lock、进化门状态文件、心跳/PID/tick 文件（directional.* / paper.*）全部按模式隔离
+- launchd：`com.crypto.agent`（实盘）+ `com.crypto.paper`（模拟盘），watchdog 双实例独立监控，healthcheck 各查各库
+- 通知统一打 `【实盘】`/`【模拟盘】` 前缀（飞书 + 会话注入同一报警链）
+- 实盘盈亏从基线净值起算（kv `live_pnl_start`），平仓只累计 venue=live 的交易；模拟盘延续历史统计
+- 数据看板（8899）右上角可切换 模拟盘/实盘 视图
 
 ## 目录结构（分层）
 
