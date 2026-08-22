@@ -60,6 +60,11 @@ def promote_mature_legacy_memories(*, db_path: str | None = None,
     for row in db.q(
         "SELECT id,ts,base,direction,verdict,reason,outcome_pnl FROM ai_judgments "
         "WHERE outcome_pnl IS NOT NULL AND ts <= ?", [cutoff], db_path=db_path):
+        evidence_id = _evidence_id("episodic", f"ai_judgment:{row['id']}")
+        existing = db.q1("SELECT status FROM agent_memories WHERE evidence_id=?",
+                          [evidence_id], db_path=db_path)
+        if existing and existing.get("status") == "stale":
+            continue
         strength = min(1.0, 0.5 + min(abs(float(row.get("outcome_pnl") or 0)), 0.5))
         upsert_memory(
             memory_type="episodic", source_id=f"ai_judgment:{row['id']}",
@@ -72,6 +77,11 @@ def promote_mature_legacy_memories(*, db_path: str | None = None,
     for row in db.q(
         "SELECT id,ts,symbol,status,content,good,bad,regime,conditions FROM lessons "
         "WHERE status IN ('trusted','discarded')", db_path=db_path):
+        evidence_id = _evidence_id("semantic", f"lesson:{row['id']}")
+        existing = db.q1("SELECT status FROM agent_memories WHERE evidence_id=?",
+                          [evidence_id], db_path=db_path)
+        if existing and existing.get("status") == "stale":
+            continue
         strength = min(1.0, max(0.0, (int(row.get("good") or 0) + int(row.get("bad") or 0)) / 20.0))
         upsert_memory(
             memory_type="semantic", source_id=f"lesson:{row['id']}",

@@ -62,6 +62,18 @@ class AgentHarnessMemoryTest(unittest.TestCase):
         self.assertFalse(any(x["evidence_id"] == evidence_id for x in agent_memory.retrieve(
             {"base": "BTC", "direction": "long"}, db_path=self.path)))
 
+    def test_stale_legacy_evidence_cannot_be_reactivated_by_reimport(self):
+        db.x("INSERT INTO ai_judgments (ts,base,direction,verdict,reason,outcome_pnl) VALUES (?,?,?,?,?,?)",
+             [1, "BTC", "long", "reject", "old", -0.1], db_path=self.path)
+        evidence_id = agent_memory._evidence_id("episodic", "ai_judgment:1")
+        agent_memory.upsert_memory(memory_type="episodic", source_id="ai_judgment:1",
+                                   content="old", status="stale", created_ts=1,
+                                   evidence_strength=.9, db_path=self.path)
+        self.assertEqual(agent_memory.promote_mature_legacy_memories(
+            db_path=self.path, now_ts=100000, min_age_hours=0), 0)
+        self.assertEqual(db.q1("SELECT status FROM agent_memories WHERE evidence_id=?",
+                               [evidence_id], db_path=self.path)["status"], "stale")
+
 
 if __name__ == "__main__":
     unittest.main()
