@@ -224,6 +224,18 @@ DEMO_UNTRADABLE = ["BICO", "GRVT", "AEON", "WLD", "WLFI"]
 # 预检合并查询(配置 + 动态表),后续无需人工扩表。
 
 
+# ============ 实盘模式（2026-08-22 用户拍板: 小预算实盘,预算 100 USDT） ============
+# 激活条件: 本开关 + ~/.crypto_live/okx_live.json(真实密钥,仓库外)。
+# LIVE_MODE 只在引擎启动时快照(self.live_mode),热重载不改它——
+# 防止运行中途意外切换真实/模拟。
+LIVE_MODE = False             # 实盘开关
+LIVE_BUDGET_USDT = 100        # 总预算
+LIVE_RISK_PER_TRADE = 1.0     # 单笔风险 USDT(预算 1%)
+LIVE_MAX_NOTIONAL = 20        # 单笔名义上限 USDT
+LIVE_MAX_TOTAL = 100          # 总敞口上限 USDT
+LIVE_HARD_STOP_USDT = 30      # 累计实亏达 30 USDT(预算30%) → 自动停手
+LIVE_CRED_FILE = "~/.crypto_live/okx_live.json"
+
 # ============ 交易所适配后端（2026-08-22 用户指示"用 ccxt 交易库"） ============
 EXCHANGE_BACKEND = "ccxt"     # "ccxt" | "native"——引擎构造时选择适配器
                               # (切换需重启;ccxt 已在沙盘全链路冒烟通过)

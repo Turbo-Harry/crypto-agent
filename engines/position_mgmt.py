@@ -214,8 +214,14 @@ class PositionMixin:
                 pass
         # 仓位：单笔风险 1%，名义金额上限 150 USDT（小仓位慢跑）
         stop_dist = abs(price - sig["stop"]) / price
-        qty = (self.exchange.fetch_balance().usdt_total * RISK_PER_TRADE) / (price * stop_dist)
-        qty = min(qty, config.MAX_NOTIONAL_PER_TRADE / price)  # 小仓位：名义上限(config)
+        # 2026-08-22 实盘模式: 单笔风险固定 LIVE_RISK_PER_TRADE USDT(预算1%),
+        # 名义上限 LIVE_MAX_NOTIONAL;模拟盘维持原口径(账户1%风险)。
+        if getattr(self, "live_mode", False):
+            qty = config.LIVE_RISK_PER_TRADE / (price * stop_dist)
+            qty = min(qty, config.LIVE_MAX_NOTIONAL / price)
+        else:
+            qty = (self.exchange.fetch_balance().usdt_total * RISK_PER_TRADE) / (price * stop_dist)
+            qty = min(qty, config.MAX_NOTIONAL_PER_TRADE / price)  # 小仓位：名义上限(config)
         qty *= size_factor          # 连亏半仓等经验决策真正生效（B6）
         # 市场最大下单量限制（市价单，张→币）
         if inst.max_mkt_sz > 0:

@@ -125,6 +125,29 @@ class ReviewMixin:
         # 2026-08-20 DEF-5 闭环: 校准不再直接生效,走进化门(提案→影子→晋升/回滚)。
         score = t.get("score") or SIGNAL_SCORE
         self._threshold_gate_step(score, closed["pnl"])
+        # 2026-08-22 实盘硬止损: 累计实亏达 LIVE_HARD_STOP_USDT → 停手。
+        # 用 kv 持久化(重启不重置),与账户总权益无关(账户大时 1.5% 日线
+        # 熔断金额会超过预算,此线才是可靠边界)。
+        if getattr(self, "live_mode", False):
+            try:
+                import storage.db as sdb
+                sdb.init_db(self._db_path)
+                cur = sdb.q1("SELECT value FROM kv WHERE key='live_realized'",
+                             db_path=self._db_path)
+                live_real = (float(cur["value"]) if cur else 0.0) + (pnl_usdt or 0.0)
+                sdb.x("INSERT OR REPLACE INTO kv (key, value) VALUES ('live_realized', ?)",
+                      [f"{live_real:.6f}"], db_path=self._db_path)
+                if live_real <= -config.LIVE_HARD_STOP_USDT:
+                    self.risk.halted = True
+                    self.risk.halt_reason = (
+                        f"实盘硬止损: 累计实亏 {live_real:.2f} USDT "
+                        f"≤ -{config.LIVE_HARD_STOP_USDT} USDT")
+                    print(f"⛔ {self.risk.halt_reason},停止新开仓")
+                    self._notify(f"⛔ {self.risk.halt_reason}\n实盘自动停手,请人工确认")
+                    self._log_risk_event("live_hard_stop",
+                                         self.risk.halt_reason, 0)
+            except Exception:
+                pass
         # 账户级风控：净值更新（平仓后）
         try:
             eq = self.exchange.fetch_balance().total_eq

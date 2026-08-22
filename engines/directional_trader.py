@@ -56,13 +56,16 @@ def connect() -> ExchangeAdapter:
     2026-08-22: 用户指示改用 ccxt 交易库(config.EXCHANGE_BACKEND="ccxt"),
     native 手写传输层保留可回滚(EXCHANGE_BACKEND="native")。"""
     import config
-    cfg = json.load(open("okx_config.json"))
+    live = config.LIVE_MODE
+    cred = (config.LIVE_CRED_FILE if live else "okx_config.json")
+    cfg = json.load(open(cred))
     if config.EXCHANGE_BACKEND == "ccxt":
         from exchange.ccxt_adapter import CCXTAdapter
         return CCXTAdapter(cfg["apiKey"], cfg["secret"], cfg["password"],
-                           sandbox=True)
+                           sandbox=not live)
     from exchange.okx_adapter import OKXAdapter
-    return OKXAdapter(cfg["apiKey"], cfg["secret"], cfg["password"], sandbox=True)
+    return OKXAdapter(cfg["apiKey"], cfg["secret"], cfg["password"],
+                      sandbox=not live)
 
 
 def acquire_instance_lock(timeout=300.0):
@@ -157,6 +160,15 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 突变点拿锁——监控不再被扫描阻塞,扫描也不被监控饿死)。
         import threading
         self._mutex = threading.RLock()
+        # 2026-08-22 实盘快照: 只在启动时读取,运行中改 config.LIVE_MODE
+        # 不会切换真实/模拟(防意外真钱交易)。实盘还需凭证文件存在。
+        import config as _c
+        self.live_mode = bool(_c.LIVE_MODE)
+        if self.live_mode:
+            import os as _os
+            if not _os.path.exists(_os.path.expanduser(_c.LIVE_CRED_FILE)):
+                print("❌ LIVE_MODE=True 但无实盘凭证文件,退回模拟盘")
+                self.live_mode = False
         # 2026-08-16 结构性修复: 测试/fake 适配器必须静音飞书通知——
         # 此前 test_decision_loop 等跑套件时把假开仓单真的发到了用户飞书
         # (与 DEF-8 生产库污染同类的泄漏,这次是通知通道)。
@@ -174,7 +186,11 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         self.evolver.bank = _ExpAdapter(self.exp_bank)
         # 持仓所有权账本（R1-12）：组合总敞口 ≤600 + claim/release
         from execution.position_ownership import PositionLedger
-        self.ledger = PositionLedger()
+        from execution.position_ownership import PositionLedger as _PL
+        # 2026-08-22 实盘: 总敞口上限用 LIVE_MAX_TOTAL
+        self.ledger = _PL(max_total_notional=(
+            config.LIVE_MAX_TOTAL if self.live_mode
+            else config.MAX_TOTAL_NOTIONAL))
         # 每日候选池（用户要求：每天扫全市场挑适合下单的币；评分用于动态笔数）
         from engines.daily_scan import load_watchlist
         _watch = load_watchlist(db_path=self._db_path)
