@@ -277,8 +277,10 @@ class TraderWorker:
                         try:
                             from decision.weight_evolve import propose
                             _st, _msg, _ev = propose(db_path=t._db_path)
-                            if _st in ("accepted", "no_edge", "insufficient"):
-                                print(f"[权重进化] {_st}: {_msg}")
+                            print(f"[权重进化] {_st}: {_msg}")
+                            if _st in ("auto_applied", "auto_rolled_back"):
+                                from decision.notify import notify
+                                notify(f"⚖️ 权重进化·{_st}\n{_msg}")
                         except Exception:
                             pass
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会

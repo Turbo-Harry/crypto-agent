@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-权重进化（2026-08-23 用户问"会根据历史经验调整权重吗"）——
-证据 → 提案 → 人工批准 → 生效,与扫描尺子进化同纪律(永不自动改):
+权重进化（2026-08-23 用户问"会根据历史经验调整权重吗",后指示"不加批准,自动生效"）——
+证据 → 自动生效 → 观察期 → 自动回滚:
 
   1. 证据: 每笔平仓已有 shadow_dims(6 维子分) + pnl。propose() 逐维算
      IC(子分与盈亏的皮尔逊相关),样本 ≥ WEIGHT_EVOLVE_MIN_SAMPLES 且
      |IC| ≥ WEIGHT_EVOLVE_MIN_IC 的维度才有资格动。
-  2. 提案: 强维 +STEP、弱维 -STEP(单维变动 ≤ MAX_SHIFT),归一化到 1,
-     写 experiments(kind='weight_evolve'),证据达标 → status='accepted'
-     (待人工批准;不达标只落 proposed 观测)。
-  3. 生效唯一写入口 = approve(): 把新权重写 kv 'shadow_weights'。
+  2. 自动生效(WEIGHT_EVOLVE_AUTO_APPLY): 强维 +STEP、弱维 -STEP
+     (单维变动 ≤ MAX_SHIFT),归一化到 1,直接写 kv 'shadow_weights'。
      评分时 effective_weights() 优先读 kv,否则 config.SHADOW_WEIGHTS。
-  4. rollback(): 删 kv 回 config 基线。
-双向共享: 权重 kv 属于策略状态,经验/策略同步会把批准结果镜像到对端实例。
+  3. 观察期节流: 生效后新平仓 < OBSERVE_MIN 笔 → 暂不动(防小时级抖动)。
+  4. 自动回滚: 增权维度在观察期 IC 转负(≤ ROLLBACK_IC) → 证据是噪声,
+     自动回 config 基线并记 auto_rolled_back。
+  5. 人工接口保留: approve()/rollback() 随时可手动覆盖。
+双向共享: 权重 kv 属于策略状态,策略同步会把生效结果镜像到对端实例。
 """
 import json
 import os
@@ -67,8 +68,9 @@ def _normalize(w):
 
 
 def propose(db_path=None, force=False):
-    """按已平仓样本算逐维 IC 并提案。返回 (status, message, evidence)。
-    纯观测+写 experiments 提案,绝不改活体权重(approve 是唯一写入口)。"""
+    """按已平仓样本算逐维 IC。返回 (status, message, evidence)。
+    2026-08-23 用户指示"不加批准,自动生效": 证据达标直接写 kv 生效
+    (status='auto_applied');观察期未满返回 observing;IC 转负自动回滚。"""
     import storage.db as sdb
     if not getattr(config, "WEIGHT_EVOLVE_ENABLED", False):
         return "disabled", "权重进化已关闭(config.WEIGHT_EVOLVE_ENABLED=False)", {}
@@ -115,29 +117,79 @@ def propose(db_path=None, force=False):
                       base[d] - config.WEIGHT_EVOLVE_MAX_SHIFT, 0.0)
     total = sum(cand.values())
     cand = _normalize({k: round(v / total, 4) for k, v in cand.items()})
-    # 提案落 experiments: 证据达标即 accepted(待批准),否则 proposed(观测)
-    gate_ok = all(evidence[d]["n"] >= config.WEIGHT_EVOLVE_MIN_SAMPLES
-                  for d in (strong + weak))
-    status = "accepted" if gate_ok else "proposed"
     change_id = f"w-{time.strftime('%Y%m%d%H%M%S')}"
+    now = time.time()
+    # ---- 2026-08-23 用户指示"不加批准,自动生效": 观察期节流 + 自动回滚 ----
+    last_app = sdb.q1("SELECT * FROM experiments WHERE kind='weight_evolve' "
+                      "AND status IN ('auto_applied','applied') "
+                      "ORDER BY ts DESC LIMIT 1", db_path=db_path)
+    if last_app:
+        post_rows = sdb.q("SELECT pnl, shadow_dims, exit_time FROM trades "
+                          "WHERE status='closed' AND pnl IS NOT NULL "
+                          "AND shadow_dims IS NOT NULL AND shadow_dims != '' "
+                          "AND exit_time > ?", [last_app["ts"]], db_path=db_path)
+        # 自动回滚: 上次增权维度在观察期 IC 转负 → 证据是噪声,回基线
+        try:
+            _params = json.loads(last_app["params"] or "{}")
+            _from, _to = _params.get("from") or {}, _params.get("to") or {}
+            _boosted = [d for d in DIMS
+                        if float(_to.get(d, 0)) > float(_from.get(d, 0))]
+            if _boosted and len(post_rows) >= max(2, config.WEIGHT_EVOLVE_OBSERVE_MIN):
+                _pnls = [float(r["pnl"]) for r in post_rows]
+                _bad = []
+                for d in _boosted:
+                    try:
+                        _xs = [float(json.loads(r["shadow_dims"] or {})
+                                     .get(d, 0.5)) for r in post_rows]
+                    except Exception:
+                        _xs = []
+                    _post_ic = _ic(_xs, _pnls[:len(_xs)])
+                    if (_post_ic is not None
+                            and _post_ic <= config.WEIGHT_EVOLVE_ROLLBACK_IC):
+                        _bad.append((d, round(_post_ic, 4)))
+                if _bad:
+                    rollback(db_path=db_path)
+                    sdb.x("INSERT INTO experiments (change_id, kind, params, "
+                          "status, ts, decided_by, notes) VALUES (?,?,?,?,?,?,?)",
+                          [f"w-{time.strftime('%Y%m%d%H%M%S')}", "weight_evolve",
+                           json.dumps({"from": cand, "to": dict(config.SHADOW_WEIGHTS),
+                                       "evidence": evidence}, ensure_ascii=False),
+                           "auto_rolled_back", now, "auto",
+                           f"观察期 IC 转负 {_bad},自动回滚基线"], db_path=db_path)
+                    return ("auto_rolled_back",
+                            f"增权维度观察期 IC 转负 {_bad},自动回滚基线", evidence)
+        except Exception:
+            pass
+        # 观察期节流: 生效后新平仓不足 OBSERVE_MIN 笔,不允许下一次变动
+        if len(post_rows) < config.WEIGHT_EVOLVE_OBSERVE_MIN and not force:
+            return ("observing",
+                    f"观察期: 上次生效后仅 {len(post_rows)}/"
+                    f"{config.WEIGHT_EVOLVE_OBSERVE_MIN} 笔新平仓,暂不动", evidence)
     try:
-        old_pending = sdb.q1("SELECT change_id FROM experiments "
-                             "WHERE kind='weight_evolve' AND status IN "
-                             "('proposed','accepted') ORDER BY ts DESC LIMIT 1",
-                             db_path=db_path)
-        if old_pending and not force:
-            return ("pending", f"已有待处理提案 {old_pending['change_id']},"
-                    f"新证据已算但未覆盖(force=True 可强制新提案)", evidence)
-        sdb.x("INSERT INTO experiments (change_id, kind, params, status, ts) "
-              "VALUES (?,?,?,?,?)",
+        if getattr(config, "WEIGHT_EVOLVE_AUTO_APPLY", False):
+            sdb.x("INSERT OR REPLACE INTO kv (key, value, updated_at) "
+                  "VALUES (?,?,?)",
+                  [config.WEIGHT_EVOLVE_KV_KEY,
+                   json.dumps(cand, ensure_ascii=False), now], db_path=db_path)
+            status = "auto_applied"
+        else:
+            status = "accepted"     # 开关关掉自动 → 回提案待批准模式
+        sdb.x("INSERT INTO experiments (change_id, kind, params, status, ts, "
+              "decided_by, notes) VALUES (?,?,?,?,?,?,?)",
               [change_id, "weight_evolve",
                json.dumps({"from": base, "to": cand,
                            "evidence": evidence}, ensure_ascii=False),
-               status, time.time()], db_path=db_path)
+               status, now,
+               "auto" if status == "auto_applied" else None,
+               json.dumps({"strong": strong, "weak": weak},
+                          ensure_ascii=False)], db_path=db_path)
     except Exception:
         pass
-    msg = (f"提案 {change_id}: {'/'.join(strong)} 增权 · "
-           f"{'/'.join(weak) or '无'} 减权 → 待人工批准")
+    if status == "auto_applied":
+        msg = (f"权重自动生效: {'/'.join(strong)} 增权 · "
+               f"{'/'.join(weak) or '无'} 减权 → {cand}")
+    else:
+        msg = f"提案 {change_id}: 证据达标待批准"
     return status, msg, evidence
 
 
