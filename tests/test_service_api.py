@@ -82,7 +82,8 @@ def main():
     print("== 聚合冒烟（全部只读端点一次遍历）==")
     smoke_ok, smoke_detail = True, []
     for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
-                 "/error", "/analysis/latest", "/reconcile", "/scan/evolve"):
+                 "/error", "/analysis/latest", "/reconcile", "/scan/evolve",
+                 "/agent/status", "/agent/runs", "/agent/evaluation"):
         r = client.get(path)
         try:
             r.json()
@@ -92,13 +93,22 @@ def main():
         if not ok:
             smoke_ok = False
             smoke_detail.append(f"{path}→{r.status_code}")
-    check("9 个只读端点全部 200+JSON 可解析", smoke_ok)
+    check("12 个只读端点全部 200+JSON 可解析", smoke_ok)
     if smoke_detail:
         print(f"    失败明细: {smoke_detail}")
     r = client.get("/scan/evolve")
     check("/scan/evolve 含 effective_wick 且 needs_approval=false",
           r.status_code == 200 and "effective_wick" in r.json()
           and r.json()["needs_approval"] is False)
+    check("/agent/status 返回运行健康字段",
+          client.get("/agent/status").status_code == 200
+          and "failure_rate" in client.get("/agent/status").json())
+    check("/agent/runs 只读查询返回 runs",
+          client.get("/agent/runs").status_code == 200
+          and "runs" in client.get("/agent/runs").json())
+    check("/agent/evaluation 返回成熟度统计",
+          client.get("/agent/evaluation").status_code == 200
+          and "incremental_ev" in client.get("/agent/evaluation").json())
     r = client.post("/scan/evolve/approve")
     check("无验证通过提案时 /scan/evolve/approve → 409",
           r.status_code == 409)

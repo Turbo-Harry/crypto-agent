@@ -155,6 +155,14 @@ AGENT_JUDGE_MEMORY_ENABLED = True       # 开关
 AGENT_JUDGE_MEMORY_EXAMPLES = 3         # 回喂的带结果旧案例条数
 AGENT_JUDGE_MEMORY_MIN_HOURS = 24       # 只用 ≥24h 前的判断(结果已沉淀)
 AGENT_JUDGE_LESSONS_TOP = 3             # 回喂的该币 trusted/discarded 教训条数
+# Agent Harness（2026-08-23）：先统一走可审计 shadow runtime；只有版本生命周期
+# 进入 active-veto 且人工/验证门明确开启时，模型 reject 才能影响开仓。
+AGENT_HARNESS_ENABLED = True
+AGENT_HARNESS_VETO_ENABLED = False
+AGENT_HARNESS_MAX_TOOL_CALLS = 3
+AGENT_HARNESS_MAX_STEPS = 8
+AGENT_HARNESS_TIMEOUT_MS = 4000
+AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 # 预测机制(2026-08-23 用户要求"最好能有预测机制"): 1h 对数收益 bootstrap
 # 价格分布 + 触达概率,与历史同向信号实证命中率混合;平仓后自动校准(Brier)。
 FORECAST_ENABLED = True                 # 开关

@@ -34,6 +34,7 @@ class RuntimeStatus(str, Enum):
 class FinalAction(str, Enum):
     BASELINE_REJECT = "baseline_reject"
     BASELINE_PASS = "baseline_pass"
+    SHADOW_REJECT = "shadow_reject"
     AGENT_REJECT = "agent_reject"
     AGENT_ABSTAIN = "agent_abstain"
 
@@ -291,4 +292,3 @@ def apply_policy(context: PolicyContext) -> FinalAction:
 
 def idempotency_key(signal_id: str, harness_version: str) -> str:
     return stable_hash({"signal_id": signal_id, "harness_version": harness_version})
-

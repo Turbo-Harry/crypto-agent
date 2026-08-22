@@ -280,6 +280,33 @@ CREATE TABLE IF NOT EXISTS agent_evaluations (
     label_source TEXT
 );
 
+CREATE TABLE IF NOT EXISTS agent_memories (
+    evidence_id TEXT PRIMARY KEY,
+    memory_type TEXT NOT NULL,
+    run_id TEXT, signal_id TEXT,
+    strategy_version TEXT, base TEXT, asset_class TEXT,
+    direction TEXT, timeframe TEXT, regime TEXT,
+    status TEXT NOT NULL,
+    created_ts REAL NOT NULL, mature_ts REAL,
+    outcome_pnl REAL, evidence_strength REAL DEFAULT 0,
+    content TEXT NOT NULL, metadata_json TEXT DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memories_filter
+    ON agent_memories(memory_type, status, strategy_version, direction, timeframe, regime);
+
+CREATE TABLE IF NOT EXISTS agent_versions (
+    version TEXT PRIMARY KEY,
+    role TEXT NOT NULL,                    -- champion / challenger
+    status TEXT NOT NULL,                  -- candidate / shadow / validated / active-veto / observing / kept / rolled-back
+    parent_version TEXT,
+    created_ts REAL NOT NULL,
+    activated_ts REAL,
+    rollback_ts REAL,
+    metrics_json TEXT DEFAULT '{}',
+    reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_versions_status ON agent_versions(status, created_ts);
+
 CREATE TABLE IF NOT EXISTS forecast_calibration (
     trade_id TEXT PRIMARY KEY,
     ts REAL, p_hit_tp REAL, p_hit_sl REAL,
@@ -368,7 +395,7 @@ CREATE INDEX IF NOT EXISTS idx_sp_ts ON signal_profiles(ts);
 """
 
 _lock = threading.Lock()          # 只保护建表/迁移（连接本身每次操作独立）
-_initialized = False
+_initialized_paths = set()
 
 
 def _connect(db_path=None):
@@ -552,6 +579,34 @@ def _migrate_v12_agent_harness(conn):
     """)
 
 
+def _migrate_v13_agent_memories(conn):
+    """v13: evidence-scoped episodic/semantic/procedural memory."""
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS agent_memories (
+        evidence_id TEXT PRIMARY KEY, memory_type TEXT NOT NULL,
+        run_id TEXT, signal_id TEXT, strategy_version TEXT, base TEXT,
+        asset_class TEXT, direction TEXT, timeframe TEXT, regime TEXT,
+        status TEXT NOT NULL, created_ts REAL NOT NULL, mature_ts REAL,
+        outcome_pnl REAL, evidence_strength REAL DEFAULT 0,
+        content TEXT NOT NULL, metadata_json TEXT DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_filter
+        ON agent_memories(memory_type, status, strategy_version, direction, timeframe, regime);
+    """)
+
+
+def _migrate_v14_agent_versions(conn):
+    """v14: champion/challenger lifecycle and rollback evidence."""
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS agent_versions (
+        version TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL,
+        parent_version TEXT, created_ts REAL NOT NULL, activated_ts REAL,
+        rollback_ts REAL, metrics_json TEXT DEFAULT '{}', reason TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_versions_status ON agent_versions(status, created_ts);
+    """)
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -566,6 +621,8 @@ MIGRATIONS = (
     (10, _migrate_v10_forecast),
     (11, _migrate_v11_ai_memory),
     (12, _migrate_v12_agent_harness),
+    (13, _migrate_v13_agent_memories),
+    (14, _migrate_v14_agent_versions),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -588,7 +645,7 @@ def init_db(db_path=None):
     老库(user_version=0 但表已在): 按 MIGRATIONS 顺序补列/换索引;列已存在
     则跳过 ALTER,不报 duplicate column。
     """
-    global _initialized
+    db_key = os.path.abspath(db_path or DB_PATH)
     with _lock:
         conn = _connect(db_path)
         try:
@@ -610,8 +667,8 @@ def init_db(db_path=None):
             conn.commit()
         finally:
             conn.close()
-        if not _initialized:
-            _initialized = True
+        if db_key not in _initialized_paths:
+            _initialized_paths.add(db_key)
             migrate_from_json(db_path)
     return db_path or DB_PATH
 

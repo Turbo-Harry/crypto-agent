@@ -160,3 +160,29 @@ class ScanEvolveOut(BaseModel):
     settled_mean_pnl: Optional[float] = None
     needs_approval: bool = False
     message: str = ""
+
+
+class AgentStatusOut(BaseModel):
+    """Agent Harness runtime health; observation only."""
+    current_version: Optional[str] = None
+    current_status: Optional[str] = None
+    total_runs: int
+    completed_runs: int
+    failed_runs: int
+    failure_rate: float
+    shadow_enabled: bool
+    veto_enabled: bool
+
+
+class AgentRunsOut(BaseModel):
+    runs: List[dict]
+
+
+class AgentEvaluationOut(BaseModel):
+    samples: int
+    reject_samples: int
+    saved_loss: float
+    missed_profit: float
+    incremental_ev: float
+    mature_samples: int
+    pending_samples: int

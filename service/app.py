@@ -27,7 +27,8 @@ from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             StatusOut, WatchItem, WatchlistOut, SignalOut,
                             TradeItem, JournalOut, ControlOut,
                             RealtimeOut, ScanOut, ReconcileOut, RiskEventOut,
-                            ScanEvolveOut)
+                            ScanEvolveOut, AgentStatusOut, AgentRunsOut,
+                            AgentEvaluationOut)
 
 app = FastAPI(
     title="Crypto Agent 交易服务",
@@ -242,6 +243,59 @@ def anomalies():
     sdb.init_db()
     return sdb.q("SELECT id, ts, source, severity, title, detail, status "
                  "FROM anomalies ORDER BY ts DESC LIMIT 50")
+
+
+def _agent_db_path():
+    """Resolve the instance-scoped DB without reading a live/global default."""
+    try:
+        t = _trader()
+        return getattr(t, "_db_path", None) or getattr(getattr(t, "journal", None), "db_path", None)
+    except Exception:
+        return None
+
+
+@app.get("/agent/status", response_model=AgentStatusOut, tags=["Agent Harness"])
+def agent_status():
+    """Agent Harness health and active version; read-only."""
+    import storage.db as sdb
+    path = _agent_db_path()
+    sdb.init_db(path)
+    rows = sdb.q("SELECT runtime_status FROM agent_runs", db_path=path)
+    failed = sum(row["runtime_status"] not in ("completed", "disabled", "no_key") for row in rows)
+    versions = sdb.q("SELECT version,status FROM agent_versions "
+                     "ORDER BY created_ts DESC LIMIT 1", db_path=path)
+    current = versions[0] if versions else {}
+    return AgentStatusOut(
+        current_version=current.get("version"), current_status=current.get("status"),
+        total_runs=len(rows), completed_runs=sum(row["runtime_status"] == "completed" for row in rows),
+        failed_runs=failed, failure_rate=round(failed / len(rows), 4) if rows else 0.0,
+        shadow_enabled=True, veto_enabled=current.get("status") == "active-veto")
+
+
+@app.get("/agent/runs", response_model=AgentRunsOut, tags=["Agent Harness"])
+def agent_runs(limit: int = 50):
+    """Recent Harness runs and runtime failures; read-only."""
+    from storage.agent_harness import list_runs
+    return AgentRunsOut(runs=list_runs(limit=max(1, min(limit, 500)), db_path=_agent_db_path()))
+
+
+@app.get("/agent/evaluation", response_model=AgentEvaluationOut, tags=["Agent Harness"])
+def agent_evaluation():
+    """Outcome labels and opportunity-cost totals; read-only."""
+    import storage.db as sdb
+    path = _agent_db_path()
+    sdb.init_db(path)
+    rows = sdb.q("SELECT * FROM agent_evaluations", db_path=path)
+    mature = [row for row in rows if row.get("lifecycle_status") == "mature"]
+    saved = sum(float(row.get("saved_loss") or 0) for row in mature)
+    missed = sum(float(row.get("missed_profit") or 0) for row in mature)
+    return AgentEvaluationOut(
+        samples=len(mature),
+        reject_samples=sum(float(row.get("saved_loss") or 0) > 0 or float(row.get("missed_profit") or 0) > 0
+                           for row in mature),
+        saved_loss=round(saved, 8), missed_profit=round(missed, 8),
+        incremental_ev=round(saved - missed, 8), mature_samples=len(mature),
+        pending_samples=sum(row.get("lifecycle_status") == "pending" for row in rows))
 
 
 @app.post("/scan/daily", response_model=ScanOut, tags=["运维"],

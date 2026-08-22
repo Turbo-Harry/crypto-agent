@@ -187,6 +187,40 @@ def record_trade_outcome(trade_id, pnl, db_path=None):
         pass
 
 
+def harness_judge(sig, base, score, price, sentiment, *, model_call=None, db_path=None):
+    """Run the new Harness through an explicitly injected model callback.
+
+    ``model_call`` is intentionally required for any model execution.  The
+    compatibility module never opens a network client or chooses an endpoint;
+    existing legacy ``judge`` remains the sole legacy provider path.
+    """
+    import time as _time
+    from decision.agent_contracts import AgentInput, HarnessConfig, stable_hash
+    from decision.agent_harness import run_harness
+    from decision.agent_policy import PolicyKernel
+
+    bucket = int(_time.time() // 300)
+    identity = {"base": base, "signal": sig, "bucket": bucket}
+    digest = stable_hash(identity)[:24]
+    inp = AgentInput(
+        run_id=f"agent-{digest}", signal_id=f"signal-{digest}",
+        event_ts=str(bucket * 300), kline_ts=str(sig.get("kline_ts") or bucket * 300),
+        strategy_version="directional-v1", prompt_version="judge-v1",
+        model_version="injected", context_version="context-v1",
+        schema_version="schema-v1", retrieval_version="retrieval-v1",
+        signal={"base": base, "direction": sig.get("dir"), "score": score,
+                "entry": price, "stop": sig.get("stop"), "tp": sig.get("tp"),
+                "shadow_dims": sig.get("shadow_dims") or {},
+                "forecast": sig.get("forecast") or {}},
+        market={"regime": sig.get("regime"), "timeframe": sig.get("timeframe")},
+        news=sentiment or {}, field_provenance={"signal": "legacy_adapter"})
+    return run_harness(
+        inp, baseline_passed=True, model_call=model_call,
+        enabled=model_call is not None,
+        config=HarnessConfig(),
+        policy_kernel=PolicyKernel(veto_enabled=False, shadow=True), db_path=db_path)
+
+
 def sweep_outcomes(exchange, db_path=None, horizon_hours=24):
     """被否决信号的'假如开了会怎样': 判断满 horizon 小时后按现价回填结果,
     AI 由此学习自己拦得对不对(拦下的单后来涨/跌了多少)。"""

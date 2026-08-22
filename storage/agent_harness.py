@@ -51,7 +51,7 @@ def record_run(run: HarnessRun, agent_input: AgentInput | None = None,
         "context_version,schema_version,retrieval_version,input_hash,response_hash,"
         "latency_ms,model_latency_ms,input_tokens,output_tokens,estimated_cost,error_type) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [run.run_id, run.signal_id, idempotency, now, now if run.runtime_status.value != "completed" else None,
+        [run.run_id, run.signal_id, idempotency, now, now,
          run.runtime_status.value, run.final_action.value,
          run.model_verdict.value if run.model_verdict else None, run.run_role.value,
          run.parent_run_id, versions.get("prompt_version"), versions.get("model_version"),
@@ -100,4 +100,3 @@ def list_runs(limit: int = 50, *, db_path: str | None = None) -> list[dict[str, 
     db.init_db(db_path)
     safe_limit = max(1, min(int(limit), 500))
     return db.q("SELECT * FROM agent_runs ORDER BY created_ts DESC LIMIT ?", [safe_limit], db_path=db_path)
-
