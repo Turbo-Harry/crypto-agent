@@ -27,7 +27,15 @@ _HEART_NAME = ("paper" if os.environ.get("CRYPTO_AGENT_MODE") == "paper"
                else "directional")
 HEARTBEAT = os.path.join(ROOT, f"heartbeat_{_HEART_NAME}.txt")
 API_PORT = int(os.environ.get("CRYPTO_API_PORT", "8090"))
-NOTIFY_STATE = "/tmp/crypto-healthcheck.notified"
+# 2026-08-23 双实例: 告警去重状态按实例分开——此前两套体检共享一个
+# NOTIFY_STATE,30 分钟去重会互相吞告警。
+_NOTIFY_NAME = ("crypto-healthcheck-paper" if _HEART_NAME == "paper"
+                else "crypto-healthcheck")
+NOTIFY_STATE = f"/tmp/{_NOTIFY_NAME}.notified"
+# 维护窗口标记: 存在该文件或环境变量=1 时,体检照跑但失败不告警不退出
+# (部署/切库等计划停机用,避免把"主动停机"当成事故轰炸用户)。
+MAINTENANCE = (os.environ.get("CRYPTO_HEALTH_MAINTENANCE") == "1"
+               or os.path.exists(os.path.join(ROOT, ".healthcheck_maintenance")))
 
 # Phase 0 断点修复上线的时刻（此后平仓必须带复盘报告）
 FIX_DEPLOY_TS = 1786879580
@@ -241,6 +249,10 @@ try:
         print(_ln)
 except Exception:
     pass
+if failed and MAINTENANCE:
+    print(f"🔧 维护窗口(.healthcheck_maintenance 存在): {len(failed)} 项未过,"
+          f"告警静音,不退出")
+    sys.exit(0)
 if failed:
     # 飞书告警 + AI 诊断桥（2026-08-16 用户方案;30 分钟去重;AI 失败自动退回纯文本）
     try:

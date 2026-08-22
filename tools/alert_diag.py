@@ -93,11 +93,17 @@ def build_diagnostics(db=None):
         parts.append("场景归纳经验(教训聚合层):\n" + "\n".join(
             f"- {r['symbol']} {r['category']} {r['conditions']} "
             f"强度{r['strength']} 成员{r['member_count']}" for r in ru))
-    ee = _q(db, "SELECT engine, error FROM engine_errors "
-                "ORDER BY ts DESC LIMIT 3")
+    # 2026-08-23 fix: 只取未归档引擎错误 + 带相对时间——
+    # 此前把已修复归档的 Counter/SSL/余额失败旧行喂给 AI,导致误诊
+    # "疑似代码bug,需修复后重启"(修好的旧账反复被翻出来)。
+    ee = _q(db, "SELECT engine, error, ts FROM engine_errors "
+                "WHERE COALESCE(archived,0)=0 ORDER BY ts DESC LIMIT 3")
     if ee:
-        parts.append("最近引擎错误:\n" + "\n".join(
-            f"- {r['engine']}: {r['error'][:120]}" for r in ee))
+        import time as _t
+        now = _t.time()
+        parts.append("最近引擎错误(未归档,含时间):\n" + "\n".join(
+            f"- {r['engine']}: {r['error'][:120]}（{now - r['ts']:.0f}s 前）"
+            for r in ee))
     re_ = _q(db, "SELECT kind, reason, equity FROM risk_events "
                  "ORDER BY ts DESC LIMIT 3")
     if re_:
