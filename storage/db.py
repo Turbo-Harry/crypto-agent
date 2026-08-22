@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS trades (
     funding_usdt REAL DEFAULT 0,       -- 2026-08-23 资金费(持仓期间结算,同)
     shadow_dims TEXT,                  -- 2026-08-23 开仓时 6 维子分 JSON(权重进化证据)
     targets TEXT,                      -- 2026-08-23 目标价位带 T1/T2/T3 JSON
+    forecast TEXT,                     -- 2026-08-23 开仓时预测 JSON(分布+触达概率)
     review TEXT, review_ts REAL
 );
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
@@ -206,6 +207,12 @@ CREATE TABLE IF NOT EXISTS trade_features (
 CREATE INDEX IF NOT EXISTS idx_tf_symbol_ts ON trade_features(symbol, entry_ts);
 
 -- Phase 3 试验注册表（每次参数/规则变更提案必入账;多重检验与 PBO/DSR 证据）
+CREATE TABLE IF NOT EXISTS forecast_calibration (
+    trade_id TEXT PRIMARY KEY,
+    ts REAL, p_hit_tp REAL, p_hit_sl REAL,
+    hit_tp INTEGER, hit_sl INTEGER, pnl REAL
+);
+
 CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, change_id TEXT, kind TEXT, params TEXT,
@@ -418,6 +425,16 @@ def _migrate_v9_trade_targets(conn):
     _add_column_if_missing(conn, "trades", "targets", "TEXT")
 
 
+def _migrate_v10_forecast(conn):
+    """v10: 预测机制(2026-08-23 用户要求'最好能有预测机制')——
+    trades 加 forecast(开仓时预测 JSON);建 forecast_calibration(平仓校准)。"""
+    _add_column_if_missing(conn, "trades", "forecast", "TEXT")
+    conn.execute("CREATE TABLE IF NOT EXISTS forecast_calibration ("
+                 "trade_id TEXT PRIMARY KEY, ts REAL, "
+                 "p_hit_tp REAL, p_hit_sl REAL, hit_tp INTEGER, hit_sl INTEGER, "
+                 "pnl REAL)")
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -429,6 +446,7 @@ MIGRATIONS = (
     (7, _migrate_v7_trade_fees),
     (8, _migrate_v8_shadow_dims),
     (9, _migrate_v9_trade_targets),
+    (10, _migrate_v10_forecast),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -573,7 +591,7 @@ _TRADE_COLS = ("id", "symbol", "signal", "reason", "entry_price", "stop_loss",
                "adopted_lesson_ids", "atr_value", "signal_price", "notional_usdt",
                "risk_usdt", "entry_time", "exit_price", "exit_time", "exit_reason",
                "pnl", "status", "fees_usdt", "funding_usdt", "shadow_dims",
-               "targets", "review", "review_ts")
+               "targets", "forecast", "review", "review_ts")
 
 
 def q(sql, params=(), db_path=None):

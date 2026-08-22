@@ -232,7 +232,8 @@ class TradeJournal:
     def log_entry(self, symbol, signal, reason, entry_price, stop_loss,
                   take_profit, size, entry_time=None, direction="long", score=None,
                   adopted_lesson_ids=None, atr_value=None, signal_price=None,
-                  venue="swap", shadow_dims=None, targets=None):
+                  venue="swap", shadow_dims=None, targets=None,
+                  forecast=None):
         """记录开仓：信号是什么、为什么下单、参数如何。
         direction: "long"/"short"，用于正确计算空头盈亏。
         score: 本次决策的综合分（供阈值自适应 record 使用）。"""
@@ -254,6 +255,7 @@ class TradeJournal:
             "signal_price": signal_price,                      # R2-6：复盘用信号价
             "shadow_dims": shadow_dims or "",                 # 2026-08-23 权重进化证据(6维子分 JSON)
             "targets": targets or "",                       # 2026-08-23 目标价位带 T1/T2/T3 JSON
+            "forecast": forecast or "",                    # 2026-08-23 预测 JSON(分布+触达概率)
             # 投注记录（显式落盘，不靠 size×price 反推——API/复盘/统计直接读）
             "notional_usdt": round(size * entry_price, 2),     # 名义投注额（USDT）
             "risk_usdt": round(abs(entry_price - stop_loss) * size, 2),  # 止损风险额（USDT）

@@ -147,6 +147,14 @@ AGENT_JUDGE_API_URL = "https://api.deepseek.com/chat/completions"
 AGENT_JUDGE_MODEL = "deepseek-chat"
 AGENT_JUDGE_TIMEOUT_SECONDS = 20        # 单次判断超时(信号稀疏,阻塞可控)
 AGENT_JUDGE_TEMPERATURE = 0.2           # 低温度: 判断要稳,不要创作
+# 预测机制(2026-08-23 用户要求"最好能有预测机制"): 1h 对数收益 bootstrap
+# 价格分布 + 触达概率,与历史同向信号实证命中率混合;平仓后自动校准(Brier)。
+FORECAST_ENABLED = True                 # 开关
+FORECAST_HORIZON_HOURS = 24             # 预测窗口
+FORECAST_PATHS = 500                    # bootstrap 模拟路径数
+FORECAST_LOOKBACK_BARS = 168            # 收益样本窗口(7 天 1h K)
+FORECAST_BLEND = 0.5                    # 历史实证概率混合权重(0.5=各半)
+FORECAST_MIN_EMP_N = 5                  # 历史样本 < N 笔不混合(纯 bootstrap)
 SHADOW_DIMS = ("wick", "depth", "trend", "volume", "funding", "book")  # 6 维名
 
 # ============ 费率与手续费（2026-08-23 用户问"会计算费率和手续费吗"） ============

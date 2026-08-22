@@ -221,6 +221,19 @@ class SignalScanMixin:
         _targets = compute_targets(entry_ref, atr_val,
                                    "long" if ema20[-1] > ema50[-1] else "short",
                                    swing_level=_swing)
+        # 2026-08-23 预测机制(用户要求"最好能有预测机制"): bootstrap 价格分布
+        # + 触达概率,复用本函数已取的 klines,零额外网络成本
+        _forecast = None
+        try:
+            from decision.forecast import forecast_for_trade
+            _fc_sig = {"dir": ("long" if ema20[-1] > ema50[-1] else "short"),
+                       "entry": entry_ref, "atr": atr_val,
+                       "stop": entry_ref - config.STOP_ATR_MULT * atr_val,
+                       "tp": entry_ref + config.TP_ATR_MULT * atr_val}
+            _forecast = forecast_for_trade(
+                _fc_sig, base, klines, db_path=getattr(self, "_db_path", None))
+        except Exception:
+            _forecast = None
         kline_ts = last.get("ts") if isinstance(last, dict) else None
         # last 来自 klines dict 无 ts；用原始 kl 最后一根
         if kline_ts is None and kl:
@@ -238,7 +251,7 @@ class SignalScanMixin:
                         "tp": entry_ref + config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
                         "shadow_score": score, "shadow_dims": dims,
-                        "targets": _targets,
+                        "targets": _targets, "forecast": _forecast,
                         "regime": regime, "kline_ts": kline_ts}
         # 做空信号：空头趋势 + 反弹 EMA20 不破 + 拒绝K线（上影线）
         if ema20[-1] < ema50[-1] and last["high"] >= ema20[-1] and last["close"] < ema20[-1]:
@@ -252,7 +265,7 @@ class SignalScanMixin:
                         "tp": entry_ref - config.TP_ATR_MULT * atr_val,
                         "atr": atr_val,
                         "shadow_score": score, "shadow_dims": dims,
-                        "targets": _targets,
+                        "targets": _targets, "forecast": _forecast,
                         "regime": regime, "kline_ts": kline_ts}
         return None
 

@@ -199,6 +199,13 @@ class ReviewMixin:
                 self.risk.update_equity(eq, time.strftime("%Y-%m-%d"))
         except Exception:
             pass
+        # 2026-08-23 预测校准: 预测 vs 实际落表(Brier 自我检验)
+        try:
+            from decision.forecast import record_outcome
+            record_outcome(t.get("id"), t.get("forecast"), closed,
+                           db_path=self._db_path)
+        except Exception:
+            pass
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
         sign = "+" if net_pnl >= 0 else ""
         fee_line = (f"\n手续费 {fees_paid:.4f} · 资金费 {funding_paid:.4f}"

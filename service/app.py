@@ -349,6 +349,13 @@ def weights_evolve_rollback():
     return out
 
 
+@app.get("/forecast/calibration", response_model=dict, tags=["观测"])
+def forecast_calibration():
+    """预测校准报告: Brier 分数 + 分桶命中率(预测准不准,数据说话)。"""
+    from decision.forecast import calibration
+    return calibration(_trader()._db_path)
+
+
 @app.post("/pause", response_model=ControlOut, tags=["控制"],
            dependencies=[Depends(require_control)])
 def pause():

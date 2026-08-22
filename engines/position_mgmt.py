@@ -356,6 +356,8 @@ class PositionMixin:
                                        ensure_ascii=False),
                 targets=json.dumps(sig.get("targets") or {},
                                    ensure_ascii=False),
+                forecast=json.dumps(sig.get("forecast") or {},
+                                    ensure_ascii=False) if sig.get("forecast") else None,
                 venue=("live" if getattr(self, "live_mode", False) else "swap"))  # 合约腿；实盘标 live(2026-08-23 重新计盈亏)
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
@@ -394,10 +396,17 @@ class PositionMixin:
                                      sig.get("dir")) + "\n"
             except Exception:
                 pass
+            _fc_line = ""
+            try:
+                if sig.get("forecast"):
+                    from decision.forecast import describe as _fc_describe
+                    _fc_line = "🔮 预测 " + _fc_describe(sig["forecast"]) + "\n"
+            except Exception:
+                pass
             msg = (f"🎯 {self._dir_cn(sig['dir'])} {base}\n"
                    f"入场 **{price:.2f}**\n"
                    f"止损 {sig['stop']:.2f}  ·  止盈 {sig['tp']:.2f}\n"
-                   f"{_tg_line}{_hit_line}"
+                   f"{_tg_line}{_fc_line}{_hit_line}"
                    f"盈亏比 2:1  ·  杠杆 {lev}x  ·  数量 {qty}  ·  名义 {qty * price:.0f} USDT")
             try:
                 from service.events import log_event
