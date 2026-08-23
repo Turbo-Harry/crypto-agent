@@ -1120,3 +1120,7 @@
   `tool-policy-v2-structural-repair`，新旧版本不混计 100/30 成熟度。专项新增“首轮截断 JSON、
   第二轮合法 approve”路径，15/15 通过；这只提高有效 shadow 样本产量，不改变 0.70 reject 门、
   生命周期门或 veto 权限，真实失败率改善必须等新版本自然候选验证。
+- 部署证据：提交 `908832a` 后只 kickstart `com.crypto.paper`，模拟盘 PID 11627→12828；第二次
+  `/health` 为 ok、心跳年龄 8.6s，空仓、`/reconcile balanced=true`、`/error` 为空。本地加载身份
+  为 `tool-policy-v2-structural-repair`；`/agent/status` 在尚无新自然候选时仍展示旧库中最新版本，
+  不人工制造调用或迁移旧证据。8090 `com.crypto.agent` 继续保持原 PID 90574，未触碰。
