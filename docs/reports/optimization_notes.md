@@ -955,3 +955,8 @@
 - 修复：schema v34 对已标 v33 的老库幂等补齐完整 replay evidence 列；图的 record 节点不再吞掉
   Trace 错误。持久化失败时返回 baseline pass、`veto=false` 并输出明确错误，禁止无审计否决。
 - 边界：只修研究审计与 fail-safe，不修改入场阈值、1%/150/600 风控、止损、预算或 live 权限。
+- 部署证据：完整自动发现 53/53 个测试脚本、compileall、AI 仓库、代码图、参数、隔离和 23 条
+  fix guard 全绿。仅重启 8091 paper 到 PID 65281；8090 live PID 90574 未变化。活体 schema=34、
+  quick_check=ok，Harness v2 新增 4 条 completed/replayable/evidence 完整 Trace 和 4 条 pending 评价，
+  未再出现 Trace 持久化告警。paper 健康、心跳 0.7 秒、空仓、对账一致、`/error` 为空；六类
+  pending 条件单均为 0。入场模型仍为空、预算扩张仍锁定，不据此宣称胜率已提高。
