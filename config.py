@@ -477,6 +477,9 @@ LIVE_HARD_STOP_USDT = 30      # 累计实亏达 30 USDT(预算30%) → 自动停
 LOSS_STREAK_COOL_ENABLED = True  # 开关
 LOSS_STREAK_COOL_THRESHOLD = 6   # 连续亏损触发线
 LOSS_STREAK_COOL_HOURS = 6       # 冷却时长(自动解除)
+# 2026-08-23 用户指示"模拟盘去掉保持锁定": 模拟盘不冷却(保持激进采集),
+# 实盘保持冷却锁定;仅 paper 实例读此开关。
+LOSS_STREAK_COOL_PAPER_ENABLED = False
 # 2026-08-23 用户指示: BTC/ETH 用 10x 杠杆(其余币 B+C 分档 3x-5x)
 LIVE_LEVERAGE_MAP = {"BTC": 10, "ETH": 10}
 # BTC/ETH 的名义上限=最小合约名义(BTC 0.01≈680 / ETH 0.01≈25),

@@ -82,6 +82,21 @@ def main():
         on_close(db, -0.01)
     check("开关关闭 → 不启动冷却", not is_cooling(db))
 
+    # ---- 模式门控: 模拟盘不冷却(2026-08-23 用户指示"模拟盘去掉保持锁定") ----
+    config.LOSS_STREAK_COOL_ENABLED = True
+    config.LOSS_STREAK_COOL_PAPER_ENABLED = False
+    _old_mode = config.CRYPTO_MODE
+    config.CRYPTO_MODE = "paper"
+    for i in range(10):
+        on_close(db, -0.01)
+    check("paper 模式 → 连亏 10 笔也不冷却", not is_cooling(db))
+    config.CRYPTO_MODE = "live"
+    for i in range(6):
+        on_close(db, -0.01)
+    check("live 模式 → 6 连亏照常冷却(保持锁定)", is_cooling(db))
+    release(db)
+    config.CRYPTO_MODE = _old_mode
+
     config.LOSS_STREAK_COOL_ENABLED, config.LOSS_STREAK_COOL_THRESHOLD, \
         config.LOSS_STREAK_COOL_HOURS = _old
     print(f"\n结果: {_passed} 通过, {_failed} 失败")

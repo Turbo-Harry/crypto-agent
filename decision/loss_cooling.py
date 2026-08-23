@@ -10,6 +10,16 @@ import time
 import config
 
 
+def _enabled():
+    """模式门控(2026-08-23 用户指示"模拟盘去掉保持锁定"):
+    模拟盘不冷却(激进采集),实盘保持锁定;总开关优先。"""
+    if not getattr(config, "LOSS_STREAK_COOL_ENABLED", True):
+        return False
+    if getattr(config, "CRYPTO_MODE", "live") == "paper":
+        return bool(getattr(config, "LOSS_STREAK_COOL_PAPER_ENABLED", False))
+    return True
+
+
 def streak(db_path=None):
     try:
         import storage.db as sdb
@@ -69,7 +79,7 @@ def release(db_path=None):
 def on_close(db_path, net_pnl, notify=None):
     """平仓后步进: 净亏 streak+1,盈利归零;达阈值 → 启动冷却。
     返回 action: 'cooling_started' / 'none'。notify 为可选的告警回调。"""
-    if not getattr(config, "LOSS_STREAK_COOL_ENABLED", True):
+    if not _enabled():
         return "none"
     try:
         import storage.db as sdb
