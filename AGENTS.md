@@ -19,10 +19,11 @@ live 实例。代码、README 与本安全约束冲突时，先停手并向用�
 ### AI 接手的 60 秒路径
 
 1. 读 `llms.txt` 选任务入口；涉及写入时再读本文件第 7～10 节。
-2. 运行 `python3 tools/agent_notes.py status` 和 `git status --short`，确认占用与用户改动。
-3. 写代码前读 `docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md` 和相关架构文档。
-4. 改动前用 `python3 tools/code_graph.py --query ...` 查影响面；改动后运行第 4 节证据命令。
-5. AI 文档或入口有改动时运行 `python3 tools/ai_repo_check.py`。
+2. 进入任一顶层模块前，读该目录的 `AGENTS.md`；局部规则只能收紧、不能放宽本文件红线。
+3. 运行 `python3 tools/agent_notes.py status` 和 `git status --short`，确认占用与用户改动。
+4. 写代码前读 `docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md` 和相关架构文档。
+5. 改动前用 `python3 tools/code_graph.py --query ...` 查影响面；改动后运行第 4 节证据命令。
+6. AI 文档或入口有改动时运行 `python3 tools/ai_repo_check.py`。
 
 完整的任务路由、事实优先级与交付清单见
 `docs/architecture/ai_friendly_repo.md`。
@@ -94,6 +95,10 @@ config.py          全局配置（根目录，被所有层 import）
 llms.txt           AI 入口索引（llmstxt 标准，指向 AGENTS/README/docs 关键文档）
 ```
 
+上述 16 个顶层功能模块（service/engines/decision/execution/storage/interfaces/exchange/
+factors/data/strategy/risk/backtest/tools/tests/docs/legacy）各自维护 `AGENTS.md`。根文件定义全局
+授权与安全红线，模块文件定义本地职责、依赖边界和最小验证；两者冲突时执行更严格规则。
+
 依赖单向向下：service → engines/decision/execution → exchange 接口 → OKX 传输层。
 **禁止反向 import**（如 exchange 层 import engines）。
 代码关系图（mermaid + 依赖矩阵 + 分层检查）见 `docs/architecture/code_graph.md`；
@@ -111,45 +116,36 @@ CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 - 方向性引擎：1s 风控监控 + 5min 轮询已收线 15m 主信号 + 1H/4H 环境 + 新交易最长 4h
 - 实时行情后端由 `config.REALTIME_BACKEND` 选择；心跳/PID/数据库按实例隔离
 
-HTTP 接口（127.0.0.1，Swagger 文档在 `GET /docs`）：
+HTTP 接口（127.0.0.1；`GET /docs` 的 OpenAPI schema 是完整接口事实源）：
 
-| 方法 | 路径 | 用途 |
+| 类别 | 方法/路径 | 用途与边界 |
 |---|---|---|
-| GET | /health | 方向性引擎心跳健康 |
-| GET | /status | 余额/持仓/风控全景 |
-| GET | /watchlist | 今日候选池（评分→笔数） |
-| GET | /signals/{base} | 按需信号检查（只读） |
-| GET | /journal | 交易台账+胜率 |
-| GET | /realtime/{base} | WS 实时行情快照 |
-| POST | /pause /resume | 暂停/恢复方向性开仓 |
-| POST | /scan/daily | 手动触发全市场扫描 |
-| GET | /scan/evolve | 扫描尺子进化状态（影线比影子/是否待批准） |
-| POST | /scan/evolve/approve | 批准已通过验证门的扫描尺子（不改 config） |
-| POST | /scan/evolve/rollback | 回滚活体影线比到 config 基线 |
-| GET | /models/entry | 入场模型版本、样本、校准、状态机与变更历史 |
-| POST | /models/entry/rollback | 仅回滚入场模型到父版本（不触发下单） |
-| GET | /forecast/calibration | 首次触及概率与极值分位预测校准指标 |
-| GET | /factors/trials | 因子样本外试验、验证门结果与拒绝原因 |
-| GET | /research/readiness | 15m 开仓准确率计划的自然平仓、因子、模型、Agent 与预算锁统计门 |
-| GET | /agent/evaluation | Agent 相对量化基线的增量 EV、拦损与机会成本 |
-| GET | /error | 引擎最近异常堆栈 |
+| 核心观测 | `GET /health /status /watchlist /signals/{base} /journal /realtime/{base}` | 心跳、余额/持仓/风控、候选、信号、台账与行情快照 |
+| 审计观测 | `GET /reconcile /error /anomalies /risk/events /analysis/latest` | 对账、异常、风控事件与最近分析 |
+| 研究/Agent | `GET /agent/* /research/readiness /factors/trials /models/entry /forecast/calibration /scan/evolve /weights/evolve` | 只读成熟度、试验、模型、提案与进化状态 |
+| 有限控制 | `POST /pause /resume /scan/daily /analysis/daily /cool/release` | 暂停/恢复、刷新、分析和解除冷却；都会改变状态 |
+| 受门控进化 | `POST /scan/evolve/* /weights/evolve/* /models/entry/rollback` | 提案、批准或回滚；不直接下单，不扩大风险预算 |
 
-独立调试模式仍可用（不改交易逻辑）：`python3 engines/directional_trader.py --once`。
+全部 POST 控制端点只允许回环 Host；配置 `CRYPTO_AGENT_API_TOKEN` 时还必须携带
+`x-api-token`。HTTP 永远不是下单入口，禁止新增手动下单、撤单或绕过策略/风控的接口。
+
+独立调试模式仍可用（不改交易逻辑）：
+`CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 engines/directional_trader.py --once`。
 
 ## 4. 测试
 
 ```bash
-PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（FakeAdapter 离线全链路）
-PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（TestClient 离线）
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_exchange_layers.py   # FakeAdapter 离线全链路
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_service_api.py       # TestClient 离线接口
 python3 tests/test_ai_repo_check.py                    # AI 入口/链接/索引守卫
 python3 tools/ai_repo_check.py                         # 同一守卫的命令行入口
 python3 tools/code_graph.py --check                    # 分层/循环依赖/共享状态检查
 python3 tools/params_lint.py                           # 策略参数集中化
 python3 tools/test_isolation_lint.py                   # DB/事件/运行目录隔离
 python3 tools/fix_guard.py                             # 已修问题回归护栏
-python3 -m py_compile <改动的文件>                      # 改动后必跑
+PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc python3 -m py_compile <改动的文件>  # 改动后必跑
 ```
-CI 自动发现全部 `tests/test_*.py`（当前 45 个），逐脚本使用独立 DB、事件文件与运行目录；
+CI 自动发现全部 `tests/test_*.py`，逐脚本使用独立 DB、事件文件与运行目录；
 不得维护会漏新测试的固定白名单。完整命令以 `.github/workflows/ci.yml` 为准。
 改交易逻辑后：先单测，再沙盘实测一条下单链路（开仓→挂止损→pending→撤单→平仓），最后才重启活体进程。
 
@@ -160,7 +156,7 @@ CI 自动发现全部 `tests/test_*.py`（当前 45 个），逐脚本使用独�
 3. 单笔风险 1%、名义上限 150 USDT、组合总敞口 ≤600（PositionLedger）。
 4. 最小下单量不足时**拒绝开仓**，绝不放大仓位凑最小张数。
 5. 条件单字段：止损 `slTriggerPx`、止盈 `tpTriggerPx`（triggerPx 会 50015）；`orders-algo-pending` 必须带 `ordType`。
-6. HTTP 层只读观测 + 暂停/恢复；**不允许暴露下单接口**。
+6. HTTP 层只允许观测与上表列明的有限控制/运维动作；**不允许暴露下单、撤单或绕过风控的接口**。
 
 ## 6. 文档路径约束（写文档必守）
 
@@ -175,7 +171,11 @@ CI 自动发现全部 `tests/test_*.py`（当前 45 个），逐脚本使用独�
 | AI 提示词 | `docs/prompts/` | evolution_loop_prompt.md |
 
 - 文件名：`YYYY-MM-DD_功能名.md`；同一方案保留草稿+`_FINAL` 终审稿，终审稿标注"权威实施稿"。
-- 例外（活文档，追加式更新，不加日期前缀）：`docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md`。
+- 例外（活文档，不加日期前缀）：`docs/architecture/ai_friendly_repo.md`、
+  `docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md`、`docs/AGENT_NOTES.md`；
+  其中历史记录类文档保持追加式更新。
+- 各顶层功能模块的 `AGENTS.md` 是代码目录 Markdown 禁令的唯一协作入口例外；不加日期前缀，
+  必须继承根规则，并由 `tools/ai_repo_check.py` 检查齐全与 `llms.txt` 可发现性。
 - 新增/移动文档后：同步更新 `docs/README.md`（功能表+时间线表）与全部交叉引用。
 - 根目录只留 `README.md`、`AGENTS.md`、`llms.txt` 三个入口，禁止在根目录新增散装 md。
 - 禁止把文档塞进代码目录（backtest/ data/ 等已清空归位）。

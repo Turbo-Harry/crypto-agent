@@ -40,10 +40,14 @@ def main():
     import storage.db as sdb
     sdb.init_db(db)
     _old = (config.LOSS_STREAK_COOL_ENABLED, config.LOSS_STREAK_COOL_THRESHOLD,
-            config.LOSS_STREAK_COOL_HOURS)
+            config.LOSS_STREAK_COOL_HOURS, config.CRYPTO_MODE,
+            config.LOSS_STREAK_COOL_PAPER_ENABLED,
+            config.LOSS_HALF_PAPER_ENABLED)
     config.LOSS_STREAK_COOL_ENABLED = True
     config.LOSS_STREAK_COOL_THRESHOLD = 6
     config.LOSS_STREAK_COOL_HOURS = 6
+    # 通用状态机先在启用冷却的 live 模式验证；paper 关闭行为在下方单独验证。
+    config.CRYPTO_MODE = "live"
 
     # 连亏步进
     for i in range(5):
@@ -105,8 +109,10 @@ def main():
     release(db)
     config.CRYPTO_MODE = _old_mode
 
-    config.LOSS_STREAK_COOL_ENABLED, config.LOSS_STREAK_COOL_THRESHOLD, \
-        config.LOSS_STREAK_COOL_HOURS = _old
+    (config.LOSS_STREAK_COOL_ENABLED, config.LOSS_STREAK_COOL_THRESHOLD,
+     config.LOSS_STREAK_COOL_HOURS, config.CRYPTO_MODE,
+     config.LOSS_STREAK_COOL_PAPER_ENABLED,
+     config.LOSS_HALF_PAPER_ENABLED) = _old
     print(f"\n结果: {_passed} 通过, {_failed} 失败")
     return 0 if _failed == 0 else 1
 

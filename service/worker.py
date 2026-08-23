@@ -2,7 +2,7 @@
 后台交易线程 — 完整交易系统的引擎托管层。
 
 托管常驻引擎（一个交易所适配器 + 一条 WebSocket 行情连接）：
-  1. 方向性引擎 DirectionalTrader —— 2s 止损监控 + 15min 回踩信号扫描
+  1. 方向性引擎 DirectionalTrader —— 1s 风控节拍 + 每 5min 检查已收线 15m 信号
      （tick() 由 run() 抽取，服务端复用同一逻辑，无重复实现）
 
 （2026-08-16 用户决定：套利引擎不再需要，已整线归档 legacy/，本文件不再托管。
@@ -118,7 +118,7 @@ class ServiceTrader(DirectionalTrader):
 
 
 class TraderWorker:
-    """托管方向性引擎线程（2s tick）。套利引擎已按用户决定移除（归档 legacy/）。"""
+    """托管方向性引擎线程（1s tick）。套利引擎已按用户决定移除（归档 legacy/）。"""
 
     def __init__(self):
         # 共享依赖：一个适配器、一条 WebSocket（方向性引擎使用）

@@ -10,7 +10,26 @@
 - [README.md](README.md): 项目总览与快速开始（AI 启动必须显式 `CRYPTO_AGENT_MODE=paper`）
 - [docs/README.md](docs/README.md): 文档中心索引（按功能分类 + 按时间线）
 - [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md): 多 Agent 文件占用协议（写入前 status/claim，完成后 release）
-- [docs/architecture/ai_friendly_repo.md](docs/architecture/ai_friendly_repo.md): AI 接手路径、事实优先级、任务路由与证据清单
+- [docs/architecture/ai_friendly_repo.md](docs/architecture/ai_friendly_repo.md): AI 开发契约 —— 变更分级、权限/状态边界、标准闭环、任务路由、验证矩阵与交付证据模板
+
+## 模块级 AGENTS（进入目录后必读）
+
+- [service/AGENTS.md](service/AGENTS.md): 服务/API/worker —— 稳定运行端口、有限控制面、单 worker 与离线 app factory
+- [engines/AGENTS.md](engines/AGENTS.md): 交易引擎 —— 信号、开平仓、风控、止损与运行编排边界
+- [decision/AGENTS.md](decision/AGENTS.md): 决策/进化/Agent —— fail-closed、证据隔离与零独立执行权限
+- [execution/AGENTS.md](execution/AGENTS.md): 数量/台账/所有权 —— floor、单位、原子状态与实例隔离
+- [storage/AGENTS.md](storage/AGENTS.md): SQLite/repository/query —— schema 所有权、迁移和跨层边界
+- [interfaces/AGENTS.md](interfaces/AGENTS.md): 中立契约 —— 无副作用 Protocol 与领域类型
+- [exchange/AGENTS.md](exchange/AGENTS.md): 交易所四层 —— 单位/场所/错误语义、FakeAdapter 与模拟盘边界
+- [factors/AGENTS.md](factors/AGENTS.md): 因子/模型研究 —— as-of、purged WF、DSR/PBO 与零执行权限
+- [data/AGENTS.md](data/AGENTS.md): 数据采集/实时行情 —— provenance、收线、缺口与缓存边界
+- [strategy/AGENTS.md](strategy/AGENTS.md): 策略原语 —— 纯函数、参数集中化与无未来函数
+- [risk/AGENTS.md](risk/AGENTS.md): 风险原语 —— 硬门、失败关闭与边界值测试
+- [backtest/AGENTS.md](backtest/AGENTS.md): 回测研究 —— 成本、数据隔离、可复现与证伪边界
+- [tools/AGENTS.md](tools/AGENTS.md): CLI/运维工具 —— 默认只读、隔离路径与核心禁止反向依赖
+- [tests/AGENTS.md](tests/AGENTS.md): 测试 —— Fake/Stub、三类状态隔离与自动发现
+- [docs/AGENTS.md](docs/AGENTS.md): 文档 —— 分类、日期、索引、事实新鲜度与链接守卫
+- [legacy/AGENTS.md](legacy/AGENTS.md): 归档 —— 默认只读、禁止现役反向依赖或恢复旧交易线
 
 ## 架构
 
@@ -31,6 +50,7 @@
 - [docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md](docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md): 15m 主周期/4h horizon 的开仓准确率、因子挖掘、极值区间预测与 Agent 增量验证权威实施稿（T0–T10）
 - [docs/plans/2026-08-16_self_evolution_design.md](docs/plans/2026-08-16_self_evolution_design.md): 自进化系统设计方案 v0.2 —— 复盘驱动的系统与策略改进（DEF 缺陷清单/业界标准 S1-S5 验收/Phase 0-5/质疑轮/零回归约束/权责矩阵）
 - [docs/plans/2026-08-23_agent_harness_improvement_FINAL.md](docs/plans/2026-08-23_agent_harness_improvement_FINAL.md): 交易 Agent Harness 权威实施稿 —— 版本化上下文/三层记忆/只读工具/确定性策略核/Trace/Eval/champion-challenger/回滚
+- [docs/plans/2026-08-23_agent_harness_construction_roadmap_FINAL.md](docs/plans/2026-08-23_agent_harness_construction_roadmap_FINAL.md): 交易 Agent Harness 建设路线图 —— 稳定采样/数据核账/增量评价/Challenger/人工晋升/观察回滚
 - [docs/plans/2026-08-23_agent_active_proposal_shadow_FINAL.md](docs/plans/2026-08-23_agent_active_proposal_shadow_FINAL.md): AI 主动方向候选、确定性 2:1、C 策略反事实标签与零执行权限权威实施稿
 - [docs/reports/2026-08-16_strategy_research.md](docs/reports/2026-08-16_strategy_research.md): 业界策略调研（订单流 CVD/聪明钱 SMC 批评/分场景策略套件/开源机器人，附来源 URL）
 - [docs/reports/2026-08-23_15m_research_replay_report.md](docs/reports/2026-08-23_15m_research_replay_report.md): 真实 OKX SWAP 15m/4h 历史重放、自动因子/概率/极值裁决；当前成本后 EV 与模型门均未通过

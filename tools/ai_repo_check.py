@@ -16,6 +16,18 @@ from urllib.parse import unquote, urlsplit
 
 ROOT_ENTRY_FILES = ("README.md", "AGENTS.md", "llms.txt", "docs/README.md")
 ALLOWED_ROOT_MARKDOWN = {"README.md", "AGENTS.md"}
+MODULE_AGENT_DIRS = (
+    "service", "engines", "decision", "execution", "storage", "interfaces",
+    "exchange", "factors", "data", "strategy", "risk", "backtest", "tools",
+    "tests", "docs", "legacy",
+)
+MODULE_AGENT_TARGETS = {f"{directory}/AGENTS.md" for directory in MODULE_AGENT_DIRS}
+REQUIRED_MODULE_AGENT_SNIPPETS = {
+    "../AGENTS.md": "继承根协作规则",
+    "## 职责": "声明模块职责",
+    "## 局部规则": "声明模块局部边界",
+    "## 最小验证": "声明模块最小验证",
+}
 REQUIRED_LLM_TARGETS = {
     "README.md",
     "AGENTS.md",
@@ -24,13 +36,14 @@ REQUIRED_LLM_TARGETS = {
     "docs/architecture/ai_friendly_repo.md",
     "docs/reports/pitfalls.md",
     "docs/reports/optimization_notes.md",
-}
+} | MODULE_AGENT_TARGETS
 REQUIRED_AGENT_GUIDANCE = {
     "CRYPTO_AGENT_MODE=paper": "AI 快速启动必须显式限定模拟盘",
     "python3 tools/agent_notes.py status": "写入前检查协作者占用",
     "python3 tools/ai_repo_check.py": "运行 AI 仓库自检",
     "python3 tools/code_graph.py --check": "运行分层检查",
     "docs/reports/pitfalls.md": "写代码前读取踩坑档案",
+    "进入任一顶层模块前": "进入模块前读取局部 AGENTS.md",
 }
 
 _LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
@@ -78,9 +91,10 @@ def local_links(path: Path, root: Path) -> Iterator[Tuple[int, str, Path]]:
 
 
 def markdown_sources(root: Path) -> List[Path]:
-    sources = [root / "README.md", root / "AGENTS.md", root / "llms.txt"]
-    sources.extend(sorted((root / "docs").rglob("*.md")))
-    return [path for path in sources if path.exists()]
+    sources = {root / "README.md", root / "AGENTS.md", root / "llms.txt"}
+    sources.update(root / directory / "AGENTS.md" for directory in MODULE_AGENT_DIRS)
+    sources.update((root / "docs").rglob("*.md"))
+    return sorted(path for path in sources if path.exists())
 
 
 def linked_targets(path: Path, root: Path) -> Set[str]:
@@ -98,6 +112,18 @@ def check_repo(root: Path | str = Path.cwd()) -> List[str]:
     for relative in ROOT_ENTRY_FILES:
         if not (root / relative).is_file():
             errors.append(f"缺少 AI 入口文件: {relative}")
+
+    for relative in sorted(MODULE_AGENT_TARGETS):
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"模块缺少局部 AGENTS.md: {relative}")
+            continue
+        guidance = path.read_text(encoding="utf-8")
+        for snippet, purpose in REQUIRED_MODULE_AGENT_SNIPPETS.items():
+            if snippet not in guidance:
+                errors.append(
+                    f"模块局部 AGENTS.md 缺少内容（{purpose}）: {relative} -> {snippet}"
+                )
 
     root_markdown = {path.name for path in root.glob("*.md")}
     for name in sorted(root_markdown - ALLOWED_ROOT_MARKDOWN):
@@ -149,7 +175,7 @@ def _print_result(errors: Sequence[str]) -> int:
         for index, error in enumerate(errors, 1):
             print(f"  {index}. {error}")
         return 1
-    print("AI 仓库自检通过：入口、文档链接、llms.txt 与 docs 索引均一致")
+    print("AI 仓库自检通过：根/模块 AGENTS、文档链接、llms.txt 与 docs 索引均一致")
     return 0
 
 

@@ -667,3 +667,23 @@
 - 根因：层级表遗漏 `storage/interfaces`，检查器只判断目录方向，没有检查服务直连数据库、核心反向依赖工具脚本和跨包私有符号。
 - 修复：补齐稳定契约层与持久化层，服务经 `TradingRuntimePort`、`decision.api`、`storage.query_api` 调用；Agent 契约下沉到 `interfaces`，台账/持仓/运行异常改走 repository；代码图新增三类接口绕过守卫。
 - 预防：目录拆文件不等于模块解耦。每次新增跨包 import 都要同时检查依赖方向、公开契约和数据所有权；`code_graph --check` 的层级清单必须覆盖全部核心包。
+
+### 2026-08-23 macOS 沙箱会把 py_compile 缓存写到仓库外
+- 现象：源码目录可写，但系统 Python 3.9 执行 `python3 -m py_compile` 时尝试写
+  `~/Library/Caches/com.apple.python/...pyc`，在 workspace-write 沙箱中报 `PermissionError`。
+- 根因：该 Python 的字节码缓存前缀指向用户 Library；源码可写不代表解释器默认缓存目录也在
+  授权范围内。
+- 修复：验证命令显式设置 `PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc`，只改变编译缓存落点，
+  不改变源码、导入语义或运行配置。
+- 预防：沙箱内运行语法编译时统一指定可写临时缓存目录；不要为写用户缓存申请扩大权限，
+  也不要把 `__pycache__` 或 `.pyc` 当交付产物。
+
+### 2026-08-23 全局 paper 测试环境会改变模式敏感状态机的前置条件
+- 现象：用户关闭模拟盘连亏冷却和半仓后，生产行为符合新配置，但全量 CI 的
+  `CRYPTO_AGENT_MODE=paper` 让原“通用冷却状态机”断言整段失效；决策测试也仍期待 paper 半仓。
+- 根因：测试依赖进程级默认模式，没有在用例内冻结自身要验证的 live/paper 前置条件；配置变化后，
+  状态机本体测试和模式门控测试相互污染。
+- 修复：通用冷却状态机显式切到 live 并在结尾恢复所有配置；模式门控另测 paper 不冷却/不半仓
+  和 live 保持冷却/半仓。生产参数与生产代码均未修改。
+- 预防：凡行为受实例模式或 feature flag 控制，测试必须在用例内保存、设置、恢复相关配置，
+  同时覆盖开/关两侧；不得依赖 CI 的全局环境恰好等于测试前置条件。

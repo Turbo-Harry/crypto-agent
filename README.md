@@ -59,7 +59,7 @@ CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 |---|---|
 | 方向性引擎 | 1s 风控监控 + 5min 轮询已收线 15m 回踩信号 + 4h 时间退出 + 每日候选刷新 |
 | 实时行情 | ccxt.pro watch_ticker（config.REALTIME_BACKEND 可切回原生 WS） |
-| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、/models/entry、/forecast/calibration、/factors/trials、/agent/evaluation、/agent/proposals、/research/readiness；POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback /models/entry/rollback |
+| HTTP API | `GET /docs` 是完整契约；GET 提供运行/对账/研究/Agent 观测，POST 仅提供回环受控的暂停、扫描、分析、批准与回滚；不提供下单/撤单接口 |
 
 ### 双实例实现现状（不是 AI 的 live 操作授权）
 
@@ -102,10 +102,11 @@ CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 ```
 crypto-agent/
 ├── AGENTS.md               # AI 协作模型：分层/入口/安全不变量/最佳实践/红线
+├── */AGENTS.md             # 16 个顶层功能模块的局部职责、边界与最小验证
 ├── docs/architecture/exchange_layers.md      # 交易所访问四层架构
 ├── service/                # 服务端外壳（FastAPI + uvicorn，完整功能入口）
 │   ├── main.py             #   进程入口：方向性引擎 + HTTP
-│   ├── app.py              #   HTTP 接口层（只读观测 + 暂停/恢复，禁止下单）
+│   ├── app.py              #   HTTP 接口层（观测 + 有限控制/运维，禁止下单/撤单）
 │   ├── models.py           #   Pydantic 响应模型（AI 可读 schema）
 │   └── worker.py           #   引擎托管：后台线程 + 共享 WS + 心跳
 ├── engines/                # 交易引擎层（2026-08-20 按功能拆分，行为零变化）
@@ -134,17 +135,17 @@ crypto-agent/
 ## 测试
 
 ```bash
-PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（FakeAdapter 离线）
-PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（TestClient 离线）
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_exchange_layers.py   # FakeAdapter 离线
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_service_api.py       # TestClient 离线
 python3 tools/ai_repo_check.py                         # AI 入口/链接/索引守卫
 python3 tools/code_graph.py --check                    # 分层检查
 python3 tools/params_lint.py                           # 参数集中化
 python3 tools/test_isolation_lint.py                   # 测试副作用隔离
 python3 tools/fix_guard.py                             # 修复护栏
-python3 -m py_compile <改动的文件>
+PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc python3 -m py_compile <改动的文件>
 ```
 
-CI 自动发现全部 `tests/test_*.py`（当前 45 个），每个脚本使用独立数据库、事件文件和
+CI 自动发现全部 `tests/test_*.py`，每个脚本使用独立数据库、事件文件和
 运行目录。代码阶段通过不代表准确率已经提高：当前 15m/4h 真实候选与校准样本仍不足，
 模型和 Harness 保持 shadow；样本外 EV 未转正前不得扩大预算。
 

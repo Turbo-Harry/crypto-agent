@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.ai_repo_check import check_repo
+from tools.ai_repo_check import MODULE_AGENT_DIRS, check_repo
 
 
 passed = failed = 0
@@ -41,9 +41,11 @@ def _minimal_repo(root: Path) -> None:
         "python3 tools/agent_notes.py status\n"
         "python3 tools/ai_repo_check.py\n"
         "python3 tools/code_graph.py --check\n"
-        "docs/reports/pitfalls.md\n",
+        "docs/reports/pitfalls.md\n"
+        "进入任一顶层模块前读取局部 AGENTS.md\n",
     )
     docs = [
+        "docs/AGENTS.md",
         "docs/AGENT_NOTES.md",
         "docs/architecture/ai_friendly_repo.md",
         "docs/reports/pitfalls.md",
@@ -51,9 +53,21 @@ def _minimal_repo(root: Path) -> None:
     ]
     for relative in docs:
         _write(root / relative)
+    module_agents = [f"{directory}/AGENTS.md" for directory in MODULE_AGENT_DIRS]
+    for relative in module_agents:
+        _write(
+            root / relative,
+            "# 模块规则\n\n"
+            "继承 [根协作规则](../AGENTS.md)。\n\n"
+            "## 职责\n\n- 职责。\n\n"
+            "## 局部规则\n\n- 规则。\n\n"
+            "## 最小验证\n\n- 验证。\n",
+        )
     index_links = "\n".join(f"- [{path}]({path.removeprefix('docs/')})" for path in docs)
     _write(root / "docs/README.md", f"# 索引\n{index_links}\n")
-    llms_targets = ["README.md", "AGENTS.md", "docs/README.md", *docs]
+    llms_targets = list(dict.fromkeys(
+        ["README.md", "AGENTS.md", "docs/README.md", *docs, *module_agents]
+    ))
     llms_links = "\n".join(f"- [{path}]({path})" for path in llms_targets)
     _write(root / "llms.txt", f"# llms\n{llms_links}\n")
 
@@ -117,6 +131,45 @@ def test_link_escape_is_caught() -> None:
         check("越界链接报错", any("本地链接越出仓库" in item for item in errors), str(errors))
 
 
+def test_missing_module_agents_is_caught() -> None:
+    print("== 模块缺少局部 AGENTS 可被捕获 ==")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _minimal_repo(root)
+        (root / "engines/AGENTS.md").unlink()
+        errors = check_repo(root)
+        check("缺少模块规则报错",
+              any("模块缺少局部 AGENTS.md: engines/AGENTS.md" in item
+                  for item in errors), str(errors))
+
+
+def test_unlinked_module_agents_is_caught() -> None:
+    print("== llms 漏模块 AGENTS 可被捕获 ==")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _minimal_repo(root)
+        llms = (root / "llms.txt").read_text(encoding="utf-8")
+        lines = [line for line in llms.splitlines()
+                 if "engines/AGENTS.md" not in line]
+        (root / "llms.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        errors = check_repo(root)
+        check("模块规则漏索引报错",
+              any("llms.txt 缺少关键入口: engines/AGENTS.md" in item
+                  for item in errors), str(errors))
+
+
+def test_incomplete_module_agents_is_caught() -> None:
+    print("== 模块 AGENTS 空壳可被捕获 ==")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _minimal_repo(root)
+        _write(root / "risk/AGENTS.md", "# 只有标题\n")
+        errors = check_repo(root)
+        check("模块规则缺少职责/边界/验证时报错",
+              any("模块局部 AGENTS.md 缺少内容" in item and
+                  "risk/AGENTS.md" in item for item in errors), str(errors))
+
+
 if __name__ == "__main__":
     test_current_repo()
     test_broken_link_is_caught()
@@ -124,5 +177,8 @@ if __name__ == "__main__":
     test_root_markdown_is_caught()
     test_missing_guidance_is_caught()
     test_link_escape_is_caught()
+    test_missing_module_agents_is_caught()
+    test_unlinked_module_agents_is_caught()
+    test_incomplete_module_agents_is_caught()
     print(f"\n结果: {passed} 通过, {failed} 失败")
     raise SystemExit(1 if failed else 0)

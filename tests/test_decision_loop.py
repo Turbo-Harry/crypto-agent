@@ -154,11 +154,18 @@ def test_decision_rules(tmp):
     dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0)
     check("连亏 3 笔 → 冷却已移除,仍放行", dec["trade"] is True)
 
-    # 3. 连亏 2 笔 → 半仓
+    # 3. 连亏半仓按实例模式隔离：paper 全仓采集，live 仍半仓
     t.journal.trades = t.journal.trades[:-1]   # 剩 2 笔亏损
+    old_mode = config.CRYPTO_MODE
+    config.CRYPTO_MODE = "paper"
     dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0)
-    check("连亏 2 笔 → size_factor=0.5 半仓", dec["trade"] is True
-          and dec["size_factor"] == 0.5)
+    check("paper 连亏 2 笔 → 保持 size_factor=1.0 全仓采集",
+          dec["trade"] is True and dec["size_factor"] == 1.0)
+    config.CRYPTO_MODE = "live"
+    dec = t.decide("BTC", 80, "回踩确认", 0, 0, 0.02, 0.05, 0)
+    check("live 连亏 2 笔 → size_factor=0.5 半仓",
+          dec["trade"] is True and dec["size_factor"] == 0.5)
+    config.CRYPTO_MODE = old_mode
 
     # 4. trusted 经验干预：止损类 ≥2 → stop_adj=+0.2 且记录采纳 id
     t.journal.trades = []

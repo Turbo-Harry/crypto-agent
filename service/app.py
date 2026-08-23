@@ -2,9 +2,9 @@
 HTTP 接口层 — FastAPI 应用（完整功能的服务端外壳）。
 
 暴露三大类接口：
-  观测：/health /status /watchlist /signals/{base} /journal /realtime/{base}
-  控制：/pause /resume（暂停/恢复方向性开仓；止损监控永不暂停）
-    运维：/scan/daily（手动触发全市场候选扫描）/scan/evolve（扫描尺子进化）/error
+  观测：运行、对账、研究、模型与 Agent 审计快照；
+  控制：暂停/恢复、通过验证门的批准/回滚（止损监控永不暂停）；
+  运维：候选扫描、每日分析、冷却解除和异常检查。
 （2026-08-16 用户决定：套利引擎移除，/arb/status 已下线，代码归档 legacy/。）
 
 【禁止】暴露"下单"类接口：交易决策只由后台引擎的既定策略做出，
@@ -50,8 +50,8 @@ from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
 _APP_TITLE = "Crypto Agent 交易服务"
 _APP_DESCRIPTION = (
     "交易系统服务端：方向性日内短线引擎 + 实时行情。\n\n"
-    "- 方向性引擎：2s 止损监控 + 15min 回踩信号扫描（后台线程）\n"
-    "- 本接口只读观测 + 暂停/恢复开仓，不提供手动下单\n"
+    "- 方向性引擎：1s 风控节拍 + 每 5min 检查已收线 15m 信号（后台线程）\n"
+    "- 本接口提供观测 + 有限控制/运维，不提供手动下单或撤单\n"
     "- /journal 总盈亏为已平仓合计实际 USDT，不是百分比相加\n"
     "- 模拟盘（OKX sandbox），虚拟资金")
 _WORKER_ENV_KEYS = ("WEB_CONCURRENCY", "UVICORN_WORKERS")

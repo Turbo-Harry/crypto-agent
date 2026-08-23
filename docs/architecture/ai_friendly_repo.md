@@ -1,176 +1,262 @@
-# AI 友好仓库协作契约
+# AI 友好开发与协作契约
 
-> 活文档。2026-08-23 第三轮同步：补入 15m/4h 数据研究链与交易 Agent Harness，
-> 从“入口可发现”继续升级为“运行链可追踪、统计结论有成熟度边界”。本页面面向第一次
-> 接手仓库的 AI 与新协作者。
+> 活文档。面向第一次接手仓库的 AI 与新协作者。它回答四件事：什么可以做、先读哪里、
+> 怎样安全地改、用什么证据证明完成。安全授权以根目录 `AGENTS.md` 为准；本页不扩大权限。
 
-## 一、60 秒接手路径
+## 一、60 秒只读接手
 
-1. 先读根目录 `AGENTS.md`：它定义安全边界、架构规则与禁止事项。
-2. 再读 `llms.txt`：按任务选择最少的代码与文档，不要先吞完整仓库。
-3. 运行 `python3 tools/agent_notes.py status` 与 `git status --short`：保护其他协作者和用户改动。
-4. 写代码前按 AGENTS.md 要求读 `docs/reports/pitfalls.md`、
-   `docs/reports/optimization_notes.md` 与相关架构文档。
-5. 用 `python3 tools/code_graph.py --query module:<模块>` 或
-   `--query calls:<符号>` 查影响面，再决定修改范围。
-6. 写入前 claim 文件，完成后 release；协议见 `docs/AGENT_NOTES.md`。
+1. 读根目录 `AGENTS.md`，确认 paper-only 授权、安全不变量和红线。
+2. 读 `llms.txt`，按任务选择最少的入口；进入顶层模块后再读该目录的 `AGENTS.md`。
+3. 运行 `python3 tools/agent_notes.py status` 和 `git status --short`，识别协作者占用与用户改动。
+4. 写代码前读 `docs/reports/pitfalls.md`、`docs/reports/optimization_notes.md` 和相关架构文档。
+5. 用 `rg` 定位真实调用点，再用代码图确认影响面，例如：
 
-首次阅读到这里时，不应启动服务、连接交易所、重启进程或修改任何状态文件。
+   ```bash
+   rg -n "open_position|preopen_2to1" engines decision tests
+   python3 tools/code_graph.py --query calls:open_position
+   python3 tools/code_graph.py --query module:service.app
+   ```
 
-## 二、事实优先级
+6. 只有准备写入时才 claim 文件；完成验证后 release。协议见 `docs/AGENT_NOTES.md`。
 
-信息冲突时按以下顺序处理：
+首次接手到这里仍是只读阶段：不启动服务、不构造交易所客户端、不调用控制接口、不修改
+数据库、台账、心跳、PID、watchlist 或其他运行态文件。
 
-1. 当前用户指令与 `AGENTS.md` 的安全不变量；
-2. `config.py`、Pydantic schema、接口/实现代码和可重复测试；
-3. `README.md` 与 `docs/architecture/` 的当前设计说明；
-4. `docs/plans/` 的终审稿；
-5. `docs/reports/` 中带日期的历史结论与旧实施记录。
+## 二、事实与权限怎么裁决
 
-历史文档只说明“当时发生过什么”，不能覆盖当前代码。若高优先级来源彼此冲突，尤其是
-paper/live、下单权限、风控上限、止损或策略阈值，必须 fail-closed：停止变更并向用户确认。
+用户目标决定“要做什么”，`AGENTS.md` 决定“允许做到哪里”。两者不能用代码现有能力替代：
+仓库具备 paper/live 双实例能力，不等于 AI 获得 live 操作权限。
 
-当前已知的高风险例子：代码中存在 live/paper 双实例能力，而 AGENTS.md 对 AI 只授权 paper。
-因此 AI 的启动命令必须显式写 `CRYPTO_AGENT_MODE=paper`；不得把代码能力解释成操作授权。
+事实冲突时按以下顺序处理：
 
-## 三、任务路由
+1. 当前用户目标与 `AGENTS.md` 的安全授权；红线冲突时以更严格边界为准。
+2. `config.py`、`interfaces/`、Pydantic schema、实现代码和可重复测试。
+3. `README.md` 与 `docs/architecture/` 的当前设计。
+4. `docs/plans/*_FINAL.md` 权威实施稿。
+5. 带日期的计划、报告、实施日志和历史回测。
 
-| 任务 | 先读 | 主要入口 | 必做验证 |
+实用判断规则：
+
+- 当前值看 `config.py`，不要从旧报告抄参数。
+- HTTP 契约看 `service/models.py` 和运行时 `/docs`，不要从历史接口表猜字段。
+- 数据库事实看 `storage/db.py` 与 repository/query API，不在调用方散写 SQL。
+- “曾经通过”“设计为”“代码支持”都不等于当前已运行、已授权或已有收益证据。
+- paper/live、下单权限、风控、止损、仓位单位或策略阈值有冲突时，停止变更并 fail-closed。
+
+特别注意：`config.py` 的模式默认值是 `live`。任何可能构造应用、引擎或交易所对象的命令，
+都不得依赖默认值；AI 只可在任务明确需要时显式使用 `CRYPTO_AGENT_MODE=paper`。
+
+规则继承：根 `AGENTS.md` 对全仓生效，离目标文件最近的模块 `AGENTS.md` 增加局部职责、依赖
+边界和验证要求。局部文件不得放宽 paper-only、风控、止损、执行权限、文档或证据红线；
+出现冲突时执行更严格规则并回到根文件确认。
+
+## 三、变更等级与授权边界
+
+| 等级 | 典型任务 | 默认动作 | 额外条件 |
 |---|---|---|---|
-| 服务/API | AGENTS §2～5、exchange_layers | `service/app.py`、`service/models.py`、`service/worker.py` | service API 测试 + py_compile |
-| 信号/开仓 | pitfalls、optimization_notes、参数规则 | `engines/signal_scan.py`、`engines/position_mgmt.py` | params lint + 决策/分层测试 |
-| 止损/风控 | AGENTS 安全不变量、相关 pitfalls | `engines/risk_monitor.py`、`risk/`、`execution/position_ownership.py` | 风控测试；涉及活体必须走沙盘证据链 |
-| 复盘/进化 | self_evolution_design、trade_features_schema | `engines/review_pipeline.py`、`decision/` | 验证门测试 + 防过拟合检查 |
-| 15m 候选/标签 | entry_accuracy 终审稿、路径标签 pitfalls | `engines/signal_sampling.py`、`decision/signal_outcomes.py` | 同 K 幂等 + 4h/1m 完整路径测试 |
-| 因子/概率/极值 | entry_accuracy 终审稿、15m SWAP 重放报告、factor prompt | `tools/replay_15m_research.py`、`tools/entry_accuracy_audit.py`、`factors/feature_registry.py`、`intraday_factor_*`、`entry_model_training.py`、`extrema_model_training.py` | SWAP/as-of/路径连续性 + purged walk-forward + DSR/PBO + 校准/分位测试 |
-| Agent Harness | agent_harness 终审稿、entry_accuracy T8 | `decision/agent_harness.py`、`agent_policy.py`、`agent_evaluation.py`、`storage/agent_*` | contracts/context/policy/trace/memory/evaluation 全链测试 |
-| Agent 主动提案 | agent_active_proposal_shadow 终审稿 | `decision/agent_proposals.py`、`engines/signal_sampling.py`、`GET /agent/proposals` | 提案契约/2:1/幂等/live 禁用/零订单 + 代码图 |
-| 交易所接入 | exchange_layers、API 类 pitfalls | `exchange/base.py`、适配器、transport | FakeAdapter 离线链路 + 分层检查 |
-| 数据库/schema | SQLite 类 pitfalls | `storage/db.py` | 临时库迁移/事务测试，禁止碰活体库 |
-| 文档/AI 入口 | 本页、docs/README | `AGENTS.md`、`llms.txt`、`docs/README.md` | `tools/ai_repo_check.py` |
-| 运维/状态查询 | AGENTS §10、docs/ops | `tools/health_check.py`、只读 HTTP | 只读证据；未经授权不重启/不写状态 |
+| D0 只读 | 解释代码、审计、状态报告 | 可读源码、文档、Git 状态和只读接口 | 不写文件、不调用控制接口 |
+| D1 离线改动 | 文档、测试、无副作用纯函数 | claim 后修改，使用临时状态验证 | 不启动活体、不连接交易所 |
+| D2 交易敏感改动 | 接口、信号、风控、数量、执行、schema、策略参数 | 先查影响面，Fake/Stub 与隔离库验证 | 参数只改 `config.py`；不得弱化安全门 |
+| D3 paper 运行 | 沙盘下单链、重启、状态迁移 | 仅在用户当前任务明确要求时执行 | 显式 paper；验证止损、心跳、持仓衔接并留证 |
+| D4 live | 真实账户、真实资金、live 切换 | 禁止执行 | 代码存在不构成授权 |
 
-## 四、AI 可执行证据清单
+`POST /pause`、`/resume`、扫描、回滚、批准等都属于有状态控制动作，不是普通只读检查；
+未经当前任务授权不要调用。HTTP 层不得新增下单或撤单接口。
 
-按改动范围选择，不能用“应该没问题”代替实测：
+## 四、标准开发闭环
+
+### 1. 定界
+
+- 把用户目标改写成可核验清单，区分“诊断”“实现”“运行操作”。
+- 用 `git status --short`、`git diff -- <file>` 判断文件中是否已有用户改动。
+- 用 `rg` 和 `tools/code_graph.py --query ...` 找调用方、契约、状态文件和相关测试。
+- 确认变更等级；D2/D3 必须先列出会触及的安全不变量。
+
+### 2. 占用
 
 ```bash
-# AI 入口、文档链接、索引完整性
+python3 tools/agent_notes.py status
+git log --oneline -3 -- <file>
+python3 tools/agent_notes.py claim <会话标签> <file1> [file2...]
+```
+
+同一文件同一时刻只有一个写者。遇到活跃 claim 时换文件或等待；遇到未 claim 的用户改动时
+保留其内容，不能用 reset、checkout 或整文件覆盖来“清理”工作区。
+
+### 3. 实现
+
+- 先改稳定契约，再改实现和调用方；跨功能包只依赖公开 Protocol/ABC、领域模型或 `*_api.py`。
+- 参数只在 `config.py` 的统一维护区定义，业务模块只引用，不复制参数字面量。
+- 数据库写入经 repository，服务查询经 `storage/query_api.py`，服务运行控制经
+  `TradingRuntimePort` 或 `decision/api.py`。
+- 新 bug 当场按“现象 → 根因 → 修复 → 预防”追加 `docs/reports/pitfalls.md`。
+- 不顺手修改无关文件，不覆盖用户改动，不把调试产物或运行态状态加入 Git。
+
+### 4. 验证
+
+- 先运行最窄的相关测试，再运行结构守卫；风险越高，证据范围越大。
+- 测试数据库、事件流和 runtime 目录必须隔离，不能指向活体文件。
+- D3 依次执行：静态检查 → 离线测试 → paper 沙盘链 → 受控重启 → 心跳/持仓/条件单核对。
+- 失败时报告真实结果；不要用重跑到绿、删测试、改断言或清状态掩盖问题。
+
+### 5. 交付
+
+- 用 `git diff --check` 和 `git diff --stat` 复核改动范围。
+- 按第九节模板逐项给出实测证据、未做项和剩余风险。
+- 不提交代码时也要 release：`python3 tools/agent_notes.py release <会话标签>`。
+
+## 五、任务路由
+
+| 任务 | 先读 | 主要入口 | 最小验证 |
+|---|---|---|---|
+| 文档/AI 入口 | 本页、`docs/README.md` | `AGENTS.md`、`llms.txt`、docs 索引 | AI 仓库自检及其变异测试 |
+| 服务/API | 接口优先分层、exchange layers | `service/app.py`、`models.py`、`worker.py` | service API + interface boundaries |
+| 运行时组装 | 接口优先分层 | `service/main.py`、`engines/runtime_api.py`、`directional_trader.py` | service API + production guard + code graph |
+| 信号/候选 | pitfalls、参数规则、准确率终审稿 | `engines/signal_scan.py`、`signal_sampling.py`、`strategy_b.py` | signal sampling + decision loop + strategy B |
+| 开仓/数量/止损 | 安全不变量、exchange layers | `engines/position_mgmt.py`、`risk_monitor.py`、`execution/quantity.py` | exchange layers + production guard + 风控相关测试 |
+| 复盘/经验/进化 | self-evolution 终审设计、feature schema | `engines/review_pipeline.py`、`decision/review_engine.py`、`evolution_gate.py` | phase/review/gate/lesson 测试 |
+| 交易所接入 | exchange layers、API 类 pitfalls | `exchange/base.py`、适配器、transport | FakeAdapter 全链 + venue/单位测试 + code graph |
+| 数据库/schema | SQLite pitfalls、接口优先分层 | `storage/db.py`、`*_repository.py`、`query_api.py` | 临时库迁移 + isolation lint + interface boundaries |
+| 因子/概率/极值 | 准确率终审稿、重放报告 | `factors/`、`decision/entry_probability.py`、`extrema_forecast.py` | replay + factor gate + probability/calibration 测试 |
+| Agent Harness | Harness 方案、建设路线图与主动提案终审稿 | `decision/agent_*`、`interfaces/agent.py`、`storage/agent_*` | contracts/context/policy/storage/evaluation/proposals |
+| 运维/状态 | `docs/ops/`、AGENTS 红线 | `tools/health_check.py`、只读 HTTP | 只读证据；未经授权不重启、不写状态 |
+
+计划与报告的具体路径从 `llms.txt` 进入；不要在本表复制容易漂移的完整文件清单。
+
+## 六、文件与状态边界
+
+| 类别 | 示例 | 处理规则 |
+|---|---|---|
+| 版本化源码 | `service/`、`engines/`、`decision/`、`storage/` | claim 后可按任务修改 |
+| 版本化文档 | `AGENTS.md`、`llms.txt`、`docs/` | 同步维护入口和索引，链接必须可验证 |
+| 测试临时状态 | 临时 DB、JSONL、runtime 目录 | 使用独立临时目录；测试后不得混入仓库 |
+| 活体状态 | `*.db`、`*.db-wal`、`trade_journal.json`、`watchlist.json` | 默认只读；不得在进程运行时直接编辑 |
+| 进程协调状态 | `heartbeat_*.txt`、`*.pid`、`engine*.lock`、`tick_*.txt` | 只由进程/运维工具维护，不手改 |
+| 凭证与外部配置 | `okx_config.json`、仓库外 live 凭证、API token | 不读取、不输出、不提交；不要为测试复用 |
+
+`.gitignore` 是运行产物清单的辅助事实源，但“被忽略”不代表“可以安全删除或覆盖”。任何状态
+迁移都要先确认实例、路径、写者和恢复方案。
+
+## 七、稳定架构与运行链
+
+依赖方向：
+
+```text
+service → engines → decision/execution/risk/strategy
+        → storage/exchange/data → interfaces/config
+```
+
+`tools`、`tests`、`backtest` 是外围入口；`factors` 是离线研究层，不拥有交易执行权限。
+实际边界以 `docs/architecture/2026-08-23_interface_first_layering.md` 和
+`python3 tools/code_graph.py --check` 为准。
+
+关键链路：
+
+- 服务链：`service.main → TradingWorker → DirectionalTrader → 功能 Mixin/公开 API`。
+- 控制链：`service.app → TradingRuntimePort / decision.api / storage.query_api`；HTTP 不读取
+  trader 私有字段，不掌握 SQL，不暴露订单接口。
+- 候选链：已收线 15m K → 去重候选 `signal_samples` → 4h/1m 完整路径
+  `signal_outcomes`；被规则、额度或 Agent 拒绝的候选仍可保留反事实标签。
+- 研究链：候选/结果 → feature registry → purged walk-forward → factor trials / model
+  artifacts；模型只做 meta-label，不能绕过结构信号和交易闸门。
+- Agent 链：版本化 context → 证据范围 memory/只读 tools → model contract → 确定性 policy
+  → runs/steps/evaluations；主动提案没有执行权限，故障必须回到量化基线或失败关闭。
+- 执行链：名义金额 → 合约单位与 lot 向下取整 → 风险/总敞口校验 → 开仓 → 交易所侧止损
+  → journal/ownership 对账；任一关键环节失败都不能留下无保护仓位。
+
+状态迁移、模型生命周期和策略演进必须可追溯、可回滚。达到某个状态名不等于已证明正收益，
+训练样本、shadow 样本和自然 paper 结果不得混作同一种证据。
+
+## 八、验证矩阵
+
+按改动范围选取并记录真实输出，不写固定“当前测试文件数”；数量用自动发现结果为准。
+
+```bash
+# 文档入口、链接、索引和护栏
 python3 tools/ai_repo_check.py
 python3 tests/test_ai_repo_check.py
 
-# 架构、参数与守卫
+# 改动 Python 文件（显式把字节码缓存留在可写临时目录，兼容 macOS 沙箱）
+PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc python3 -m py_compile <改动文件...>
+
+# import、跨层契约或共享状态
 python3 tools/code_graph.py --check
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_interface_boundaries.py
+
+# 参数、运行目录和历史修复护栏
 python3 tools/params_lint.py
 python3 tools/test_isolation_lint.py
 python3 tools/fix_guard.py
 
-# 主要离线入口
-PYTHONPATH=lib python3 tests/test_exchange_layers.py
-PYTHONPATH=lib python3 tests/test_service_api.py
+# 服务与交易所离线主链
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_service_api.py
+CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_exchange_layers.py
+```
 
-# 完整套件以 CI 的自动发现脚本为准；每个脚本必须使用独立 DB/JSONL/runtime
-# 当前仓库快照为 47 个 tests/test_*.py，禁止手写固定测试白名单。
+全量回归以 `.github/workflows/ci.yml` 为唯一命令事实源：它自动发现 `tests/test_*.py`，并为
+每个脚本隔离 `CRYPTO_AGENT_DB`、`CRYPTO_AGENT_EVENTS_FILE` 和
+`CRYPTO_AGENT_RUNTIME_DIR`。本地需要复现时也应使用同样隔离，不维护固定白名单。
 
-# 仅模拟盘启动；不要省略模式
+D3 不能用离线测试代替沙盘证据。只有用户明确要求运行操作时，才可用显式 paper 模式：
+
+```bash
 CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 ```
 
-涉及交易行为、活体进程或状态库时，还要遵守 AGENTS.md 的沙盘实测、重启后心跳与持仓
-衔接证据要求。纯文档/守卫改动不应触碰交易所、数据库、心跳、日志或通知通道。
+启动成功不等于完成；还需按任务核验 `/health`、`/status`、`/reconcile`、`/error`、持仓所有权
+以及交易所侧条件单。
 
-## 五、机器守卫
+## 九、完成证据包模板
 
-`tools/ai_repo_check.py` 使用 Python 标准库，检查：
+每次交付至少包含以下字段；不适用项明确写“不适用”，不要省略：
 
-- 根入口 `README.md`、`AGENTS.md`、`llms.txt`、`docs/README.md` 存在；
-- 根目录没有散装 Markdown；
-- 入口与 docs 中的本地 Markdown 链接存在且不越出仓库；
-- `llms.txt` 覆盖安全规则、协作协议、架构入口与历史经验；
-- `docs/README.md` 索引每一篇 docs 文档；
-- `AGENTS.md` 保留 paper 显式启动、协作占用、AI 自检、分层检查和踩坑阅读护栏。
+```text
+目标：用户原任务的可核验重述
+变更：文件 + 行为变化；未改动的安全边界
+清单证据：每个目标对应测试输出、接口响应或数据行数
+回归：实际运行命令；通过数/失败数
+运行态：未触碰 / paper 验证详情 / 重启后心跳与持仓衔接
+未做：项目 + 原因
+风险：当前仍未知、样本不足或需要人工决策的部分
+工作区：相关 diff；保留的用户原有改动
+```
 
-`.github/workflows/ci.yml` 另外自动发现全部 `tests/test_*.py`，逐脚本隔离
-`CRYPTO_AGENT_DB`、`CRYPTO_AGENT_EVENTS_FILE` 与 `CRYPTO_AGENT_RUNTIME_DIR`，并运行
-compileall、参数集中化、代码图、测试隔离和修复护栏；测试依赖包含 `ccxt>=4.5,<5`。
+“代码已写”“单测应该覆盖”“接口能启动”都不是单独的完成证据。交易逻辑变更还要把原任务
+清单与最终 diff 双向核对，防止漏项和越界实现。
 
-CI 会运行同一检查及其变异测试。它能抓“链接/索引/关键操作护栏漂移”，不能判断自然语言
-中的所有语义冲突；事实冲突仍按第二节人工 fail-closed。
+## 十、机器守卫能做什么
 
-## 六、维护规则
+`tools/ai_repo_check.py` 使用标准库检查：
 
-- 新增关键入口：同时更新 `llms.txt`；新增/移动 docs：同时更新 `docs/README.md`。
-- 文档引用当前行为时，优先引用 `config.py` 名称，不复制易漂移的数字。
-- 报告、计划和事故档案要保留日期语境；不要把历史结果伪装成当前状态。
-- 改 import 后运行 code graph；改策略参数只动 config 参数统一维护区。
-- AI 自检发现漂移时，先修事实源和引用，再更新索引；不要用跳过列表隐藏失效链接。
+- 根入口存在，根目录无散装 Markdown；
+- 入口和 docs 的本地链接存在且不越出仓库；
+- `llms.txt` 覆盖安全、协作、架构和历史经验入口；
+- `docs/README.md` 索引全部 docs 文档；
+- `AGENTS.md` 保留 paper、claim、自检、分层和踩坑护栏。
 
-## 七、当前运行链地图
+`tools/code_graph.py --check` 检查分层反向依赖、接口绕过、跨层共享状态和 import 环；
+`params_lint.py`、`test_isolation_lint.py`、`fix_guard.py` 分别守参数集中化、测试隔离和已修问题。
 
-- 候选链：`SignalScan → signal_samples → signal_outcomes`。15m 已收线 K 是样本身份，
-  4h/1m 完整路径才允许结算；规则、额度和 Agent 拒绝同样保留反事实。
-- 研究链：`signal_samples/outcomes → feature_registry → intraday_factor_mining →
-  model_artifacts`。`tools/evaluate_15m_research.py` 只接受带 provenance 的 research-only
-  重放库，一键产出成本 EV、因子、概率/极值模型和停止裁决；模型只做结构信号的
-  meta-label，不产生新方向。
-- 预测链：止损 -1R、止盈 +2R 固定不搜索；开仓概率、TP/SL/timeout 首触概率和最高/最低
-  条件分位先写 shadow。真实 OKX paper 另有严格 `preopen_2to1` 门：只有通过独立验证的
-  active 模型且按本候选 `entry/stop` 换算、扣除双边 taker/滑点/保守不利资金费后的 EV 95%
-  下界为正才开仓；潜在资金费收入不降低严格门。shadow/observing 至少需要 30 个实际预测
-  放行样本且其净 EV>0。缺失/损坏/scope/成本版本不符均失败关闭，拒绝
-  候选仍结算反事实标签。FakeAdapter 和未重启 live 不受该 paper 门影响。
-- Agent 链：`agent_context → memory/read-only tools → model contract → policy kernel →
-  agent_runs/steps/evaluations`。真实 OKX paper 会注入严格 provider；Harness 在去重结构候选
-  形成后立即 shadow 留痕，因此额度/分数/2:1 门拒绝也能取得 4h 反事实结果。legacy AI 仍只在
-  实际下单链持有现役否决权，模型故障不能扩大权限。FakeAdapter/live 不接入新 Harness。
-  成熟评价会按完整 Harness 版本自动生成费用后增量 EV 下界、Brier 和稳定性，并最多推进到
-  validated；`GET /agent/evaluation.harness` 是当前证据入口，validated 不等于 active-veto。
-- 主动提案链：`closed 15m/1h/4h snapshots → agent_proposals contract → deterministic
-  1R:2R geometry → preopen_2to1 → C_agent_proposal signal_samples → signal_outcomes`。
-  每根 15m K 只批量调用一次，AI 只能选标的/方向/证据，价格与风险由代码计算；
-  `GET /agent/proposals` 显示审计与反事实结果，`execution_authority` 永远为 false。
-- 生命周期：`candidate → validated → shadow → accepted → active → observing → kept/rolled_back`；
-  达到状态门不等于有收益证据，仍需训练截止点之后的新样本。
-- 完成度链：`tools/entry_accuracy_audit.py` 与 `GET /research/readiness` 只读汇总自然
-  paper 平仓、六维完整平仓、候选类别、因子、模型、校准、Agent 与长期 EV 预算锁；
-  独立历史研究样本只可通过候选/类别门，永远不能抵扣 paper 或 Agent 门。
+这些工具不能理解全部自然语言语义，也不能证明收益、实时状态、交易所条件单或外部数据质量。
+静态代码图对动态调用和变量间接路径只是尽力解析；通过机器守卫仍需按变更等级补足人工证据。
 
-## 八、2026-08-23 体检结论
+## 十一、文档维护与新鲜度
 
-已补齐：AI 接手路径、事实优先级、任务路由、文件占用入口、纯标准库文档守卫、变异测试与
-CI 接线；同步 15m/4h 候选、因子、概率、极值和 Agent Harness 的代码入口；同时移除
-`llms.txt` 对已归档套利模块的失效引用，并把 paper 启动模式写成显式命令。
+- 本页只写稳定开发规则，不保存会快速过期的持仓、PnL、样本数、测试文件数或心跳快照。
+- 当前运行状态从只读接口取：`/health`、`/status`、`/reconcile`、`/error`。
+- 当前研究成熟度从 `/research/readiness`、`/factors/trials`、`/models/entry`、
+  `/forecast/calibration` 和 `/agent/evaluation` 取；历史裁决看带日期的 reports。
+- 新增/移动 docs 时同步 `docs/README.md`；新增关键入口时同步 `llms.txt`。
+- 新增顶层功能模块时必须同时增加局部 `AGENTS.md`、更新 `llms.txt` 和机器守卫模块清单。
+- 当前行为写现在时；历史决策写日期和证据来源；计划不得写成已实现，离线结果不得写成活体结果。
+- 接口、运行模式或安全边界变化时，同步核对 `AGENTS.md`、`README.md`、Pydantic schema、
+  架构文档、运维手册和机器护栏，不能只改其中一处。
+- 文档发现代码与规则冲突时，先修权威事实源或升级确认，不用模糊措辞把冲突藏起来。
 
-当前统计边界：代码和离线测试通过不等于开仓准确率已经提高。paper 的现役 A 策略已有 26 条
-版本快照、23 个独立 15m/4h 市场机会、9 个自动结算路径（TP 4/SL 4/timeout 1）和 1 笔自然
-平仓（六维完整）；概率校准与有效 legacy Agent 结果各 9 条，Harness 自然成熟评价 1 条，但
-validated 因子与 accepted 模型仍为 0。新 B 策略的候选、因子试验、模型制品、自然平仓和
-Agent 版本都不计入或遮挡 A 的门槛；
-schema v31 已把交易台账、模型选择、生命周期、回滚、预算锁与 readiness 一并按策略隔离，
-并用 canonical 视图将跨配置审计快照收敛为独立市场机会；只读接口可显式查询 A/B 且返回
-各自配置身份。独立历史研究库扩展到 A 的 1,712 个
-真实 SWAP 候选/1,690 个完整路径，并以相同市场和标签口径新增 B 的 1,973/1,931；固定
-2:1 的毛 EV=-0.0789R、净 EV=-0.9770R，固定随机种子下概率 Brier skill=-2.63%；当前 61 个
-预注册因子中 validated 仍为 0。六维子分已正确物化进因子矩阵；资金费、5m 波动率、同收线
-横截面以及布林/ADX/效率比/VWAP 共 61 项现可统一评价，但全部未过硬门。新增的 top-5 连续事件 OFI、同价队列消退、事件数和年龄使用 `signal-features-v4`，不足 10 个事件或
-断流超过 5 秒即缺失；`GET /realtime/{base}` 可直接审计状态、值、事件数与年龄。历史库没有
-L2 事件，4 项均只能判 `insufficient_data`，详见 15m SWAP 重放报告。行情标签目前只用于
-分层证据；`decision/market_regime.py` 与 `strategy_router.py` 已把可解释的行情权重和策略建议
-冻结进候选，明确 `calibrated=false/has_execution_authority=false`。A/B 共用 15m/4h 标签链
-但训练证据隔离；历史中 B 毛 EV=+0.1013R、成本后=-0.7565R，路由命中仍=-0.4615R；A/B
-路由命中合并=-0.5140R。因此新 B 自然结果未成熟前，不能宣称自动策略选择有效，也不能用
-硬标签直接放单。
-因子 Combo 只允许两种形式：有理论依据的预注册二阶交互逐项过完整因子门，以及多个
-validated 因子作为同一特征向量进入概率/极值模型的 purged walk-forward 联合评价；禁止
-无假设穷举后在同一数据集挑最高收益。当前 validated=0，因此没有可晋升的联合模型。
-paper worker 每 24 小时对 A/B 分别运行完整的因子、long/short 概率和极值研究；失败进入
-`/error` 与 `engine_errors`，15 分钟幂等重试。首次生产周期已得到 A/B 各 61 项、errors=0；
-B 当前 2 个候选、成熟路径 0，仍无执行权限。
-每日候选的 CCXT ticker 已显式绑定 SWAP 场所并修复批量结果缺 `base` 的映射；最终模拟盘
-扫描为 64→60→35→30，写入 12 个非回退候选。`STOCK_SWAP_TOKENS` 的 9 个沙盘美股永续
-与加密币同门筛选，不能绕过流动性、趋势、ATR、固定 2:1 和既有风险门。
-模拟盘严格预测门因此保持空仓和反事实采集，Agent 自然样本未达门前禁止扩大预算。
+## 十二、已知边界
 
-仍需人工决策：代码已实现 live/paper 双模式，但 AGENTS.md 对 AI 的授权仍只允许 paper。
-本轮不修改交易模式、策略参数或活体配置；后续若用户改变授权，必须在同一改动中同步
-AGENTS.md、README、服务描述、运维手册与机器护栏。
+- 历史回测尚未证明方向性策略长期正期望；系统安全目标是损失有界，不是承诺收益。
+- AI 只获准操作 OKX 模拟盘；live 代码、配置和外部凭证不属于默认开发授权。
+- 只做 SWAP；无合约场所或最小下单量不满足时拒绝，不放大数量凑单。
+- Agent、因子、概率和极值模型都受既有结构信号、风险门、生命周期和证据成熟度约束，不能直接下单。
+- 当前某项研究是否成熟、活体是否健康，必须在本次任务中重新读取证据，不能引用本页旧快照。
