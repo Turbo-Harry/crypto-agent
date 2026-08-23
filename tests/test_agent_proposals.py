@@ -8,6 +8,7 @@ import unittest
 
 import config
 import storage.db as sdb
+from decision.agent_contracts import stable_hash
 from decision.agent_proposals import (build_market_snapshot, list_proposals,
                                       run_proposal_cycle)
 from engines.signal_scan import SignalScanMixin
@@ -31,15 +32,23 @@ def snapshot():
     return build_market_snapshot(
         "BTC", market_rows(),
         market_rows(timeframe_seconds=3600),
-        market_rows(timeframe_seconds=14400))
+        market_rows(timeframe_seconds=14400),
+        market_features={
+            "spread_bps": 1.2, "book_imbalance": 0.25,
+            "ofi_event_multilevel": 0.2, "ofi_event_count": 12,
+        }, market_snapshot_ts=int(time.time() * 1000))
 
 
-def valid_output(snap, *, confidence=0.82, evidence_id=None):
+def valid_output(snap, *, confidence=0.82, evidence_id=None,
+                 include_micro=True):
+    evidence_ids = [evidence_id or snap.evidence_ids[0]]
+    if include_micro and evidence_id is None:
+        evidence_ids.append(snap.microstructure_evidence_id)
     return {"proposals": [{
         "base": "BTC", "direction": "long", "confidence": confidence,
         "thesis": "15m趋势和1h动量同向，作为可证伪影子候选",
-        "evidence_ids": [evidence_id or snap.evidence_ids[0]],
-    }]}
+        "evidence_ids": evidence_ids,
+    }], "abstain_reason": None}
 
 
 def recorder(db_path):
@@ -126,6 +135,17 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(proposal["execution_authority"], 0)
         self.assertIsNone(proposal["signal_id"])
 
+    def test_proposal_without_microstructure_evidence_is_rejected(self):
+        snap = snapshot()
+        result = run_proposal_cycle(
+            [snap], model_call=lambda _prompt: valid_output(
+                snap, include_micro=False), db_path=self.db_path)
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["validation_reason"],
+                         "microstructure_evidence_required")
+        self.assertEqual(proposal["geometry_valid"], 0)
+        self.assertIsNone(proposal["signal_id"])
+
     def test_direction_conflict_is_rejected_before_geometry_and_sampling(self):
         snap = snapshot()
         output = valid_output(snap)
@@ -150,6 +170,41 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(result["run"]["valid_count"], 0)
         self.assertEqual(result["proposals"], [])
 
+    def test_empty_proposal_requires_reason_and_freezes_exact_input(self):
+        snap = snapshot()
+        result = run_proposal_cycle(
+            [snap], model_call=lambda _prompt: {
+                "proposals": [], "abstain_reason": "microstructure_conflict"},
+            db_path=self.db_path)
+        self.assertEqual(result["run"]["runtime_status"], "completed")
+        view = list_proposals(db_path=self.db_path)
+        self.assertEqual(view["auditable_run_count"], 1)
+        self.assertEqual(view["current_protocol_run_count"], 1)
+        self.assertEqual(view["current_protocol_completed_count"], 1)
+        self.assertEqual(view["current_protocol_abstain_count"], 1)
+        self.assertEqual(view["current_protocol_proposal_count"], 0)
+        self.assertEqual(view["current_protocol_proposal_coverage"], 0.0)
+        run = view["runs"][0]
+        self.assertEqual(run["abstain_reason"], "microstructure_conflict")
+        audit = run["audit"]
+        self.assertEqual(audit["implementation_version"],
+                         config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
+        self.assertEqual(audit["input_hash"],
+                         stable_hash(audit["input_snapshot"]))
+        self.assertEqual(audit["snapshot_count"], 1)
+        self.assertGreater(audit["microstructure_coverage"], 0)
+        frozen = audit["input_snapshot"]["snapshots"][0]
+        self.assertIn("microstructure", frozen)
+        self.assertTrue(any(value.endswith(":microstructure")
+                            for value in frozen["evidence_ids"]))
+
+    def test_empty_proposal_without_standard_reason_is_schema_error(self):
+        result = run_proposal_cycle(
+            [snapshot()], model_call=lambda _prompt: {
+                "proposals": [], "abstain_reason": None},
+            db_path=self.db_path)
+        self.assertEqual(result["run"]["runtime_status"], "schema_error")
+
     def test_scanner_hook_is_paper_shadow_and_never_places_order(self):
         snap_rows = {
             config.SIGNAL_SAMPLE_TIMEFRAME: market_rows(),
@@ -158,10 +213,6 @@ class AgentProposalTest(unittest.TestCase):
             config.SIGNAL_REGIME_TIMEFRAME: market_rows(
                 timeframe_seconds=14400),
         }
-        snap = build_market_snapshot(
-            "BTC", snap_rows[config.SIGNAL_SAMPLE_TIMEFRAME],
-            snap_rows[config.SIGNAL_CONTEXT_TIMEFRAME],
-            snap_rows[config.SIGNAL_REGIME_TIMEFRAME])
         fake = FakeAdapter()
         inst_id = "BTC-USDT-SWAP"
         fake.funding_rates[inst_id] = 0.0001
@@ -177,7 +228,13 @@ class AgentProposalTest(unittest.TestCase):
 
         def model(prompt):
             captured.update(json.loads(prompt))
-            return valid_output(snap)
+            frozen = captured["snapshots"][0]
+            return {"proposals": [{
+                "base": "BTC", "direction": "long", "confidence": 0.82,
+                "thesis": "三周期与订单流证据同向，作为可证伪影子候选",
+                "evidence_ids": [frozen["evidence_ids"][0],
+                                 frozen["evidence_ids"][-1]],
+            }], "abstain_reason": None}
 
         holder.agent_proposal_model_call = model
         holder.watch_scores = {"BTC": 1.0}
@@ -213,6 +270,10 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(micro["ofi_event_count"], 12.0)
         self.assertGreater(micro["book_imbalance"], 0)
         self.assertGreater(micro["spread_bps"], 0)
+        self.assertIsInstance(
+            captured["snapshots"][0]["microstructure_as_of_ms"], int)
+        self.assertTrue(captured["snapshots"][0]["evidence_ids"][-1].endswith(
+            ":microstructure"))
         sample = sdb.q1(
             "SELECT features FROM signal_samples WHERE signal_id=?",
             [result["proposals"][0]["signal_id"]], db_path=self.db_path)
@@ -222,6 +283,11 @@ class AgentProposalTest(unittest.TestCase):
         view = list_proposals(db_path=self.db_path)
         self.assertTrue(view["shadow_only"])
         self.assertFalse(view["execution_authority"])
+        self.assertEqual(view["current_protocol_run_count"], 1)
+        self.assertEqual(view["current_protocol_proposal_count"], 1)
+        self.assertEqual(view["current_protocol_proposal_coverage"], 1.0)
+        self.assertAlmostEqual(
+            view["current_protocol_microstructure_coverage"], 13 / 15, 6)
 
     def test_live_mode_guard_does_not_call_model(self):
         calls = []

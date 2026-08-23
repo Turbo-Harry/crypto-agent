@@ -980,3 +980,14 @@
   C 专属 signal identity；旧竞态样本不会与最终 v2 混计。v1 重放显式省略新字段，A/B 身份也不变化。
 - 预防：Prompt/配置与代码共同升级时，实验身份必须同时包含实现版本；验收要对比同 K input hash 和
   payload 字段，不能只看 run.prompt_version。发现竞态样本后保留审计记录并用身份隔离，不手工改库。
+
+### 2026-08-24 只有 input hash 无法解释 Agent 为什么空仓
+
+- 现象：第一个正确实现的 v2 自然批次 completed 且返回 0 提案，但运行表只有 input hash；事后无法
+  区分三周期没有同向标的、微观结构冲突、字段缺失或流动性不足。
+- 根因：hash 只能证明“某段输入不同”，不能重建字段、as-of、缺失率或模型可引用的微观证据；空列表
+  也没有结构化原因。把这类 run 直接累计到 100 条，仍无法诊断或提高条件精度。
+- 修复：v3 原子保存 canonical input snapshot 与微观覆盖率，给微观时点稳定 evidence ID；非空提案
+  强制引用该证据，空仓强制标准原因。接口只统计完整 implementation identity 的可审计样本。
+- 预防：任何模型实验的 input hash 必须与可重建输入快照成对；abstain coverage 和原因分布应与非空
+  conditional precision 分开报告，不能用“会空仓”替代提案本身准确。

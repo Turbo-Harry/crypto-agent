@@ -1273,3 +1273,23 @@
   `/status` 空仓、未熔断、敞口 0，`/reconcile balanced=true`，入场模型仍为空且禁止扩大预算；提案
   接口继续 `shadow_only=true/execution_authority=false`。这证明最终 v2 自然链已运行，不代表其胜率
   已通过；有效性仍等至少 100 条独立成熟结果。
+
+## 2026-08-24 Agent 主动提案 v3 可审计输入预声明
+
+- 触发证据：最终 v2 自然链只有 1 个正确实现批次，模型返回 0 提案；运行表只保存 input hash，无法
+  回答模型当时看到哪些盘口/订单流字段、缺失率多少、因何空仓。只等 100 条会把不可解释样本继续
+  放大，无法针对条件精度做可靠诊断。
+- 固定协议：版本升级为 `agent-proposal-v3-audited-microstructure` / schema
+  `agent-proposal-schema-v2-abstain-reason` / implementation
+  `agent-proposal-impl-v3-audited-microstructure`。每个 paper 批次原子冻结完整 canonical input snapshot、
+  版本、input hash、标的数和 15 个微观字段的 present/total/coverage；不保存凭证或下单能力。
+- 证据与空仓契约：每个自然微观快照新增带 as-of 毫秒的 evidence ID；非空提案必须至少引用对应标的
+  一个 K 线证据和 microstructure 证据，否则以 `microstructure_evidence_required` 在几何前拒绝。
+  空提案必须从 no_aligned_candidate、microstructure_conflict、insufficient_microstructure、
+  liquidity_too_weak、no_clear_edge 中给唯一标准原因；有提案时该字段必须为 null。
+- 评价隔离：只读接口按完整 implementation version 汇总 run、completed、abstain、proposal、mature、
+  非空覆盖率与加权微观覆盖率；旧 v1/v2 和无冻结输入的竞态 run 不计入当前协议。v1 历史工具同时
+  冻结原 Prompt/Schema/实现，payload 仍无 v3 字段并保持原契约。
+- 权限与晋升门不变：v3 仍是 OKX paper-only shadow，0 下单、0 veto、0 预算扩大；可审计覆盖率只是
+  数据质量，不是收益证明。至少 100 条当前协议的独立成熟非空提案及既有费用后 EV/精度下界/时间折/
+  方向平衡门全部通过后，才能提出下一阶段人工批准。

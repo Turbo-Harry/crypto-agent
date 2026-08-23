@@ -39,13 +39,17 @@ AI 不能决定入场价格、止损、止盈、仓位、杠杆和预算，不�
 - 仅在真实 OKX 模拟盘装配 provider；FakeAdapter 和 live 模式不装配。
 - 每根已收线 15m K 最多一个幂等批次，重启或重试不会重复调用模型。
 - 按当日扫描评分取前 `AGENT_PROPOSAL_MAX_SYMBOLS` 个标的。
-- 输入只包含已收线 15m/1h/4h OHLCV 推导的 ATR、EMA、动量和量比。
+- v1 输入只包含已收线 15m/1h/4h OHLCV 推导的 ATR、EMA、动量和量比；v3 自部署后额外冻结
+  自然时点的盘口、价差、订单流、OI、basis 与资金费，历史 OHLCV 不伪造这些字段。
 
 ### 3.2 契约门
 
-- 顶层只能有 `proposals`。
+- v1 顶层只能有 `proposals`；v3 顶层固定为 `proposals + abstain_reason`，空列表必须给标准空仓原因，
+  非空列表的 `abstain_reason` 必须为 null。
 - 每项只能有 base、direction、confidence、thesis、evidence_ids。
 - 标的必须在输入快照中；证据 ID 必须逐字属于对应标的快照。
+- v3 每条非空提案还必须引用对应标的的 microstructure evidence ID；只复述 K 线而不锚定微观证据
+  会在几何与留样前确定性拒绝。
 - 数量、字段、置信度和理由长度均由 `config.py` 集中限制。
 - 解析、Schema、provider 或超时失败只落审计，不生成影子候选。
 
@@ -67,6 +71,11 @@ SQLite schema v32 新增：
 - `agent_proposal_runs`：周期幂等键、模型/Prompt/Schema 版本、输入输出 hash、运行状态、延迟和数量。
 - `agent_proposals`：方向、置信度、证据、确定性价格几何、成本、保本胜率、验证状态和 signal_id。
 
+v3 不修改 live peer schema；每个 paper 提案批次在现有 `kv` 中以
+`agent_proposal_audit:<run_id>` 原子冻结完整 input snapshot、Prompt/Schema/实现版本、输入 hash、
+快照数、微观字段覆盖率，以及 completed/schema_error/标准空仓原因。`input_hash` 必须能由冻结 JSON
+逐字复算；旧无审计 run 保留但不计入当前协议成熟度。
+
 几何有效的提案以 `strategy_id=C_agent_proposal` 写入 `signal_samples`，并固定：
 
 - `rule_decision=shadow`
@@ -81,6 +90,8 @@ SQLite schema v32 新增：
 ## 5. 观测入口
 
 - `GET /agent/proposals`：最近批次、提案、2:1 几何、概率门、成熟路径结果。
+- 同一接口同时给出当前 implementation version 的 run/completed/abstain/proposal/mature 数、非空提案
+  覆盖率、微观结构覆盖率和逐 run 冻结 input audit；旧版本只保留审计，不混入当前统计。
 - `decision/agent_proposals.py`：提案契约、快照、批次与审计。
 - `engines/signal_sampling.py`：把已验证提案接入共同标签链。
 - `tests/test_agent_proposals.py`：2:1、伪证据、低置信度、幂等、live 禁用和零订单证据。

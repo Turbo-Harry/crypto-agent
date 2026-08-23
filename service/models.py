@@ -203,6 +203,15 @@ class AgentProposalsOut(BaseModel):
     run_count: int
     proposal_count: int
     mature_count: int
+    auditable_run_count: int
+    current_protocol_version: str
+    current_protocol_run_count: int
+    current_protocol_completed_count: int
+    current_protocol_abstain_count: int
+    current_protocol_proposal_count: int
+    current_protocol_mature_count: int
+    current_protocol_proposal_coverage: float
+    current_protocol_microstructure_coverage: float
     runs: List[dict]
     proposals: List[dict]
 

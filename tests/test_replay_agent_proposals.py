@@ -74,6 +74,7 @@ class AgentProposalReplayTest(unittest.TestCase):
         active_prompt_version = replay_tool.config.AGENT_PROPOSAL_PROMPT_VERSION
         active_implementation_version = (
             replay_tool.config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
+        active_schema_version = replay_tool.config.AGENT_PROPOSAL_SCHEMA_VERSION
 
         def model(prompt):
             calls.append(prompt)
@@ -105,7 +106,10 @@ class AgentProposalReplayTest(unittest.TestCase):
         self.assertEqual(
             replay_tool.config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION,
             active_implementation_version)
+        self.assertEqual(replay_tool.config.AGENT_PROPOSAL_SCHEMA_VERSION,
+                         active_schema_version)
         conn = sqlite3.connect(self.output_db)
+        conn.row_factory = sqlite3.Row
         self.assertEqual(conn.execute(
             "SELECT COUNT(*) FROM agent_proposal_runs").fetchone()[0], 1)
         proposal = conn.execute(
@@ -113,9 +117,14 @@ class AgentProposalReplayTest(unittest.TestCase):
         ).fetchone()
         outcome = conn.execute(
             "SELECT tp_first,sl_first FROM signal_outcomes").fetchone()
+        run = conn.execute(
+            "SELECT prompt_version,schema_version FROM agent_proposal_runs"
+        ).fetchone()
         conn.close()
-        self.assertEqual(proposal, (0, 0))
-        self.assertEqual(outcome, (1, 0))
+        self.assertEqual(tuple(proposal), (0, 0))
+        self.assertEqual(tuple(outcome), (1, 0))
+        self.assertEqual(tuple(run), (replay_tool.FROZEN_PROMPT_VERSION,
+                                      replay_tool.FROZEN_SCHEMA_VERSION))
         self.assertEqual(evaluate_phase(
             self.output_db, "training")["status"], "stop_no_promotion")
 

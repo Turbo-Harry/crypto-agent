@@ -163,10 +163,16 @@ def main():
     check("/agent/runs 只读查询返回 runs",
           client.get("/agent/runs").status_code == 200
           and "runs" in client.get("/agent/runs").json())
-    check("/agent/proposals 明确只读 shadow 且无执行权限",
-          client.get("/agent/proposals").status_code == 200
-          and client.get("/agent/proposals").json()["shadow_only"] is True
-          and client.get("/agent/proposals").json()["execution_authority"] is False)
+    proposal_response = client.get("/agent/proposals")
+    proposal_body = proposal_response.json()
+    check("/agent/proposals 明确只读 shadow、协议覆盖率且无执行权限",
+          proposal_response.status_code == 200
+          and proposal_body["shadow_only"] is True
+          and proposal_body["execution_authority"] is False
+          and proposal_body["current_protocol_version"] ==
+              config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION
+          and proposal_body["auditable_run_count"] == 0
+          and proposal_body["current_protocol_proposal_coverage"] == 0.0)
     watch = client.get("/watchlist").json()
     check("/watchlist 分开返回加密/美股候选池",
           "crypto_items" in watch and "stock_items" in watch

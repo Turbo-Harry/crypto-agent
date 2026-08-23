@@ -830,11 +830,13 @@ class SignalScanMixin:
                         "ofi_event_count": event_flow.get("ofi_event_count"),
                         "ofi_event_age_ms": event_flow.get("ofi_event_age_ms"),
                     })
+                    market_snapshot_ts = int(time.time() * 1000)
                     snapshots.append(build_market_snapshot(
                         base, frames[config.SIGNAL_SAMPLE_TIMEFRAME],
                         frames[config.SIGNAL_CONTEXT_TIMEFRAME],
                         frames[config.SIGNAL_REGIME_TIMEFRAME],
-                        market_features=market_features))
+                        market_features=market_features,
+                        market_snapshot_ts=market_snapshot_ts))
                 except ValueError:
                     continue
             if not snapshots:

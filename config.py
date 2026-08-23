@@ -191,11 +191,23 @@ AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 # 2R 止盈全部由确定性代码计算。提案只进入反事实标签链，永不调用执行层。
 AGENT_PROPOSAL_SHADOW_ENABLED = True
 AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
-# v2 adds natural-time microstructure context and a deterministic 15m/1h/4h
-# direction-consistency gate. It remains paper-only shadow evidence.
-AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v2-microstructure"
-AGENT_PROPOSAL_IMPLEMENTATION_VERSION = "agent-proposal-impl-v2-microstructure"
-AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v1"
+# v3 freezes the exact microstructure input, requires a cited microstructure
+# evidence ID for every non-empty proposal, and audits structured abstention.
+# It remains paper-only shadow evidence with no execution authority.
+AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v3-audited-microstructure"
+AGENT_PROPOSAL_IMPLEMENTATION_VERSION = "agent-proposal-impl-v3-audited-microstructure"
+AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
+AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
+    "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",
+    "expected_slippage_bps", "funding_rate", "book_imbalance", "basis",
+    "ofi_dynamic", "cancel_imbalance", "open_interest_change",
+    "ofi_event_multilevel", "ofi_event_cancel_imbalance", "ofi_event_count",
+    "ofi_event_age_ms",
+)
+AGENT_PROPOSAL_ABSTAIN_REASONS = (
+    "no_aligned_candidate", "microstructure_conflict",
+    "insufficient_microstructure", "liquidity_too_weak", "no_clear_edge",
+)
 AGENT_PROPOSAL_MAX_SYMBOLS = 5
 AGENT_PROPOSAL_MAX_PROPOSALS = 2
 AGENT_PROPOSAL_MIN_CONFIDENCE = 0.60
