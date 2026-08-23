@@ -1295,3 +1295,13 @@
   方向平衡门全部通过后，才能提出下一阶段人工批准。
 - 部署前隔离：旧 PID 在代码重启前热读 v3 配置，留下 2 条无 input audit 的伪 v3 run；历史行不删除，
   最终实现身份提升为 v3.1，当前协议统计只接受带完整 audit 且 implementation 精确等于 v3.1 的 run。
+- 最终部署证据：实现提交 `12c9d7b`、竞态隔离提交 `0a200ab`；最终自动发现离线测试 57/57 通过，
+  params/code graph/AI repo 与 diff check 全绿。仅 kickstart `com.crypto.paper`，PID 34968→36919；真实
+  服务 PID 90574 未变化。重启后 `/health` 正常、`/status` 空仓且 open notional 0、未熔断，
+  `/reconcile balanced=true`、`/error` 为空、`/models/entry` 仍无 active model 且禁止扩大预算。
+- 自然 v3.1 验收：run `proposal-run-1adc01f308b494ae465e51f9` 在已收线 K
+  `1787515200000` 上 completed，463ms；冻结 5 个自然标的快照，15×5=75 个微观字段中 51 个有效，
+  coverage 0.68。保存的 input hash
+  `ce90827437a3169f8e68a981badab3f550b6cbc53d0d68a6495dd069aeb7d792` 与冻结 snapshot 本地复算一致；
+  模型按 schema 返回 `no_aligned_candidate`，因此 proposal/mature/order 均为 0。接口保持
+  `shadow_only=true/execution_authority=false`；该结果证明审计链和诚实空仓生效，不证明胜率已提高。
