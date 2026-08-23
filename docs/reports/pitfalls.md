@@ -881,3 +881,14 @@
   事件聚类下界和跨折一致性；因绝对 EV 与校准失败而明确 `stop_no_promotion`。
 - 预防：任何 veto/filter 报告都必须同时给“每原候选增量”和“实际被保留候选的绝对 EV”；只有
   增量为正不能接入 Harness，更不能用空仓相对少亏替代可下单证明。
+
+### 2026-08-24 共同标签表不代表共同预测证据已接线
+
+- 现象：B_breakout 已有 29 条自然 4h 路径结果且 TP/SL=17/12，但 29/29 首次候选快照的
+  `forecast` 都为空，因此不能做 B 自身的概率校准或 Harness 风险先验评估。
+- 根因：历史重放对 A/B 都调用 `forecast_for_trade`，活体 `_scan_strategy_b_shadow` 却只补因子、
+  市场状态和路由；候选进入共同表造成“证据已经一致”的错觉，缺少字段级覆盖验收。
+- 修复：B 活体留样复用同一 causal forecast，显式传候选 event_ts 和版本化稳定 seed；专项同时
+  断言 forecast 已冻结、B 仍 rejected、Harness 仍 shadow、fake orders 与 journal 均为 0。
+- 预防：多策略共享标签链时，验收必须逐策略检查 features 中每个模型输入的覆盖率，不能只检查
+  表行数和 outcome 数；实时与 replay 的派生证据必须共享算法、seed 身份和 as-of 边界。

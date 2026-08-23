@@ -7,6 +7,7 @@
 依赖宿主属性：exchange/journal/evolver/rt/watchlist/watch_scores/
 threshold_learner/signal_cool/_db_path/_notify 等。
 """
+import hashlib
 import math
 import time
 
@@ -370,6 +371,27 @@ class SignalScanMixin:
                 funding_rate=funding, funding_change=funding_change,
                 funding_percentile=funding_percentile, vol5=vol5,
                 event_ts=event_ts)
+            # B 与 A/历史重放冻结同一 4h 首触预测。种子只绑定预测算法、
+            # 标的、已收线 K 和方向，确保实时留样可与离线重放逐候选核对；
+            # 预测仍是 shadow 证据，不改变 B 的拒绝态或执行权限。
+            try:
+                from decision.forecast import forecast_for_trade
+                forecast_window = [
+                    {"open": float(row[1]), "high": float(row[2]),
+                     "low": float(row[3]), "close": float(row[4]),
+                     "volume": float(row[5])}
+                    for row in kl_b]
+                seed_material = (
+                    f"{config.FORECAST_REPLAY_SEED_VERSION}|"
+                    f"{self._inst_id(base)}|{int(kl_b[-1][0])}|"
+                    f"{sig_b['dir']}")
+                seed = int(hashlib.sha256(
+                    seed_material.encode()).hexdigest()[:16], 16)
+                sig_b["forecast"] = forecast_for_trade(
+                    sig_b, base, forecast_window, db_path=self._db_path,
+                    as_of_ts=event_ts, seed=seed)
+            except Exception:
+                sig_b["forecast"] = None
             first_shadow = record_shadow(
                 base, config.BREAKOUT_SIGNAL_STRATEGY_ID, sig_b,
                 db_path=self._db_path, klines_1h=kl_b)

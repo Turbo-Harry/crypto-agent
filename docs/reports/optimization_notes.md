@@ -1097,3 +1097,8 @@
 - 自然样本交叉核对：A 27 条中同规则拒绝 14 条，保留 13 条仍 -0.8062R、下界 -1.2880R；
   B 虽有 29 条已结算候选且毛 TP/SL=17/12，但 29/29 的冻结快照都没有 `forecast`，不能把近期
   小样本胜率冒充已校准风险先验。该缺口应先补 B 的因果 forecast 留样，再自然积累校准证据。
+- B 留样修复：`_scan_strategy_b_shadow` 在 `enrich_shadow_signal` 后复用与 A/历史重放相同的
+  `forecast_for_trade`，只传已收线 15m 窗口，并显式用候选 `event_ts` 限制经验标签 as-of。
+  bootstrap seed 固定绑定 `FORECAST_REPLAY_SEED_VERSION + inst_id + kline_ts + direction`，实时
+  与历史重放可逐候选复算；forecast 随首次候选快照一起冻结，仍保持 B `final_decision=rejected`、
+  Harness `allow_veto=false`、订单和 journal 均为 0。引擎专项 33/33 通过。

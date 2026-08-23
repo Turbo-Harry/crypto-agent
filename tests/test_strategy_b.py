@@ -140,7 +140,7 @@ def test_engine_shadow_no_orders(tmp):
     try:
         dt, fake = _make_trader(tmp)
         from exchange.models import Candle
-        kl = _flat_then_breakout()
+        kl = _flat_then_breakout(n_flat=100)
         fake.candles["BTC-USDT-SWAP"] = [
             Candle(ts=k[0], open=k[1], high=k[2], low=k[3], close=k[4],
                    volume=k[5]) for k in kl]
@@ -191,6 +191,12 @@ def test_engine_shadow_no_orders(tmp):
                   "has_execution_authority") is False and
               "funding_rate" in factors and "hour_sin" in factors,
               str(frozen))
+        forecast = frozen.get("forecast") or {}
+        check("B 冻结因果 4h 首触预测供独立校准",
+              forecast.get("horizon_hours") == 4.0 and
+              forecast.get("p_hit_sl") is not None and
+              forecast.get("p_hit_tp") is not None,
+              str(forecast))
         check("零真实下单(fake.orders==0)", len(fake.orders) == 0,
               f"实际 {len(fake.orders)}")
         check("B 候选进入同一 Harness 且策略身份隔离",
