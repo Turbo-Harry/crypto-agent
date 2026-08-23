@@ -55,8 +55,11 @@ class ExchangeAdapter(ABC):
         """最新成交价。"""
 
     def fetch_order_book(self, inst_id: str, depth: int = 10) -> Optional[dict]:
-        """盘口(2026-08-23 信号评分第6维): {"bids":[[价,量]...],"asks":[[价,量]...]}
-        或 None(取不到)。非 abstract——旧实现可缺省返回 None(评分取中性)。"""
+        """盘口: {"bids":[[USDT价格,基础币数量]...],"asks":[...]}。
+
+        合约交易所返回的原始数量通常是张数；具体适配器必须先乘合约面值，
+        与本接口其余数量语义一致后再交给策略层。取不到时返回 None。
+        """
         return None
 
     def fetch_open_interest(self, inst_id: str) -> Optional[float]:

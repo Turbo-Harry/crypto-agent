@@ -36,6 +36,7 @@
 
 1. **单位统一在适配层**：策略层永远说"基础币数量、USDT 价格"。
    张数换算（qty ÷ ct_val）、lotSz 对齐（向下取整，绝不超发）、minSz 校验、
+   **盘口数量归一**（SWAP books 的张数 × ct_val → 基础币数量）、
    **24h 成交额归一**（SWAP `volCcy24h` 是币本位 → × last 才是 USDT）
    全部在 OKXAdapter 内完成。策略层不出现 `ctVal`、`lotSz`、`volCcy24h` 字样。
 

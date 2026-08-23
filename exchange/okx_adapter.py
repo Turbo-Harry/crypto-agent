@@ -209,7 +209,7 @@ class OKXAdapter(ExchangeAdapter):
         return float(data[0].get("fundingRate") or 0)
 
     def fetch_order_book(self, inst_id: str, depth: int = 10) -> Optional[dict]:
-        """盘口(2026-08-23 信号评分第6维)。"""
+        """盘口数量从 SWAP 张数归一为基础币，现货数量保持不变。"""
         try:
             resp = self.t.public("/api/v5/market/books",
                                  {"instId": inst_id, "sz": min(int(depth), 400)})
@@ -217,9 +217,10 @@ class OKXAdapter(ExchangeAdapter):
             if not rows:
                 return None
             book = rows[0]
-            bids = [[float(r[0]), float(r[1])]
+            amount_scale = self.instrument(inst_id).ct_val
+            bids = [[float(r[0]), float(r[1]) * amount_scale]
                     for r in (book.get("bids") or [])[:depth]]
-            asks = [[float(r[0]), float(r[1])]
+            asks = [[float(r[0]), float(r[1]) * amount_scale]
                     for r in (book.get("asks") or [])[:depth]]
             return {"bids": bids, "asks": asks}
         except Exception:

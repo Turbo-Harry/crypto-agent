@@ -1001,3 +1001,14 @@
   两条无完整 audit 竞态 run；不删改历史数据库记录。
 - 预防：运行态变更必须以 `launchctl print + lsof + 宿主侧 health` 三证交叉确认；配置/代码共同升级前，
   若普通 loopback 失败，应立即切换经批准的本机请求，不能继续假设服务已经停止。
+
+### 2026-08-24 合约盘口张数不能直接当基础币计算滑点
+
+- 现象：首个 v3.1 自然输入把 DOGE `expected_slippage_bps` 记为 7910.24 bp，但同一快照价差只有
+  0.63 bp；该异常会误导 Agent 把正常流动性判断成几乎无法成交。
+- 根因：OKX 与 CCXT 的 SWAP order book 数量是合约张数，上层却直接用 `price × amount` 当 USDT
+  可见名义额。DOGE 当前合约面值是 1000 DOGE/张，因而可见深度被低估约 1000 倍。
+- 修复：原生与 CCXT 适配器在 `fetch_order_book` 边界统一乘 contract value，接口只向上返回基础币
+  数量；策略层原有 `price × qty` 随即恢复 USDT 语义。实现身份升为 v3.2，旧 v3.1 样本不混计。
+- 预防：所有行情“数量”接口必须明确单位并覆盖 `ctVal != 1` 的回归；合约单位换算只允许存在于
+  exchange adapter，任何上层深度/成交额/滑点计算都不得消费原始张数。

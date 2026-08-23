@@ -201,13 +201,19 @@ class CCXTAdapter(ExchangeAdapter):
             return 0.0
 
     def fetch_order_book(self, inst_id: str, depth: int = 10) -> Optional[dict]:
-        """盘口(2026-08-23 信号评分第6维): 前 depth 档买一/卖一深度。"""
+        """盘口数量从 CCXT 合约张数归一为基础币。"""
         self._load()
         try:
-            ob = self._ccxt.fetch_order_book(self._to_ccxt_symbol(inst_id),
-                                             limit=depth)
-            return {"bids": [[float(b[0]), float(b[1])] for b in (ob.get("bids") or [])],
-                    "asks": [[float(a[0]), float(a[1])] for a in (ob.get("asks") or [])]}
+            symbol = self._to_ccxt_symbol(inst_id)
+            ob = self._ccxt.fetch_order_book(symbol, limit=depth)
+            market = self._ccxt.markets.get(symbol) or {}
+            amount_scale = float(market.get("contractSize") or 1)
+            return {
+                "bids": [[float(b[0]), float(b[1]) * amount_scale]
+                         for b in (ob.get("bids") or [])],
+                "asks": [[float(a[0]), float(a[1]) * amount_scale]
+                         for a in (ob.get("asks") or [])],
+            }
         except Exception:
             return None
 

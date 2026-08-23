@@ -1305,3 +1305,15 @@
   `ce90827437a3169f8e68a981badab3f550b6cbc53d0d68a6495dd069aeb7d792` 与冻结 snapshot 本地复算一致；
   模型按 schema 返回 `no_aligned_candidate`，因此 proposal/mature/order 均为 0。接口保持
   `shadow_only=true/execution_authority=false`；该结果证明审计链和诚实空仓生效，不证明胜率已提高。
+
+## 2026-08-24 Agent 主动提案 v3.2 盘口单位修正预声明
+
+- 触发证据：v3.1 首个冻结快照中 DOGE 价差仅 0.63 bp，但预估滑点达到 7910.24 bp。OKX 官方当前
+  `DOGE-USDT-SWAP ctVal=1000 DOGE`，证明 order book 的张数被上层误当成基础币，可见 USDT 深度
+  低估约 1000 倍；这是输入单位错误，不是市场真实流动性结论。
+- 固定修复：`ExchangeAdapter.fetch_order_book` 契约统一为 USDT 价格+基础币数量；原生 OKX 以
+  instrument ctVal、CCXT 以 market contractSize 在适配层完成换算。上层盘口失衡比例保持不变，
+  `price × qty` 的可见名义额与 expected slippage 恢复同一单位。
+- 实验隔离：implementation 升为 `agent-proposal-impl-v3.2-base-qty-book`；v3.1 的 1 个自然 run 保留
+  audit 但不计入 v3.2。Prompt、Schema、候选数、方向门、2:1 几何与全部晋升门不变，仍是 paper-only
+  shadow、零下单权限；本修复只消除错误输入，不预先声称胜率提高。

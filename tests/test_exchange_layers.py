@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from exchange.fake_adapter import FakeAdapter
-from exchange.models import Candle, floor_to_lot
+from exchange.models import Candle, Instrument, floor_to_lot
 from exchange.base import ExchangeError
 
 from engines.directional_trader import DirectionalTrader
@@ -242,7 +242,7 @@ def test_ccxt_ticker_requests_target_venue():
 
 
 def test_native_market_features():
-    """原生适配器盘口/OI/basis 必须翻译成领域标量，不能误读 books 外层。"""
+    """盘口必须拆外层，并把 SWAP 张数归一为基础币。"""
     print("== 原生盘口/OI/basis 翻译 ==")
     from exchange.okx_adapter import OKXAdapter
 
@@ -260,11 +260,34 @@ def test_native_market_features():
 
     ad = OKXAdapter.__new__(OKXAdapter)
     ad.t = _StubT()
+    ad._instruments = {"BTC-USDT-SWAP": Instrument(
+        "BTC-USDT-SWAP", "BTC", "swap", ct_val=0.01)}
+    ad._inst_ts = time.time() + 3600
     book = ad.fetch_order_book("BTC-USDT-SWAP", 10)
-    check("books 外层 dict 正确拆 bids/asks",
-          book == {"bids": [[99.0, 10.0]], "asks": [[101.0, 8.0]]}, str(book))
+    check("原生 books 拆外层并按 ctVal 归一基础币数量",
+          book == {"bids": [[99.0, 0.1]], "asks": [[101.0, 0.08]]}, str(book))
     check("OI 翻译为 float", ad.fetch_open_interest("BTC-USDT-SWAP") == 1234.0)
     check("basis=swap/spot-1", abs(ad.fetch_basis("BTC-USDT-SWAP") - 0.01) < 1e-9)
+
+    from exchange.ccxt_adapter import CCXTAdapter
+
+    class _CCXTBook:
+        markets = {"DOGE/USDT:USDT": {"contractSize": 1000}}
+
+        def fetch_order_book(self, symbol, limit=None):
+            return {"bids": [[0.0924, 1000]], "asks": [[0.0925, 1500]]}
+
+    ccxt = CCXTAdapter.__new__(CCXTAdapter)
+    ccxt._ccxt = _CCXTBook()
+    ccxt._load = lambda: None
+    doge = ccxt.fetch_order_book("DOGE-USDT-SWAP", 10)
+    check("CCXT 合约盘口张数按 contractSize 归一基础币数量",
+          doge == {"bids": [[0.0924, 1_000_000.0]],
+                     "asks": [[0.0925, 1_500_000.0]]}, str(doge))
+    from engines.signal_scan import _microstructure_features
+    slip = _microstructure_features(doge, 10)["expected_slippage_bps"]
+    check("归一后 150 USDT 的 DOGE 深度滑点不再被放大到数千 bp",
+          slip is not None and slip < 20, str(slip))
 
 
 def test_candle_range_pagination():
