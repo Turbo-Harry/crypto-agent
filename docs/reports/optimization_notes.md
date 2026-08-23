@@ -1012,3 +1012,13 @@
 - 权限边界不变：修复成功才是 completed；第二次仍违规则 schema_error、baseline_pass，不能形成
   reject 或有效成熟样本。A/B 策略身份、0.70/0.70、100/30、概率分辨率、费用后增量 EV 及
   paper-only veto 门全部保留。
+- 离线证据：53 个 `tests/test_*.py` 脚本当场全量通过（53/53、红 0），并通过
+  `test_ai_repo_check`、`ai_repo_check`、`params_lint`、`test_isolation_lint`、`fix_guard`、
+  `code_graph --check` 与 `git diff --check`；代码提交 `f1fb9fe`。
+- 模拟盘部署证据：仅重启 `com.crypto.paper`，PID 75159→79777；8090 现役进程 PID 90574
+  未变化。`/health` ok、未暂停，`/status` 空仓/未熔断/敞口 0，`/reconcile` balanced，
+  `/error` 为空，`/models/entry` 仍为 0 个且 `budget_expansion_allowed=false`；OKX 模拟盘
+  conditional/oco/trigger/move_order_stop/iceberg/twap 六类 pending 均为 0。
+- 自然观察：00:42 一轮 19 个候选标的全部无回踩确认信号，因此本轮没有 v4 自然 Trace，也没有
+  下单；不以人工触发或历史行情外发凑样本。候选结算链同期完成 2 条，研究日志的第二训练口径中
+  A 21→22、B 16→17；两者仍为 `insufficient_data`，模型生命周期为空，继续保持空仓与预算锁。
