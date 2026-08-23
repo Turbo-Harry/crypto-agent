@@ -1421,3 +1421,17 @@
   原概率 skill=-0.2887%，相对常数基准 skill=-2.0584%。A/B 风险概率 std 为 0.073302/0.089733，
   分辨率门虽过但准确度门失败，裁决 `stop_no_promotion`；不增加校准器、不改 forecast/Harness 身份、
   不重启实例。paper 的小样本 `calibrated` 继续只按“可计算校准报告”理解，不能作为下单许可。
+
+## 2026-08-24 Harness v5 输入完整性与自然成熟链审计
+
+- v5 冻结输入：A 6 条、B 12 条 run 全部 completed，18/18 signal_id 唯一，error、缺 model latency、
+  缺模型成本和缺 evidence hash 均为 0。A 的 `p_loss_prior` 范围 0.5604–0.6438，模型输出相对先验
+  平均绝对偏差 0.000117；B 范围 0.5187–0.5802，平均偏差 0.000025。18 条均为 abstain，当前只
+  证明先验锚与 Trace 完整，reject=0，不能宣称已有拦亏能力。
+- 成熟链自然验收：等待真实 4h 窗到期后，paper worker 输出
+  `scanned=8/settled=8/missing=0/errors=0`；v4 A mature 从 13 增至 21、pending 从 43 降至 35。
+  抽查这 8 条的 TP/SL/timeout、ambiguous、PnL R 与 `first-passage-15m-4h-v1` 在
+  `signal_outcomes` 和 `agent_evaluations` 逐字段一致，证明候选路径会自动幂等成熟 Harness 评价。
+- 旧版裁决更新：当前完整 v4 A 评价 n=15、reject=0、`probability_std=0`、Brier skill=-0.1116%，
+  模型成本后增量下界为负；继续 `insufficient_data/shadow`。v5 A 6 条最早 08:45、B 12 条最早
+  09:15 才到期，本次不提前读取未来、不手工写 outcome，也不改变任何交易权限。
