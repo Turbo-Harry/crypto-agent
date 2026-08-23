@@ -1317,3 +1317,13 @@
 - 实验隔离：implementation 升为 `agent-proposal-impl-v3.2-base-qty-book`；v3.1 的 1 个自然 run 保留
   audit 但不计入 v3.2。Prompt、Schema、候选数、方向门、2:1 几何与全部晋升门不变，仍是 paper-only
   shadow、零下单权限；本修复只消除错误输入，不预先声称胜率提高。
+- 单位实测：同一市场时点 OKX 原生 DOGE 最优档数量约 171～423，CCXT 约 138～208，二者同量级且
+  CCXT market 明示 `contractSize=1000`，确认统一 amount 仍是张数，不存在适配器二次换算风险。
+- 部署证据：提交 `5cc665d`；最终全量自动发现测试 57/57，交易所分层 51/51，params/code graph/
+  AI repo/test isolation/fix guard/diff check 全绿。只 kickstart `com.crypto.paper`，PID 36919→37966；
+  真实服务 PID 90574 未变化。重启后空仓、未熔断、open notional 0、`balanced=true`、`/error` 为空。
+- 自然验收：v3.2 run `proposal-run-3ec1ed9a6faff50fe7e13e4d` completed，770ms，冻结输入 hash
+  `2b83b16dbbffe5bbdd8aa6119a79dad7a5c21e5c49c1f22e48b029cbeb4bc024` 本地复算一致。DOGE
+  expected slippage 从错误的 7910.24 bp 降至 9.14 bp，XRP 从 200.06 降至 3.34 bp；低深度 INJ/ZRO
+  仍诚实保留 81.39/126.31 bp。模型因无三周期同向标的返回 `no_aligned_candidate`，提案、成熟和订单
+  均为 0，接口继续 `shadow_only=true/execution_authority=false`。这证明输入单位修复，不证明胜率已转正。
