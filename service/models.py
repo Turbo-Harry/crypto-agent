@@ -58,6 +58,10 @@ class StatusOut(BaseModel):
     live_realized_pnl_usdt: Optional[float] = None   # 实盘已平仓累计盈亏 USDT
     live_equity_pnl_usdt: Optional[float] = None     # 账户净值 − 实盘基线净值
     live_pnl_start_equity: Optional[float] = None    # 实盘基线净值（计盈亏起点）
+    # 连亏冷却(2026-08-23 用户指示"连亏 6 笔后应主动冷却,不硬接信号")
+    loss_cooling: bool = False               # 冷却中?
+    loss_cooling_remaining_hours: float = 0.0   # 剩余冷却时长(小时)
+    loss_streak: int = 0                     # 当前连续亏损笔数
 
 
 class WatchItem(BaseModel):

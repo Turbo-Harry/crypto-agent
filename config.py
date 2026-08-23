@@ -471,6 +471,12 @@ LIVE_RISK_PER_TRADE = 1.0     # 单笔风险 USDT(预算 1%)
 LIVE_MAX_NOTIONAL = 10        # 单笔名义上限 USDT(2026-08-23 用户指示 20→10)
 LIVE_MAX_TOTAL = 100          # 总敞口上限 USDT
 LIVE_HARD_STOP_USDT = 30      # 累计实亏达 30 USDT(预算30%) → 自动停手
+# 连亏冷却(2026-08-23 用户指示"连亏 6 笔后应主动冷却,不硬接信号"):
+# 连续净亏 N 笔 → 冷却 N 小时不接新信号(两实例各自统计),到期自动解除,
+# 也可 POST /cool/release 手动解除;单笔盈利即重置连亏计数。
+LOSS_STREAK_COOL_ENABLED = True  # 开关
+LOSS_STREAK_COOL_THRESHOLD = 6   # 连续亏损触发线
+LOSS_STREAK_COOL_HOURS = 6       # 冷却时长(自动解除)
 # 2026-08-23 用户指示: BTC/ETH 用 10x 杠杆(其余币 B+C 分档 3x-5x)
 LIVE_LEVERAGE_MAP = {"BTC": 10, "ETH": 10}
 # BTC/ETH 的名义上限=最小合约名义(BTC 0.01≈680 / ETH 0.01≈25),

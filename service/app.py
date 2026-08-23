@@ -145,6 +145,16 @@ def status(request: Request):
                     live_eq_pnl = round(bal.total_eq - live_start_eq, 2)
         except Exception:
             pass
+    # 2026-08-23 连亏冷却状态(用户指示"连亏 6 笔后应主动冷却")
+    _cooling = {"cooling": False, "remaining": 0.0, "streak": 0}
+    try:
+        from decision.loss_cooling import (is_cooling, cooling_remaining_hours,
+                                           streak)
+        _cooling["cooling"] = is_cooling(t._db_path)
+        _cooling["remaining"] = cooling_remaining_hours(t._db_path)
+        _cooling["streak"] = streak(t._db_path)
+    except Exception:
+        pass
     return StatusOut(
         balance=BalanceOut(total_equity=bal.total_eq if bal else 0,
                            usdt_free=bal.usdt_free if bal else 0,
@@ -169,7 +179,10 @@ def status(request: Request):
         today_notional_usdt=round(today_notional, 2),
         live_realized_pnl_usdt=live_real,
         live_equity_pnl_usdt=live_eq_pnl,
-        live_pnl_start_equity=live_start_eq)
+        live_pnl_start_equity=live_start_eq,
+        loss_cooling=_cooling["cooling"],
+        loss_cooling_remaining_hours=_cooling["remaining"],
+        loss_streak=_cooling["streak"])
 
 
 @router.get("/watchlist", response_model=WatchlistOut, tags=["观测"])
@@ -491,6 +504,16 @@ def entry_model_rollback(request: Request):
     result["models"] = [model for model in result["models"]
                         if model["model_type"] == "entry_probability"]
     return EntryModelsOut(**result)
+
+
+@router.post("/cool/release", response_model=dict, tags=["控制"],
+            dependencies=[Depends(require_control)])
+def cool_release(request: Request):
+    """手动解除连亏冷却(用户指示'解除冷却'): 清冷却计时+连亏计数归零。"""
+    from decision.loss_cooling import release
+    db = _trader(request)._db_path
+    ok = release(db)
+    return {"message": "冷却已解除,连亏计数归零" if ok else "解除失败"}
 
 
 @router.get("/forecast/calibration", response_model=ForecastCalibrationOut, tags=["观测"])

@@ -213,6 +213,13 @@ class ReviewMixin:
                                  db_path=self._db_path)
         except Exception:
             pass
+        # 2026-08-23 用户指示"连亏 6 笔后应主动冷却,不硬接信号":
+        # 净亏步进连亏计数,达线启动冷却(通知由 loss_cooling 内部发)
+        try:
+            from decision.loss_cooling import on_close
+            on_close(self._db_path, net_pnl, notify=self._notify)
+        except Exception:
+            pass
         exit_reason_short = (closed.get("exit_reason") or "平仓")[:20]
         sign = "+" if net_pnl >= 0 else ""
         fee_line = (f"\n手续费 {fees_paid:.4f} · 资金费 {funding_paid:.4f}"

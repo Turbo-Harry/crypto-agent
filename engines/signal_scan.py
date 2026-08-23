@@ -773,6 +773,18 @@ class SignalScanMixin:
         # 2026-08-20 交易所故障退避: 下单遇 50001/503 后暂停开仓 N 秒,
         # 避免故障期间每轮扫描都刷失败行/告警(OKX 沙盘全灭案例)。
         # 逐币实时读(不能轮前快照——同轮首个币失败后,后续币还会再试)。
+        # 2026-08-23 用户指示: 连亏 6 笔主动冷却——期间整轮不接信号(记一条决策)
+        try:
+            from decision.loss_cooling import is_cooling, cooling_remaining_hours
+            _dbp = getattr(self, "_db_path", None)
+            if is_cooling(_dbp):
+                print(f"🧊 连亏冷却中(剩 {cooling_remaining_hours(_dbp):.1f}h),"
+                      f"本轮扫描不接新信号")
+                self._log_scan_decision("", False, "", "loss_cooling",
+                                        f"连亏冷却中(剩 {cooling_remaining_hours(_dbp):.1f}h)")
+                return
+        except Exception:
+            pass
         for base in scan_pool:
             if time.time() < getattr(self, "_open_backoff_until", 0):
                 self._log_scan_decision(base, False, "", "exchange_backoff",
