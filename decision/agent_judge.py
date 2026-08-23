@@ -430,6 +430,8 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
             max_steps=config.AGENT_HARNESS_MAX_STEPS,
             max_tools=config.AGENT_HARNESS_MAX_TOOL_CALLS,
             timeout_ms=config.AGENT_HARNESS_TIMEOUT_MS,
+            max_semantic_retries=
+                config.AGENT_HARNESS_MAX_SEMANTIC_RETRIES,
             max_context_chars=config.AGENT_HARNESS_CONTEXT_MAX_CHARS,
         ),
         # 用户已授权自动接入，但只有已通过生命周期验证的同一完整版本才有效。

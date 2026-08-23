@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from unittest import mock
 
 import config
@@ -25,6 +26,15 @@ def make_input(run_id="r1"):
         retrieval_version="retrieval-v1", signal={"base": "BTC", "direction": "long"},
         market={"regime": "trend"}, account={"open_notional": 0},
     )
+
+
+def anchored_reject(prompt):
+    payload = json.loads(prompt)
+    evidence_id = payload["context"]["field_provenance"]["market"]
+    return {
+        "verdict": "reject", "risk_probability": .9, "confidence": .8,
+        "reason_codes": ["liquidity_failure"],
+        "evidence_ids": [evidence_id], "reason": "spread"}
 
 
 class AgentHarnessEndToEndTest(unittest.TestCase):
@@ -98,9 +108,7 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
     def test_legacy_entry_can_use_explicit_harness_callback(self):
         result = harness_judge(
             {"dir": "long", "stop": 95, "tp": 110}, "BTC", 60, 100, {},
-            model_call=lambda prompt: {"verdict": "reject", "risk_probability": .9,
-                                        "confidence": .8, "reason_codes": ["liquidity_failure"],
-                                        "evidence_ids": ["market:1"], "reason": "spread"},
+            model_call=anchored_reject,
             db_path=self.path)
         self.assertEqual(result.run.final_action.value, "shadow_reject")
         self.assertFalse(result.policy.veto)
@@ -125,10 +133,7 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         result = harness_judge(
             {"dir": "long", "stop": 95, "tp": 110},
             "BTC", 60, 100, {},
-            model_call=lambda prompt: {
-                "verdict": "reject", "risk_probability": .9,
-                "confidence": .8, "reason_codes": ["liquidity_failure"],
-                "evidence_ids": ["market:1"], "reason": "spread"},
+            model_call=anchored_reject,
             db_path=self.path, allow_veto=True)
         self.assertEqual(result.run.final_action, FinalAction.AGENT_REJECT)
         self.assertTrue(result.policy.veto)
@@ -136,10 +141,7 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         live_shadow = harness_judge(
             {"dir": "long", "stop": 95, "tp": 110},
             "ETH", 60, 100, {},
-            model_call=lambda prompt: {
-                "verdict": "reject", "risk_probability": .9,
-                "confidence": .8, "reason_codes": ["liquidity_failure"],
-                "evidence_ids": ["market:1"], "reason": "spread"},
+            model_call=anchored_reject,
             db_path=self.path, allow_veto=False)
         self.assertEqual(live_shadow.run.final_action, FinalAction.SHADOW_REJECT)
         self.assertFalse(live_shadow.policy.veto)
@@ -151,10 +153,8 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         signal_id, _ = record_signal_sample(
             "BTC", sig, "swap", db_path=self.path, event_ts=1_700_000_900)
 
-        def reject(_prompt):
-            return {"verdict": "reject", "risk_probability": .9,
-                    "confidence": .8, "reason_codes": ["liquidity_failure"],
-                    "evidence_ids": ["market:1"], "reason": "spread"}
+        def reject(prompt):
+            return anchored_reject(prompt)
 
         first = harness_judge(sig, "BTC", 60, 100, {}, model_call=reject,
                               db_path=self.path, signal_id=signal_id)

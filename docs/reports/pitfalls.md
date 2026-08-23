@@ -821,3 +821,16 @@
   `B_breakout` 独立，且调用端固定 `allow_veto=False`，不改变 B 永久 shadow/无执行权语义。
 - 预防：新增策略进入共同候选标签表时，同步核对采样、模型、Harness、成熟评价四条研究消费链；是否
   有执行权必须由调用端显式传入，不能从“已采样”推断。
+
+### 2026-08-24 JSON 合法不等于 Harness 证据语义合格
+
+- 现象：v3 首两条自然结果都返回 0.55/0.60 abstain，并带 `insufficient_evidence`，但
+  `missing_information=[]`；abstain_reason 还复述“预测未校准/无已验证模型”等 prompt 已禁止的
+  治理元数据。Pydantic/schema 全部合法，原图仍把它们记为 completed。
+- 根因：验证节点只检查字段类型、枚举和范围，没有检查 reason code 与缺失证据的一致性，也没有核对
+  reject 的 evidence_id 是否逐字来自冻结 provenance；prompt 约束没有确定性执行层兜底。
+- 修复：中立契约要求 `insufficient_evidence` 只能配 abstain 且必须列出具体缺失市场信息；图验证再
+  排除治理元数据、核对 reject 证据锚。语义失败最多带原响应和违规原因修复一次，两次调用成本累计、
+  两个 MODEL step 分别留痕；仍失败则 `schema_error` 且保持 baseline，不进入有效评价。
+- 预防：模型输出验收分结构、语义、证据锚、决策价值四层；任何自动修复都必须有次数上限、累计成本、
+  尝试级 Trace 和失败关闭，不能无限重试或覆盖首个坏响应。

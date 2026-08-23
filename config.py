@@ -163,7 +163,7 @@ AGENT_HARNESS_ENABLED = True
 # 且仅 paper 实例显式传入执行授权后才会真正否决；live 永远保持 shadow。
 # Harness 不能恢复任何基线拒单。
 AGENT_HARNESS_VETO_ENABLED = True
-AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v3-counterfactual-market-evidence"
+AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v4-semantic-repair-market-evidence"
 AGENT_HARNESS_REJECT_MIN_RISK = 0.70
 AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
 # 本轮 Challenger 只改变 Context；模型继续使用现役 deepseek-chat 兼容名，
@@ -183,6 +183,7 @@ AGENT_HARNESS_OUTPUT_USD_PER_M = 0.28
 AGENT_HARNESS_MAX_TOOL_CALLS = 3
 AGENT_HARNESS_MAX_STEPS = 8
 AGENT_HARNESS_TIMEOUT_MS = 4000
+AGENT_HARNESS_MAX_SEMANTIC_RETRIES = 1 # 合法 JSON 但违背证据语义时最多修复一次
 AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 
 # Agent 主动候选提案（仅真实 OKX 模拟盘 shadow）：每根已收线 15m K 最多

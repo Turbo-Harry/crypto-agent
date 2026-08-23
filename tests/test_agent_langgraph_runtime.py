@@ -6,6 +6,7 @@ import inspect
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from decision.agent_contracts import (
@@ -74,6 +75,102 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.run.runtime_status, RuntimeStatus.SCHEMA_ERROR)
         self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
         self.assertIsNone(result.decision)
+
+    def test_semantic_violation_gets_one_traced_repair(self):
+        calls = []
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                content = {
+                    "verdict": "abstain", "risk_probability": .55,
+                    "confidence": .6,
+                    "reason_codes": ["insufficient_evidence"],
+                    "missing_information": [],
+                    "abstain_reason": "预测未校准且无已验证模型",
+                    "reason": "not enough evidence",
+                }
+            else:
+                content = {
+                    "verdict": "abstain", "risk_probability": .62,
+                    "confidence": .52,
+                    "reason_codes": ["insufficient_evidence"],
+                    "missing_information": ["current order-book depth"],
+                    "abstain_reason": "frozen liquidity evidence is incomplete",
+                    "reason": "liquidity loss risk cannot be resolved",
+                }
+            return ModelCallResult(
+                content=content, input_tokens=10, output_tokens=2,
+                estimated_cost=.001, pricing_version="price-v1")
+
+        result = run_graph_harness(
+            make_input("semantic-repair"), baseline_passed=True,
+            model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn('"semantic_repair"', calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+        self.assertEqual(result.run.risk_probability, .62)
+        self.assertEqual(result.run.input_tokens, 20)
+        self.assertEqual(result.run.output_tokens, 4)
+        self.assertAlmostEqual(result.run.estimated_cost, .002)
+        model_steps = db.q(
+            "SELECT status,retry_count,error_type FROM agent_steps "
+            "WHERE run_id=? AND step_type='model' ORDER BY step_no",
+            [result.run.run_id], db_path=self.path)
+        self.assertEqual(
+            [(row["status"], row["retry_count"]) for row in model_steps],
+            [("failed", 0), ("completed", 1)])
+        self.assertIn("AgentSemanticError", model_steps[0]["error_type"])
+
+    def test_semantic_retry_exhaustion_is_schema_error(self):
+        calls = []
+
+        def invalid(prompt):
+            calls.append(prompt)
+            return {
+                "verdict": "abstain", "risk_probability": .55,
+                "confidence": .6,
+                "reason_codes": ["insufficient_evidence"],
+                "missing_information": [],
+                "abstain_reason": "缺少已验证模型",
+                "reason": "not enough evidence",
+            }
+
+        result = run_graph_harness(
+            make_input("semantic-exhausted"), baseline_passed=True,
+            model_call=invalid, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.SCHEMA_ERROR)
+        self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
+        self.assertIsNone(result.decision)
+
+    def test_reject_evidence_is_repaired_to_declared_anchor(self):
+        calls = []
+        inp = replace(
+            make_input("evidence-anchor"),
+            field_provenance={"market": "signal:evidence-anchor:market"})
+
+        def model(prompt):
+            calls.append(prompt)
+            evidence_id = ("market:1" if len(calls) == 1 else
+                           "signal:evidence-anchor:market")
+            return {
+                "verdict": "reject", "risk_probability": .8,
+                "confidence": .8, "reason_codes": ["liquidity_failure"],
+                "evidence_ids": [evidence_id], "reason": "thin market",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+        self.assertEqual(result.run.evidence_ids,
+                         ("signal:evidence-anchor:market",))
 
     def test_read_only_tool_trace_and_single_model_call(self):
         calls = []

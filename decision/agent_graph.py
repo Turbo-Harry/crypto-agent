@@ -20,9 +20,9 @@ from pydantic import BaseModel, Field
 
 from decision.agent_context import build_context, serialize_context
 from decision.agent_contracts import (
-    AgentDecision, AgentInput, AgentStep, FinalAction, HarnessConfig, HarnessRun,
-    ModelCallResult, RuntimeStatus, StepStatus, StepType, Verdict, strict_parse_model_output,
-    stable_hash,
+    AgentDecision, AgentInput, AgentSemanticError, AgentStep, FinalAction,
+    HarnessConfig, HarnessRun, ModelCallResult, RuntimeStatus, StepStatus,
+    StepType, Verdict, strict_parse_model_output, stable_hash,
 )
 from decision.agent_memory import retrieve_for_input
 from decision.agent_policy import PolicyKernel, PolicyResult
@@ -82,6 +82,9 @@ class _GraphState(TypedDict, total=False):
     prompt_cache_miss_tokens: int | None
     estimated_cost: float | None
     pricing_version: str | None
+    model_retry_count: int
+    semantic_errors: tuple[str, ...]
+    retry_model: bool
     started_monotonic: float
 
 
@@ -160,6 +163,64 @@ def _domain_decision(raw: Any) -> AgentDecision:
     parser = PydanticOutputParser(pydantic_object=_DecisionPayload)
     parsed = parser.invoke(json.dumps(payload, ensure_ascii=False))
     return strict_parse_model_output(parsed.model_dump(exclude_none=True))
+
+
+_GOVERNANCE_ONLY_MARKERS = (
+    "no_validated_active_model", "validated active model", "entry model",
+    "uncalibrated forecast", "strategy_route", "无已验证模型",
+    "缺少已验证模型", "缺少入场概率模型", "预测未校准",
+)
+
+
+def _evidence_ids(state: _GraphState) -> set[str]:
+    """Return exact evidence identifiers visible in the frozen prompt."""
+
+    allowed: set[str] = set()
+
+    def collect(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                collect(item)
+        elif isinstance(value, str) and value:
+            allowed.add(value)
+
+    collect(state["agent_input"].field_provenance)
+    for memory in state.get("memory", ()):
+        evidence_id = memory.get("evidence_id")
+        if evidence_id:
+            allowed.add(str(evidence_id))
+    for tool in state.get("tool_payload", ()):
+        output_hash = tool.get("output_hash")
+        if output_hash:
+            allowed.add(str(output_hash))
+    return allowed
+
+
+def _validate_decision_semantics(decision: AgentDecision,
+                                 state: _GraphState) -> None:
+    """Reject structurally valid answers that misuse governance metadata."""
+
+    semantic_text = " ".join((
+        *decision.missing_information,
+        decision.abstain_reason or "",
+    )).lower()
+    markers = [marker for marker in _GOVERNANCE_ONLY_MARKERS
+               if marker.lower() in semantic_text]
+    if markers:
+        raise AgentSemanticError(
+            "governance metadata cannot justify missing evidence: " +
+            ",".join(markers))
+    if decision.verdict is Verdict.REJECT:
+        provenance = state["agent_input"].field_provenance
+        allowed = _evidence_ids(state) if provenance else set()
+        unknown = [item for item in decision.evidence_ids
+                   if provenance and item not in allowed]
+        if unknown:
+            raise AgentSemanticError(
+                "reject evidence_ids are not anchored: " + ",".join(unknown))
 
 
 class _Nodes:
@@ -279,6 +340,18 @@ class _Nodes:
         }
         if state.get("tool_payload"):
             payload["tools"] = state["tool_payload"]
+        retry_count = int(state.get("model_retry_count", 0))
+        if retry_count:
+            payload["semantic_repair"] = {
+                "attempt": retry_count,
+                "violations": list(state.get("semantic_errors", ())),
+                "previous_response": state.get("raw_response"),
+                "instruction": (
+                    "Return one corrected JSON object for the same frozen "
+                    "candidate. Fill concrete market missing_information when "
+                    "using insufficient_evidence; do not cite model readiness, "
+                    "forecast calibration, or strategy routing as evidence."),
+            }
         prompt = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                             separators=(",", ":"))
         started_at = _stamp()
@@ -295,7 +368,7 @@ class _Nodes:
             provider_result = runnable.invoke(prompt)
             if isinstance(provider_result, ModelCallResult):
                 raw = provider_result.content
-                usage = {
+                current_usage = {
                     "input_tokens": provider_result.input_tokens,
                     "output_tokens": provider_result.output_tokens,
                     "prompt_cache_hit_tokens": provider_result.prompt_cache_hit_tokens,
@@ -305,16 +378,33 @@ class _Nodes:
                 }
             else:
                 raw = provider_result
-                usage = {}
+                current_usage = {}
+            usage = {}
+            for name in ("input_tokens", "output_tokens",
+                         "prompt_cache_hit_tokens", "prompt_cache_miss_tokens",
+                         "estimated_cost"):
+                previous = state.get(name)
+                current = current_usage.get(name)
+                if previous is not None or current is not None:
+                    usage[name] = (previous or 0) + (current or 0)
+            usage["pricing_version"] = (
+                current_usage.get("pricing_version") or
+                state.get("pricing_version"))
+            elapsed_ms = round((time.monotonic() - started) * 1000)
             return {**common, **usage, "raw_response": raw,
                     "response_hash": stable_hash(raw),
-                    "model_latency_ms": round((time.monotonic() - started) * 1000),
-                    "model_outcome": "completed"}
+                    "model_latency_ms": (
+                        int(state.get("model_latency_ms") or 0) + elapsed_ms),
+                    "model_outcome": "completed", "retry_model": False,
+                    "semantic_errors": ()}
         except Exception as exc:
+            elapsed_ms = round((time.monotonic() - started) * 1000)
             return {**common, "runtime_status": _runtime_error(exc),
                     "model_error_type": type(exc).__name__,
-                    "model_latency_ms": round((time.monotonic() - started) * 1000),
-                    "model_outcome": "failed"}
+                    "model_latency_ms": (
+                        int(state.get("model_latency_ms") or 0) + elapsed_ms),
+                    "model_outcome": "failed", "retry_model": False,
+                    "semantic_errors": ()}
 
     def validate(self, state: _GraphState) -> dict[str, Any]:
         outcome = state.get("model_outcome")
@@ -329,23 +419,49 @@ class _Nodes:
         if outcome == "skipped":
             item = AgentStep(**base, status=StepStatus.SKIPPED,
                              fallback_action="baseline_pass")
-            return {"steps": self.append(state, item)}
+            return {"retry_model": False, "steps": self.append(state, item)}
         if outcome == "failed":
             item = AgentStep(**base, status=StepStatus.FAILED,
                              error_type=state.get("model_error_type"),
                              fallback_action="baseline_pass")
-            return {"steps": self.append(state, item)}
+            return {"retry_model": False, "steps": self.append(state, item)}
         try:
             decision = _domain_decision(state.get("raw_response"))
+            _validate_decision_semantics(decision, state)
             item = AgentStep(**base, status=StepStatus.COMPLETED,
-                             output_hash=state.get("response_hash"))
-            return {"decision": decision, "steps": self.append(state, item)}
+                             output_hash=state.get("response_hash"),
+                             retry_count=int(state.get("model_retry_count", 0)))
+            return {"decision": decision, "retry_model": False,
+                    "semantic_errors": (), "steps": self.append(state, item)}
+        except AgentSemanticError as exc:
+            retry_count = int(state.get("model_retry_count", 0))
+            item = AgentStep(
+                **base, status=StepStatus.FAILED,
+                output_hash=state.get("response_hash"),
+                retry_count=retry_count,
+                error_type=f"AgentSemanticError:{exc}",
+                fallback_action="baseline_pass")
+            steps = self.append(state, item)
+            if retry_count < max(0, self.config.max_semantic_retries):
+                return {
+                    "decision": None, "retry_model": True,
+                    "semantic_errors": (str(exc),),
+                    "model_retry_count": retry_count + 1,
+                    "model_step_no": step_no + 1,
+                    "policy_step_no": int(
+                        state.get("policy_step_no", step_no + 1)) + 1,
+                    "steps": steps,
+                }
+            return {"runtime_status": RuntimeStatus.SCHEMA_ERROR,
+                    "decision": None, "retry_model": False,
+                    "semantic_errors": (str(exc),), "steps": steps}
         except Exception as exc:
             item = AgentStep(**base, status=StepStatus.FAILED,
                              error_type=type(exc).__name__,
                              fallback_action="baseline_pass")
             return {"runtime_status": RuntimeStatus.SCHEMA_ERROR,
-                    "decision": None, "steps": self.append(state, item)}
+                    "decision": None, "retry_model": False,
+                    "steps": self.append(state, item)}
 
     def policy(self, state: _GraphState) -> dict[str, Any]:
         policy = self.policy_kernel.evaluate(
@@ -446,7 +562,10 @@ def build_harness_graph(*, model_call: Callable[[str], Any] | None,
     graph.add_edge("retrieve", "tools")
     graph.add_edge("tools", "model")
     graph.add_edge("model", "validate")
-    graph.add_edge("validate", "policy")
+    graph.add_conditional_edges(
+        "validate",
+        lambda state: "retry" if state.get("retry_model") else "policy",
+        {"retry": "model", "policy": "policy"})
     graph.add_edge("policy", "record")
     graph.add_edge("record", END)
     return graph.compile()
@@ -481,6 +600,8 @@ def run_graph_harness(agent_input: AgentInput, *, baseline_passed: bool,
         "serialized_context": "", "memory": (), "tool_payload": [],
         "prompt": "", "decision": None, "steps": (),
         "model_step_no": 3, "policy_step_no": 4,
+        "model_retry_count": 0, "semantic_errors": (),
+        "retry_model": False,
         "started_monotonic": time.monotonic()})
     return HarnessResult(
         run=final["run"], decision=final.get("decision"),

@@ -152,10 +152,15 @@ def test_engine_shadow_no_orders(tmp):
         dt._last_watch_refresh = time.time()
         dt._last_scan = 0
         dt.signal_cool = {}
-        dt.agent_model_call = lambda _prompt: {
-            "verdict": "reject", "risk_probability": .9,
-            "confidence": .8, "reason_codes": ["liquidity_failure"],
-            "evidence_ids": ["market:1"], "reason": "frozen spread risk"}
+        def _anchored_reject(prompt):
+            payload = json.loads(prompt)
+            evidence_id = payload["context"]["field_provenance"]["market"]
+            return {
+                "verdict": "reject", "risk_probability": .9,
+                "confidence": .8, "reason_codes": ["liquidity_failure"],
+                "evidence_ids": [evidence_id],
+                "reason": "frozen spread risk"}
+        dt.agent_model_call = _anchored_reject
         dt.scan_signals()
         conn = sqlite3.connect(os.path.join(tmp, "scan.db"))
         n = conn.execute("SELECT COUNT(*) FROM shadow_signals").fetchone()[0]

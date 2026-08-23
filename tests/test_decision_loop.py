@@ -30,6 +30,20 @@ from exchange.fake_adapter import FakeAdapter
 from engines.directional_trader import DirectionalTrader, _ExpAdapter
 from engines.signal_scan import _dynamic_ofi, _microstructure_features
 
+
+def _anchored_harness_reject(prompt):
+    """Return a reject tied to the exact frozen market evidence in the prompt."""
+    payload = json.loads(prompt)
+    evidence_id = payload["context"]["field_provenance"]["market"]
+    return {
+        "verdict": "reject",
+        "risk_probability": 0.9,
+        "confidence": 0.8,
+        "reason_codes": ["liquidity_failure"],
+        "evidence_ids": [evidence_id],
+        "reason": "shadow only",
+    }
+
 passed = failed = 0
 
 
@@ -327,10 +341,7 @@ def test_strict_2to1_preopen_wiring(tmp):
     os.makedirs(work, exist_ok=True)
     dt, fake = _make_trader(work)
     dt.require_2to1_prediction = True
-    dt.agent_model_call = lambda prompt: {
-        "verdict": "reject", "risk_probability": 0.8, "confidence": 0.7,
-        "reason_codes": ["liquidity_failure"],
-        "evidence_ids": ["signal:test:structure"], "reason": "shadow only"}
+    dt.agent_model_call = _anchored_harness_reject
     fake.candles["BTC-USDT-SWAP"] = _make_candles()
     fake.last_prices["BTC-USDT-SWAP"] = 110.0
     fake.last_prices["BTC-USDT"] = 110.0
@@ -487,11 +498,7 @@ def test_harness_shadow_keeps_legacy_authority(tmp):
         dt.ai_judge_enabled = True
         return dt, fake
 
-    reject_shadow = lambda prompt: {
-        "verdict": "reject", "risk_probability": 0.9, "confidence": 0.8,
-        "reason_codes": ["liquidity_failure"],
-        "evidence_ids": ["signal:test:market"], "reason": "shadow only",
-    }
+    reject_shadow = _anchored_harness_reject
     approve_shadow = lambda prompt: {
         "verdict": "approve", "risk_probability": 0.1, "confidence": 0.8,
         "reason": "shadow approve",

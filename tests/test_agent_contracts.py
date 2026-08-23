@@ -60,6 +60,17 @@ class AgentContractsTest(unittest.TestCase):
         }))
         self.assertEqual(decision.verdict, Verdict.REJECT)
 
+    def test_insufficient_evidence_requires_concrete_missing_market_data(self):
+        with self.assertRaisesRegex(
+                ValueError, "requires concrete missing_information"):
+            strict_parse_model_output({
+                "verdict": "abstain", "risk_probability": .55,
+                "confidence": .6,
+                "reason_codes": [ReasonCode.INSUFFICIENT_EVIDENCE.value],
+                "missing_information": [],
+                "abstain_reason": "not enough evidence",
+            })
+
     def test_policy_never_turns_runtime_failure_into_model_approval(self):
         action = apply_policy(PolicyContext(
             baseline_passed=True,

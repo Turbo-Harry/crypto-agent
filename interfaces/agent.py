@@ -80,6 +80,10 @@ class ReasonCode(str, Enum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
 
+class AgentSemanticError(ValueError):
+    """A structurally valid model decision violates evidence semantics."""
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
@@ -180,6 +184,14 @@ class AgentDecision:
             raise ValueError("reason_codes are required for reject")
         if self.verdict is Verdict.REJECT and not self.evidence_ids:
             raise ValueError("evidence_ids are required for reject")
+        if ReasonCode.INSUFFICIENT_EVIDENCE in self.reason_codes:
+            if self.verdict is not Verdict.ABSTAIN:
+                raise AgentSemanticError(
+                    "insufficient_evidence is only valid for abstain")
+            if not self.missing_information or any(
+                    not str(item).strip() for item in self.missing_information):
+                raise AgentSemanticError(
+                    "insufficient_evidence requires concrete missing_information")
 
     def to_dict(self) -> dict[str, Any]:
         return _as_plain(asdict(self))
@@ -274,6 +286,7 @@ class HarnessConfig:
     max_steps: int = 8
     max_tools: int = 3
     timeout_ms: int = 4000
+    max_semantic_retries: int = 1
     max_context_chars: int = 24000
     allowed_tools: tuple[str, ...] = (
         "get_signal_snapshot",

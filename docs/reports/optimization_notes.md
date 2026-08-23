@@ -1000,3 +1000,15 @@
   pending 条件单合计 0；8090 live PID 90574 未变化。部署时 v3 已自然产生 A 两条 abstain，均为
   0.55/0.60；样本仍太少且概率尚无分辨率，B 尚无新结构候选，因此不宣称精准率改善，模型与预算锁
   继续保持关闭。
+
+## 2026-08-24 Harness v4 语义修复门
+
+- 触发证据：v3 自然 A 两条均为 0.55/0.60 abstain，且 `insufficient_evidence` 对应的
+  `missing_information` 为空，abstain_reason 仍引用已禁止的模型就绪/预测校准治理状态；因此 v3
+  不能继续作为权威实验身份。
+- v4 只改变输出质量控制：结构合法后继续验证缺失证据一致性、治理元数据隔离和 reject evidence_id
+  锚定。首次语义失败把原响应与精确违规原因放入同一冻结候选的修复 prompt，最多重试 1 次；两次
+  token/cache/美元成本和延迟累计，MODEL step 以 retry_count=0/1 分别持久化。
+- 权限边界不变：修复成功才是 completed；第二次仍违规则 schema_error、baseline_pass，不能形成
+  reject 或有效成熟样本。A/B 策略身份、0.70/0.70、100/30、概率分辨率、费用后增量 EV 及
+  paper-only veto 门全部保留。
