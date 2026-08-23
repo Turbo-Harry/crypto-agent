@@ -663,6 +663,58 @@ class SignalScanMixin:
         from engines.daily_scan import trades_budget
         return trades_budget(self.watch_scores.get(base))
 
+    def _run_agent_proposal_shadow(self, scan_pool):
+        """每根 15m K 一次批量主动提案；只留样，不进入开仓分支。"""
+        model_call = getattr(self, "agent_proposal_model_call", None)
+        if (not config.AGENT_PROPOSAL_SHADOW_ENABLED or
+                getattr(self, "live_mode", False) or model_call is None):
+            return None
+        try:
+            from decision.agent_proposals import (build_market_snapshot,
+                                                  run_proposal_cycle)
+            ranked = sorted(
+                dict.fromkeys(scan_pool),
+                key=lambda symbol: (-float(self.watch_scores.get(symbol, -1)),
+                                    symbol))
+            snapshots = []
+            now_ms = time.time() * 1000
+            for base in ranked[:config.AGENT_PROPOSAL_MAX_SYMBOLS]:
+                frames = {}
+                for timeframe in (config.SIGNAL_SAMPLE_TIMEFRAME,
+                                  config.SIGNAL_CONTEXT_TIMEFRAME,
+                                  config.SIGNAL_REGIME_TIMEFRAME):
+                    rows = self._fetch_klines_any(
+                        base, timeframe, config.AGENT_PROPOSAL_MIN_BARS)
+                    close_before = (
+                        now_ms - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS * 1000 -
+                        config.SIGNAL_TIMEFRAME_SECONDS[timeframe] * 1000)
+                    frames[timeframe] = [
+                        row for row in (rows or []) if int(row[0]) <= close_before]
+                try:
+                    snapshots.append(build_market_snapshot(
+                        base, frames[config.SIGNAL_SAMPLE_TIMEFRAME],
+                        frames[config.SIGNAL_CONTEXT_TIMEFRAME],
+                        frames[config.SIGNAL_REGIME_TIMEFRAME]))
+                except ValueError:
+                    continue
+            if not snapshots:
+                return None
+            from engines.signal_sampling import record_agent_proposal_sample
+            result = run_proposal_cycle(
+                snapshots, model_call=model_call,
+                sample_recorder=lambda **kwargs: record_agent_proposal_sample(
+                    db_path=self._db_path, **kwargs),
+                db_path=self._db_path)
+            if result.get("proposals") and not result.get("deduplicated"):
+                valid = sum(row.get("geometry_valid") == 1
+                            for row in result["proposals"] if row)
+                print(f"Agent主动提案 shadow: {len(result['proposals'])} 条，"
+                      f"确定性2:1有效 {valid} 条，无执行权限")
+            return result
+        except Exception as exc:
+            print(f"Agent主动提案 shadow failed: {type(exc).__name__}: {exc}")
+            return None
+
     def scan_signals(self):
         """扫一轮候选池信号（每 15 分钟，日内短线）。
         频率约束（用户要求：看币动态调整笔数）：每个币每天的允许笔数按其当日
@@ -980,6 +1032,10 @@ class SignalScanMixin:
                             record_profile(base, prof, db_path=self._db_path)
                     except Exception:
                         pass
+
+        # 与 A/B 量化候选完全分账。无论 AI 是否提案，本轮都不会调用
+        # open_position；有效提案只等待既有 4h 完整路径反事实结算。
+        self._run_agent_proposal_shadow(scan_pool)
 
     def _maybe_wick_shadow(self, base):
         """现役没信号时用候选影线比再扫一次；命中只记影子，绝不下单/不占冷却。"""

@@ -59,7 +59,7 @@ CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 |---|---|
 | 方向性引擎 | 1s 风控监控 + 5min 轮询已收线 15m 回踩信号 + 4h 时间退出 + 每日候选刷新 |
 | 实时行情 | ccxt.pro watch_ticker（config.REALTIME_BACKEND 可切回原生 WS） |
-| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、/models/entry、/forecast/calibration、/factors/trials、/agent/evaluation、/research/readiness；POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback /models/entry/rollback |
+| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、/models/entry、/forecast/calibration、/factors/trials、/agent/evaluation、/agent/proposals、/research/readiness；POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback /models/entry/rollback |
 
 ### 双实例实现现状（不是 AI 的 live 操作授权）
 

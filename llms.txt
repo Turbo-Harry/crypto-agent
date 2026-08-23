@@ -30,6 +30,7 @@
 - [docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md](docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md): 15m 主周期/4h horizon 的开仓准确率、因子挖掘、极值区间预测与 Agent 增量验证权威实施稿（T0–T10）
 - [docs/plans/2026-08-16_self_evolution_design.md](docs/plans/2026-08-16_self_evolution_design.md): 自进化系统设计方案 v0.2 —— 复盘驱动的系统与策略改进（DEF 缺陷清单/业界标准 S1-S5 验收/Phase 0-5/质疑轮/零回归约束/权责矩阵）
 - [docs/plans/2026-08-23_agent_harness_improvement_FINAL.md](docs/plans/2026-08-23_agent_harness_improvement_FINAL.md): 交易 Agent Harness 权威实施稿 —— 版本化上下文/三层记忆/只读工具/确定性策略核/Trace/Eval/champion-challenger/回滚
+- [docs/plans/2026-08-23_agent_active_proposal_shadow_FINAL.md](docs/plans/2026-08-23_agent_active_proposal_shadow_FINAL.md): AI 主动方向候选、确定性 2:1、C 策略反事实标签与零执行权限权威实施稿
 - [docs/reports/2026-08-16_strategy_research.md](docs/reports/2026-08-16_strategy_research.md): 业界策略调研（订单流 CVD/聪明钱 SMC 批评/分场景策略套件/开源机器人，附来源 URL）
 - [docs/reports/2026-08-23_15m_research_replay_report.md](docs/reports/2026-08-23_15m_research_replay_report.md): 真实 OKX SWAP 15m/4h 历史重放、自动因子/概率/极值裁决；当前成本后 EV 与模型门均未通过
 
@@ -66,6 +67,7 @@
 - [decision/extrema_forecast.py](decision/extrema_forecast.py): 最高/最低 q10/q50/q90 与 conformal 区间消费端
 - [decision/model_lifecycle.py](decision/model_lifecycle.py): 模型 shadow、观察、晋升、退化回滚与预算扩大否决
 - [decision/agent_harness.py](decision/agent_harness.py): 版本化上下文、记忆、只读工具、模型契约与 Trace 编排
+- [decision/agent_proposals.py](decision/agent_proposals.py): paper-only 主动候选契约、批次幂等、确定性 2:1 与审计
 - [decision/agent_judge.py](decision/agent_judge.py): legacy AI 现役否决与 paper Harness shadow provider 的生产接线桥
 - [decision/agent_policy.py](decision/agent_policy.py): Agent 确定性策略核（默认 shadow、故障回量化基线）
 - [decision/agent_evaluation.py](decision/agent_evaluation.py): Harness 与旧 AI 把关的反事实增量评价
@@ -80,6 +82,7 @@
 - [tests/test_entry_probability.py](tests/test_entry_probability.py): 开仓概率、Brier/precision、scope 与 fail-safe
 - [tests/test_extrema_calibration.py](tests/test_extrema_calibration.py): 极值分位、覆盖率、交叉拒绝与生命周期
 - [tests/test_agent_harness_end_to_end.py](tests/test_agent_harness_end_to_end.py): Agent Harness 端到端 shadow/fallback 行为
+- [tests/test_agent_proposals.py](tests/test_agent_proposals.py): 主动提案 2:1、证据、幂等、live 禁用与零订单行为
 - [tools/ai_repo_check.py](tools/ai_repo_check.py): AI 入口、Markdown 链接、llms 与 docs 索引守卫
 
 ## 运维

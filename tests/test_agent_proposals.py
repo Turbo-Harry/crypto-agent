@@ -1,0 +1,177 @@
+"""Agent 主动提案：严格契约、2:1 几何、幂等、隔离与无执行权限。"""
+
+import os
+import tempfile
+import time
+import unittest
+
+import config
+import storage.db as sdb
+from decision.agent_proposals import (build_market_snapshot, list_proposals,
+                                      run_proposal_cycle)
+from engines.signal_scan import SignalScanMixin
+from engines.signal_sampling import record_agent_proposal_sample
+from exchange.fake_adapter import FakeAdapter
+
+
+def market_rows(*, timeframe_seconds=900, n=70, base=100.0):
+    end_open = int((time.time() - timeframe_seconds * 2) * 1000)
+    start = end_open - (n - 1) * timeframe_seconds * 1000
+    rows = []
+    for index in range(n):
+        close = base + index * 0.1
+        rows.append([start + index * timeframe_seconds * 1000,
+                     close - 0.05, close + 0.3, close - 0.3,
+                     close, 1000 + index])
+    return rows
+
+
+def snapshot():
+    return build_market_snapshot(
+        "BTC", market_rows(),
+        market_rows(timeframe_seconds=3600),
+        market_rows(timeframe_seconds=14400))
+
+
+def valid_output(snap, *, confidence=0.82, evidence_id=None):
+    return {"proposals": [{
+        "base": "BTC", "direction": "long", "confidence": confidence,
+        "thesis": "15m趋势和1h动量同向，作为可证伪影子候选",
+        "evidence_ids": [evidence_id or snap.evidence_ids[0]],
+    }]}
+
+
+def recorder(db_path):
+    return lambda **kwargs: record_agent_proposal_sample(
+        db_path=db_path, **kwargs)
+
+
+class AgentProposalTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="agent_proposal_")
+        self.db_path = os.path.join(self.tmp.name, "proposal.db")
+        sdb.init_db(self.db_path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_valid_proposal_is_exact_2to1_shadow_and_counterfactual(self):
+        snap = snapshot()
+        result = run_proposal_cycle(
+            [snap], model_call=lambda _prompt: valid_output(snap),
+            sample_recorder=recorder(self.db_path),
+            db_path=self.db_path,
+            event_ts=snap.kline_ts / 1000 + config.SIGNAL_TIMEFRAME_SECONDS[
+                config.SIGNAL_SAMPLE_TIMEFRAME])
+        self.assertEqual(result["run"]["runtime_status"], "completed")
+        self.assertEqual(len(result["proposals"]), 1)
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["geometry_valid"], 1)
+        self.assertEqual(proposal["prediction_passed"], 0)
+        self.assertEqual(proposal["validation_status"], "shadow_geometry_valid")
+        self.assertEqual(proposal["execution_authority"], 0)
+        self.assertAlmostEqual(proposal["reward_risk"], 2.0)
+        self.assertEqual(proposal["validation_reason"], "no_validated_active_model")
+        sample = sdb.q1("SELECT * FROM signal_samples WHERE signal_id=?",
+                        [proposal["signal_id"]], db_path=self.db_path)
+        self.assertEqual(sample["strategy_id"], config.AGENT_PROPOSAL_STRATEGY_ID)
+        self.assertEqual(sample["rule_decision"], "shadow")
+        self.assertEqual(sample["final_decision"], "rejected")
+        self.assertIn("agent_proposal_shadow", sample["reject_reason"])
+
+    def test_cycle_is_idempotent_and_does_not_rebill_model(self):
+        snap = snapshot()
+        calls = []
+
+        def model(_prompt):
+            calls.append(1)
+            return valid_output(snap)
+
+        first = run_proposal_cycle([snap], model_call=model,
+                                   sample_recorder=recorder(self.db_path),
+                                   db_path=self.db_path)
+        second = run_proposal_cycle([snap], model_call=model,
+                                    sample_recorder=recorder(self.db_path),
+                                    db_path=self.db_path)
+        self.assertFalse(first["deduplicated"])
+        self.assertTrue(second["deduplicated"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM agent_proposal_runs",
+                                db_path=self.db_path)["n"], 1)
+        self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
+                                db_path=self.db_path)["n"], 1)
+
+    def test_unknown_evidence_is_rejected_before_signal_sampling(self):
+        snap = snapshot()
+        result = run_proposal_cycle(
+            [snap], model_call=lambda _prompt: valid_output(
+                snap, evidence_id="invented:evidence"), db_path=self.db_path)
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["validation_status"], "rejected")
+        self.assertEqual(proposal["validation_reason"], "unknown_evidence_id")
+        self.assertIsNone(proposal["signal_id"])
+        self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
+                                db_path=self.db_path)["n"], 0)
+
+    def test_low_confidence_is_audited_but_not_sampled(self):
+        snap = snapshot()
+        result = run_proposal_cycle(
+            [snap], model_call=lambda _prompt: valid_output(
+                snap, confidence=config.AGENT_PROPOSAL_MIN_CONFIDENCE - 0.01),
+            db_path=self.db_path)
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["validation_reason"],
+                         "confidence_below_minimum")
+        self.assertEqual(proposal["execution_authority"], 0)
+        self.assertIsNone(proposal["signal_id"])
+
+    def test_schema_error_records_run_without_proposal(self):
+        result = run_proposal_cycle(
+            [snapshot()], model_call=lambda _prompt: {"buy_now": "BTC"},
+            db_path=self.db_path)
+        self.assertEqual(result["run"]["runtime_status"], "schema_error")
+        self.assertEqual(result["run"]["valid_count"], 0)
+        self.assertEqual(result["proposals"], [])
+
+    def test_scanner_hook_is_paper_shadow_and_never_places_order(self):
+        snap_rows = {
+            config.SIGNAL_SAMPLE_TIMEFRAME: market_rows(),
+            config.SIGNAL_CONTEXT_TIMEFRAME: market_rows(
+                timeframe_seconds=3600),
+            config.SIGNAL_REGIME_TIMEFRAME: market_rows(
+                timeframe_seconds=14400),
+        }
+        snap = build_market_snapshot(
+            "BTC", snap_rows[config.SIGNAL_SAMPLE_TIMEFRAME],
+            snap_rows[config.SIGNAL_CONTEXT_TIMEFRAME],
+            snap_rows[config.SIGNAL_REGIME_TIMEFRAME])
+        fake = FakeAdapter()
+        holder = type("ProposalScanner", (), {})()
+        holder.live_mode = False
+        holder.agent_proposal_model_call = lambda _prompt: valid_output(snap)
+        holder.watch_scores = {"BTC": 1.0}
+        holder._db_path = self.db_path
+        holder.exchange = fake
+        holder._fetch_klines_any = lambda _base, tf, _limit: snap_rows[tf]
+        result = SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"])
+        self.assertIsNotNone(result)
+        self.assertEqual(fake.orders, [])
+        self.assertEqual(fake.algos, [])
+        view = list_proposals(db_path=self.db_path)
+        self.assertTrue(view["shadow_only"])
+        self.assertFalse(view["execution_authority"])
+
+    def test_live_mode_guard_does_not_call_model(self):
+        calls = []
+        holder = type("ProposalScanner", (), {})()
+        holder.live_mode = True
+        holder.agent_proposal_model_call = lambda _prompt: calls.append(1)
+        holder.watch_scores = {"BTC": 1.0}
+        holder._db_path = self.db_path
+        self.assertIsNone(
+            SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"]))
+        self.assertEqual(calls, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

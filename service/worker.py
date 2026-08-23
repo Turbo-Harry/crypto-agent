@@ -37,6 +37,9 @@ def run_intraday_research_cycle(db_path=None):
     if (config.STRATEGY_B_SHADOW_ENABLED and
             config.BREAKOUT_SIGNAL_STRATEGY_ID not in strategy_ids):
         strategy_ids.append(config.BREAKOUT_SIGNAL_STRATEGY_ID)
+    if (config.AGENT_PROPOSAL_SHADOW_ENABLED and
+            config.AGENT_PROPOSAL_STRATEGY_ID not in strategy_ids):
+        strategy_ids.append(config.AGENT_PROPOSAL_STRATEGY_ID)
     results = []
     errors = []
     for strategy_id in strategy_ids:

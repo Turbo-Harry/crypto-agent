@@ -8,6 +8,7 @@ from decision.agent_harness import run_harness
 from decision.agent_policy import PolicyKernel
 from decision.agent_tools import ReadOnlyToolRouter, snapshot_tools
 import decision.agent_judge as agent_judge
+import decision.agent_proposals as agent_proposals
 from decision.agent_judge import harness_judge
 from engines.signal_sampling import record_signal_sample
 from engines.directional_trader import DirectionalTrader
@@ -165,14 +166,18 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
                 mock.patch.object(agent_judge, "harness_model_available",
                                   return_value=True), \
                 mock.patch.object(agent_judge, "production_harness_model_call",
-                                  callback):
+                                  callback), \
+                mock.patch.object(agent_proposals,
+                                  "production_proposal_model_call", callback):
             trader = DirectionalTrader(exchange=paper, rt=object(),
                                        db_path=self.path)
         self.assertIs(trader.agent_model_call, callback)
+        self.assertIs(trader.agent_proposal_model_call, callback)
 
         offline = DirectionalTrader(exchange=FakeAdapter(), rt=object(),
                                     db_path=self.path)
         self.assertIsNone(offline.agent_model_call)
+        self.assertIsNone(offline.agent_proposal_model_call)
         self.assertFalse(offline.ai_judge_enabled)
 
 

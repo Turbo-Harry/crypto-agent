@@ -137,7 +137,8 @@ def main():
     smoke_ok, smoke_detail = True, []
     for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
                  "/error", "/analysis/latest", "/reconcile", "/scan/evolve",
-                 "/agent/status", "/agent/runs", "/agent/evaluation",
+                 "/agent/status", "/agent/runs", "/agent/proposals",
+                 "/agent/evaluation",
                  "/models/entry", "/forecast/calibration", "/factors/trials",
                  "/research/readiness",
                  ):
@@ -150,7 +151,7 @@ def main():
         if not ok:
             smoke_ok = False
             smoke_detail.append(f"{path}→{r.status_code}")
-    check("16 个只读端点全部 200+JSON 可解析", smoke_ok)
+    check("17 个只读端点全部 200+JSON 可解析", smoke_ok)
     if smoke_detail:
         print(f"    失败明细: {smoke_detail}")
     r = client.get("/scan/evolve")
@@ -163,6 +164,10 @@ def main():
     check("/agent/runs 只读查询返回 runs",
           client.get("/agent/runs").status_code == 200
           and "runs" in client.get("/agent/runs").json())
+    check("/agent/proposals 明确只读 shadow 且无执行权限",
+          client.get("/agent/proposals").status_code == 200
+          and client.get("/agent/proposals").json()["shadow_only"] is True
+          and client.get("/agent/proposals").json()["execution_authority"] is False)
     check("/agent/evaluation 返回成熟度统计",
           client.get("/agent/evaluation").status_code == 200
           and "incremental_ev" in client.get("/agent/evaluation").json()
@@ -339,8 +344,9 @@ def main():
             patch("decision.model_lifecycle.advance", return_value=[]):
         research = run_intraday_research_cycle(os.path.join(tmp, "research.db"))
     expected_strategies = {config.ENTRY_SIGNAL_STRATEGY_ID,
-                           config.BREAKOUT_SIGNAL_STRATEGY_ID}
-    check("paper worker 自动研究 A/B 两个策略且证据隔离",
+                           config.BREAKOUT_SIGNAL_STRATEGY_ID,
+                           config.AGENT_PROPOSAL_STRATEGY_ID}
+    check("paper worker 自动研究 A/B/AI提案三个策略且证据隔离",
           {row["strategy_id"] for row in research["strategies"]} ==
           expected_strategies and not research["errors"] and
           {(kind, sid) for kind, sid, _ in calls if kind == "factor"} ==

@@ -367,6 +367,60 @@ CREATE INDEX IF NOT EXISTS idx_agent_versions_status ON agent_versions(status, c
 CREATE INDEX IF NOT EXISTS idx_agent_versions_strategy_status
     ON agent_versions(strategy_id, status, created_ts);
 
+-- Agent 主动提案与风险审查 Harness 分账：提案先于量化信号产生，因此不能
+-- 伪装成 agent_runs 的“审批已有 signal”。两表只存 shadow 审计和标签关联，
+-- 不包含订单、仓位或任何执行指令。
+CREATE TABLE IF NOT EXISTS agent_proposal_runs (
+    run_id TEXT PRIMARY KEY,
+    cycle_key TEXT NOT NULL UNIQUE,
+    created_ts REAL NOT NULL,
+    kline_ts INTEGER NOT NULL,
+    timeframe TEXT NOT NULL,
+    runtime_status TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    response_hash TEXT,
+    proposal_count INTEGER NOT NULL DEFAULT 0,
+    valid_count INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER,
+    error_type TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_proposal_runs_ts
+    ON agent_proposal_runs(created_ts);
+
+CREATE TABLE IF NOT EXISTS agent_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    created_ts REAL NOT NULL,
+    base TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    thesis TEXT NOT NULL,
+    evidence_ids TEXT NOT NULL DEFAULT '[]',
+    reference_entry REAL,
+    atr REAL,
+    stop REAL,
+    tp REAL,
+    reward_risk REAL,
+    cost_r REAL,
+    breakeven_win_rate REAL,
+    geometry_valid INTEGER NOT NULL DEFAULT 0,
+    prediction_passed INTEGER NOT NULL DEFAULT 0,
+    validation_status TEXT NOT NULL,
+    validation_reason TEXT,
+    signal_id TEXT,
+    execution_authority INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(run_id, base, direction),
+    FOREIGN KEY(run_id) REFERENCES agent_proposal_runs(run_id),
+    FOREIGN KEY(signal_id) REFERENCES signal_samples(signal_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_proposals_ts
+    ON agent_proposals(created_ts);
+CREATE INDEX IF NOT EXISTS idx_agent_proposals_signal
+    ON agent_proposals(signal_id);
+
 CREATE TABLE IF NOT EXISTS forecast_calibration (
     trade_id TEXT PRIMARY KEY,
     ts REAL, p_hit_tp REAL, p_hit_sl REAL,
@@ -807,6 +861,61 @@ def _migrate_v31_canonical_signal_view(conn):
     """)
 
 
+def _migrate_v32_agent_proposals(conn):
+    """v32: AI 主动方向提案独立审计，并关联既有反事实候选标签。"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS agent_proposal_runs (
+            run_id TEXT PRIMARY KEY,
+            cycle_key TEXT NOT NULL UNIQUE,
+            created_ts REAL NOT NULL,
+            kline_ts INTEGER NOT NULL,
+            timeframe TEXT NOT NULL,
+            runtime_status TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            response_hash TEXT,
+            proposal_count INTEGER NOT NULL DEFAULT 0,
+            valid_count INTEGER NOT NULL DEFAULT 0,
+            latency_ms INTEGER,
+            error_type TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_proposal_runs_ts
+            ON agent_proposal_runs(created_ts);
+        CREATE TABLE IF NOT EXISTS agent_proposals (
+            proposal_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            created_ts REAL NOT NULL,
+            base TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            thesis TEXT NOT NULL,
+            evidence_ids TEXT NOT NULL DEFAULT '[]',
+            reference_entry REAL,
+            atr REAL,
+            stop REAL,
+            tp REAL,
+            reward_risk REAL,
+            cost_r REAL,
+            breakeven_win_rate REAL,
+            geometry_valid INTEGER NOT NULL DEFAULT 0,
+            prediction_passed INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_reason TEXT,
+            signal_id TEXT,
+            execution_authority INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(run_id, base, direction),
+            FOREIGN KEY(run_id) REFERENCES agent_proposal_runs(run_id),
+            FOREIGN KEY(signal_id) REFERENCES signal_samples(signal_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_proposals_ts
+            ON agent_proposals(created_ts);
+        CREATE INDEX IF NOT EXISTS idx_agent_proposals_signal
+            ON agent_proposals(signal_id);
+    """)
+
+
 def _migrate_v12_signal_supervision(conn):
     """v12: 所有结构候选留样 + 固定 horizon 首触/极值反事实标签。"""
     conn.executescript("""
@@ -993,6 +1102,7 @@ MIGRATIONS = (
     (29, _migrate_v29_model_strategy_id),
     (30, _migrate_v30_trade_agent_strategy_id),
     (31, _migrate_v31_canonical_signal_view),
+    (32, _migrate_v32_agent_proposals),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

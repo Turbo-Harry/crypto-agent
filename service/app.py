@@ -30,7 +30,7 @@ from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             TradeItem, JournalOut, ControlOut,
                             RealtimeOut, ScanOut, ReconcileOut, RiskEventOut,
                             ScanEvolveOut, AgentStatusOut, AgentRunsOut,
-                            AgentEvaluationOut, EntryModelsOut,
+                            AgentProposalsOut, AgentEvaluationOut, EntryModelsOut,
                             ForecastCalibrationOut, FactorTrialsOut,
                             EntryAccuracyAuditOut)
 
@@ -306,6 +306,15 @@ def agent_runs(request: Request, limit: int = 50):
     from storage.agent_harness import list_runs
     return AgentRunsOut(runs=list_runs(limit=max(1, min(limit, 500)),
                                        db_path=_agent_db_path(request)))
+
+
+@router.get("/agent/proposals", response_model=AgentProposalsOut,
+            tags=["Agent Harness"])
+def agent_proposals(request: Request, limit: int = 50):
+    """AI 主动方向提案、确定性 2:1 验证与反事实结果；只读。"""
+    from decision.agent_proposals import list_proposals
+    return AgentProposalsOut(**list_proposals(
+        limit=max(1, min(limit, 500)), db_path=_agent_db_path(request)))
 
 
 @router.get("/agent/evaluation", response_model=AgentEvaluationOut, tags=["Agent Harness"])

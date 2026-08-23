@@ -829,3 +829,21 @@
 - 回归证据：新增“同 K 多配置原始保留 2 条、canonical 只计 1 条”和“原始 300 行含 1 条版本重复，训练门仍为 299”断言；相关定向 124 项、全量 48/48 个独立脚本以及所有静态门通过。
 - 运行证据：仅重启 8091 paper 到最终 PID 63433，数据库 schema=31；原始 A/B=26/3、独立 A/B=23/3，readiness 显式返回 `raw_candidate_snapshots=26`、`duplicate_version_snapshots=3`、A 独立候选 23/300。服务健康、空仓、对账一致、BTC L2 ready（31 事件）、`/error` 为空，部署前后六类 pending=0；8090 PID 89187 未变化。
 - 持续闭环证据：18:31 新增 1 个真实 A 路径，结算器返回 `scanned=1/settled=1/missing=0/errors=0`；校准同步到 9/30，Harness 首条自然结果进入 mature，A 因标签身份变化自动产生新一轮 61 项 canonical 因子试验。A 当前 TP/SL/timeout=4/4/1、有效判断 9/100；B 独立候选自然增长到 6、尚无到期路径。无到期未结算候选、无研究或引擎错误。
+
+## 2026-08-23 数据看板决策化改版
+
+- 可读性问题：原总览以快照数、扫描总数和历史全量盈亏为主，无法直接回答“现在是否应开仓、为何空仓、当前 15m 策略和 Agent 到底成熟到哪一步”。
+- 改版：`data-dashboard` 首页更名为“决策中心”，只读聚合 `/status`、`/health`、`/research/readiness`、`/agent/evaluation`、模型与预测校准接口；首屏给出当前动作结论、实时风控、权益/仓位、自然平仓 1/60、有效 Agent 9/100 和预算锁。
+- 口径：固定 2:1 的理论盈亏平衡胜率 33.3% 明确标为未扣成本理论值；TP/SL/timeout 明确标为候选路径而非成交收益；历史持仓曲线折叠为次级信息。
+- 能力页：自然平仓、六维完整平仓、去重候选、极值校准、有效 Agent 和 Agent reject 改为中文进度条；因子、模型、Agent 增量均显示“未证明”，长期样本外 EV 未转正时预算保持锁定。
+- 验证：临时 8900 只读实例使用真实 paper 数据完成 DOM 与视觉检查；Python/JavaScript/HTML 语法通过，前端控制台 0 error/warning，paper 决策摘要与 overview 接口通过。
+
+## 2026-08-23 Agent 主动候选提案 Shadow
+
+- 能力：新增 `C_agent_proposal`，每根已收线 15m K 对候选池 Top 5 最多批量调用一次，模型只返回 0～2 个标的/方向/置信度/理由/证据 ID；无清晰机会允许空列表。
+- 确定性门：AI 不提供价格。系统用收线价和 ATR 计算 1R 止损、2R 止盈，验证候选成本、扣费保本胜率和 active 概率模型 EV 95% 下界；当前无 C active 模型时记录 `no_validated_active_model`。
+- 权限：仅真实 OKX paper 装配 provider，live 与 FakeAdapter 不装配；有效提案固定 `shadow/rejected`、`execution_authority=0`，不调用开仓、通知或交易所接口。
+- 数据：schema v32 新增 `agent_proposal_runs/agent_proposals`；几何有效提案进入共同 4h/1m 路径结算，因子/概率/极值研究按 C 策略独立运行，不污染 A/B。
+- 观测：新增只读 `GET /agent/proposals`，显示运行健康、2:1、概率门、signal_id 与成熟 TP/SL/timeout 结果。
+- 工程修复：初版出现 `decision → engines` 反向依赖，改为引擎层显式注入 sample recorder 后代码图恢复单向。
+- 最终证据：专项 7/7、服务接口 52/52、完整自动发现 49/49 个测试脚本、compileall、AI 文档/链接、参数集中化、代码图、隔离、21 条 fix guard 与 diff 检查全部通过，失败 0。本批次未重启任何交易服务。

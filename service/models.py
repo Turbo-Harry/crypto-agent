@@ -186,6 +186,18 @@ class AgentRunsOut(BaseModel):
     runs: List[dict]
 
 
+class AgentProposalsOut(BaseModel):
+    """AI 主动候选的 shadow 审计；永远不含执行权限。"""
+    shadow_only: bool
+    execution_authority: bool
+    strategy_id: str
+    run_count: int
+    proposal_count: int
+    mature_count: int
+    runs: List[dict]
+    proposals: List[dict]
+
+
 class AgentEvaluationOut(BaseModel):
     samples: int
     reject_samples: int

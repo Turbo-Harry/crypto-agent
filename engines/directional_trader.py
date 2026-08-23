@@ -191,6 +191,7 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             _real_okx and not self.live_mode and
             _c.PAPER_REQUIRE_VALIDATED_2TO1_PREDICTION)
         self.agent_model_call = None
+        self.agent_proposal_model_call = None
         if (_real_okx and not self.live_mode
                 and getattr(_c, "AGENT_HARNESS_ENABLED", False)):
             try:
@@ -199,6 +200,11 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 )
                 if harness_model_available():
                     self.agent_model_call = production_harness_model_call
+                    if getattr(_c, "AGENT_PROPOSAL_SHADOW_ENABLED", False):
+                        from decision.agent_proposals import \
+                            production_proposal_model_call
+                        self.agent_proposal_model_call = \
+                            production_proposal_model_call
                     print("Agent Harness: paper shadow provider ready")
                 else:
                     print("Agent Harness: no provider key, shadow fallback only")

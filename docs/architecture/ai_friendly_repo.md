@@ -44,6 +44,7 @@ paper/live、下单权限、风控上限、止损或策略阈值，必须 fail-c
 | 15m 候选/标签 | entry_accuracy 终审稿、路径标签 pitfalls | `engines/signal_sampling.py`、`decision/signal_outcomes.py` | 同 K 幂等 + 4h/1m 完整路径测试 |
 | 因子/概率/极值 | entry_accuracy 终审稿、15m SWAP 重放报告、factor prompt | `tools/replay_15m_research.py`、`tools/entry_accuracy_audit.py`、`factors/feature_registry.py`、`intraday_factor_*`、`entry_model_training.py`、`extrema_model_training.py` | SWAP/as-of/路径连续性 + purged walk-forward + DSR/PBO + 校准/分位测试 |
 | Agent Harness | agent_harness 终审稿、entry_accuracy T8 | `decision/agent_harness.py`、`agent_policy.py`、`agent_evaluation.py`、`storage/agent_*` | contracts/context/policy/trace/memory/evaluation 全链测试 |
+| Agent 主动提案 | agent_active_proposal_shadow 终审稿 | `decision/agent_proposals.py`、`engines/signal_sampling.py`、`GET /agent/proposals` | 提案契约/2:1/幂等/live 禁用/零订单 + 代码图 |
 | 交易所接入 | exchange_layers、API 类 pitfalls | `exchange/base.py`、适配器、transport | FakeAdapter 离线链路 + 分层检查 |
 | 数据库/schema | SQLite 类 pitfalls | `storage/db.py` | 临时库迁移/事务测试，禁止碰活体库 |
 | 文档/AI 入口 | 本页、docs/README | `AGENTS.md`、`llms.txt`、`docs/README.md` | `tools/ai_repo_check.py` |
@@ -124,6 +125,10 @@ CI 会运行同一检查及其变异测试。它能抓“链接/索引/关键操
   实际下单链持有现役否决权，模型故障不能扩大权限。FakeAdapter/live 不接入新 Harness。
   成熟评价会按完整 Harness 版本自动生成费用后增量 EV 下界、Brier 和稳定性，并最多推进到
   validated；`GET /agent/evaluation.harness` 是当前证据入口，validated 不等于 active-veto。
+- 主动提案链：`closed 15m/1h/4h snapshots → agent_proposals contract → deterministic
+  1R:2R geometry → preopen_2to1 → C_agent_proposal signal_samples → signal_outcomes`。
+  每根 15m K 只批量调用一次，AI 只能选标的/方向/证据，价格与风险由代码计算；
+  `GET /agent/proposals` 显示审计与反事实结果，`execution_authority` 永远为 false。
 - 生命周期：`candidate → validated → shadow → accepted → active → observing → kept/rolled_back`；
   达到状态门不等于有收益证据，仍需训练截止点之后的新样本。
 - 完成度链：`tools/entry_accuracy_audit.py` 与 `GET /research/readiness` 只读汇总自然

@@ -30,6 +30,9 @@ _CONFIG_FIELDS = (
     "MARKET_REGIME_ROUTE_MIN_CONFIDENCE", "MARKET_REGIME_ROUTE_MIN_MARGIN",
     "MARKET_REGIME_MIN_CORE_INPUTS", "MARKET_REGIME_STRATEGY_MAP",
     "MARKET_REGIME_IMPLEMENTED_STRATEGIES",
+    "AGENT_PROPOSAL_PROMPT_VERSION", "AGENT_PROPOSAL_SCHEMA_VERSION",
+    "AGENT_PROPOSAL_MAX_SYMBOLS", "AGENT_PROPOSAL_MAX_PROPOSALS",
+    "AGENT_PROPOSAL_MIN_CONFIDENCE", "AGENT_PROPOSAL_MIN_BARS",
 )
 _TIMEFRAME_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000,
                  "1H": 3_600_000, "4H": 14_400_000, "1D": 86_400_000}
@@ -181,3 +184,48 @@ def merge_sample_features(signal_id: str, patch: Dict[str, Any],
     sdb.x("UPDATE signal_samples SET features=?,updated_at=? WHERE signal_id=?",
           [json.dumps(current, sort_keys=True, ensure_ascii=False), time.time(),
            signal_id], db_path=db_path)
+
+
+def record_agent_proposal_sample(*, proposal, snapshot, geometry, run_id: str,
+                                 event_ts: float, db_path=None) -> Tuple[str, dict]:
+    """把已验证几何的 AI 提案接入共同标签链；始终标 shadow/rejected。"""
+    from decision.entry_probability import preopen_2to1_decision
+
+    sig = {
+        "dir": proposal.direction,
+        "entry": geometry["entry"], "stop": geometry["stop"],
+        "tp": geometry["tp"], "atr": geometry["atr"],
+        "kline_ts": snapshot.kline_ts,
+        "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
+        "shadow_score": None,
+        "shadow_dims": {name: None for name in config.SHADOW_DIMS},
+        "factor_features": {
+            "atr_pct": snapshot.atr / snapshot.reference_entry,
+            "trend_band_atr": ((snapshot.ema20_15m - snapshot.ema50_15m) /
+                               snapshot.atr),
+            "volume_ratio": snapshot.volume_ratio,
+            "momentum_1h": snapshot.momentum_1h,
+            "momentum_4h": snapshot.momentum_4h,
+        },
+        "regime": {"source": "agent_proposal_shadow"},
+    }
+    signal_id, _ = record_signal_sample(
+        proposal.base, sig, "swap", db_path=db_path, event_ts=event_ts)
+    rr_decision = preopen_2to1_decision(sig, db_path=db_path)
+    merge_sample_features(signal_id, {
+        "agent_proposal": {
+            "run_id": run_id, "confidence": proposal.confidence,
+            "thesis": proposal.thesis,
+            "evidence_ids": proposal.evidence_ids,
+            "execution_authority": False,
+        },
+        "preopen_2to1": rr_decision,
+    }, db_path=db_path)
+    update_signal_decision(
+        signal_id, db_path=db_path, rule_decision="shadow",
+        ai_verdict="proposal", final_decision="rejected",
+        reject_reason=("agent_proposal_shadow:prediction_passed"
+                       if rr_decision.get("passed") else
+                       "agent_proposal_shadow:" + str(
+                           rr_decision.get("reason") or "prediction_missing")))
+    return signal_id, rr_decision
