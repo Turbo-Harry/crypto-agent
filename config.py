@@ -158,8 +158,14 @@ AGENT_JUDGE_LESSONS_TOP = 3             # 回喂的该币 trusted/discarded 教�
 # Agent Harness（2026-08-23）：先统一走可审计 shadow runtime；只有版本生命周期
 # 进入 active-veto 且人工/验证门明确开启时，模型 reject 才能影响开仓。
 AGENT_HARNESS_ENABLED = True
-AGENT_HARNESS_VETO_ENABLED = False
-AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v1"
+# 2026-08-23 用户明确授权 Harness 直接接入下单前否决链。该开关只是授权意图；
+# 版本仍必须先通过 100/30 自然反事实、费用后增量 EV 下界、校准与分段稳定门，
+# 且仅 paper 实例显式传入执行授权后才会真正否决；live 永远保持 shadow。
+# Harness 不能恢复任何基线拒单。
+AGENT_HARNESS_VETO_ENABLED = True
+AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v2-loss-calibrated"
+AGENT_HARNESS_REJECT_MIN_RISK = 0.70
+AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
 # 本轮 Challenger 只改变 Context；模型继续使用现役 deepseek-chat 兼容名，
 # 避免把模型切换与证据补全混成一个无法归因的实验。
 AGENT_HARNESS_MODEL = "deepseek-chat"

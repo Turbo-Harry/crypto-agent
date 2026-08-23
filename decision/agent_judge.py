@@ -45,7 +45,12 @@ HARNESS_SYSTEM_PROMPT = (
     '"missing_information":[],"abstain_reason":null,"reason":"简短理由"}。'
     "reason_codes 只能取 news_direction_conflict、extreme_market_event、"
     "liquidity_failure、stale_or_missing_data、signal_inconsistency、"
-    "position_risk_conflict、insufficient_evidence。reject 必须至少有一个"
+    "position_risk_conflict、insufficient_evidence。risk_probability 必须表示"
+    "该候选在未来 4 小时扣除交易成本后亏损的概率，不是主观信心。"
+    "risk_probability≥0.70 且 confidence≥0.70，并有当前时点可见的明确冲突"
+    "证据时才可 reject；risk_probability≤0.45 才可 approve；中间区间一律"
+    "abstain。缺少已验证入场模型本身由量化基线失败关闭，不得单独作为 reject"
+    "理由，也不得假装已有正期望。reject 必须至少有一个"
     " reason_code，并从 context.field_provenance 或 memory 中逐字引用至少"
     "一个 evidence_id；证据不足时必须 abstain，且填写 abstain_reason。"
     "approve 的 reason_codes 可以为空。禁止输出 Markdown、解释文字或额外字段。"
@@ -300,7 +305,8 @@ def record_trade_outcome(trade_id, pnl, db_path=None):
 
 
 def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
-                  db_path=None, signal_id=None, account=None, health=None):
+                  db_path=None, signal_id=None, account=None, health=None,
+                  allow_veto=False):
     """Run the new Harness through an explicitly injected model callback.
 
     ``model_call`` is intentionally required for any model execution.  The
@@ -317,7 +323,7 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
             import storage.db as sdb
             sdb.init_db(db_path)
             sample = sdb.q1(
-                "SELECT event_ts,kline_ts,strategy_version,timeframe,"
+                "SELECT event_ts,kline_ts,strategy_id,strategy_version,timeframe,"
                 "feature_schema_version,features,missing_features,source_latency_ms,"
                 "rule_decision,final_decision FROM signal_samples WHERE signal_id=?",
                 [signal_id], db_path=db_path) or {}
@@ -350,6 +356,19 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
         "retrieval_version": HARNESS_RETRIEVAL_VERSION,
         "tool_policy_version": tool_policy_version,
     }
+    strategy_id = str(sample.get("strategy_id") or sig.get("strategy_id") or
+                      config.ENTRY_SIGNAL_STRATEGY_ID)
+    from decision.agent_lifecycle import version_for_identity, veto_effective
+    lifecycle_version = version_for_identity(
+        strategy_id=strategy_id, model_version=model_version,
+        prompt_version=HARNESS_PROMPT_VERSION,
+        context_version=HARNESS_CONTEXT_VERSION,
+        schema_version=str(schema_version),
+        retrieval_version=HARNESS_RETRIEVAL_VERSION,
+        tool_policy_version=tool_policy_version,
+        pricing_version=pricing_version)
+    effective_veto = bool(allow_veto) and veto_effective(
+        lifecycle_version, strategy_id=strategy_id, db_path=db_path)
     digest = stable_hash(identity)[:24]
     try:
         sample_features = json.loads(sample.get("features") or "{}")
@@ -407,8 +426,12 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
             timeout_ms=config.AGENT_HARNESS_TIMEOUT_MS,
             max_context_chars=config.AGENT_HARNESS_CONTEXT_MAX_CHARS,
         ),
-        # Agent 仍只跑 shadow；真正 veto 还必须经过版本验证门和人工批准。
-        policy_kernel=PolicyKernel(veto_enabled=False, shadow=True), db_path=db_path)
+        # 用户已授权自动接入，但只有已通过生命周期验证的同一完整版本才有效。
+        policy_kernel=PolicyKernel(
+            veto_enabled=effective_veto, shadow=True,
+            min_reject_risk=config.AGENT_HARNESS_REJECT_MIN_RISK,
+            min_reject_confidence=config.AGENT_HARNESS_REJECT_MIN_CONFIDENCE),
+        db_path=db_path)
 def sweep_outcomes(exchange=None, db_path=None, horizon_hours=None):
     """从完整候选路径回填所有有效判断；不再用到期现价伪造结果。"""
     try:

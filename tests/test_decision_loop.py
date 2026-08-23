@@ -515,6 +515,33 @@ def test_harness_shadow_keeps_legacy_authority(tmp):
               bool(frozen["market"]["frozen_features"]))
         check("legacy approve 时 Harness reject 不得拦单", len(fake.orders) >= 1)
 
+        work = os.path.join(tmp, "harness_active_reject")
+        os.makedirs(work, exist_ok=True)
+        dt, fake = setup(work)
+        dt.agent_model_call = reject_shadow
+        from decision import agent_lifecycle
+        from storage.agent_lifecycle import transition
+        version = agent_lifecycle.version_for_identity(
+            strategy_id=config.ENTRY_SIGNAL_STRATEGY_ID,
+            model_version=config.AGENT_HARNESS_MODEL,
+            prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
+            context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
+            schema_version=config.SIGNAL_FEATURE_SCHEMA_VERSION,
+            retrieval_version=config.AGENT_HARNESS_RETRIEVAL_VERSION,
+            tool_policy_version=config.AGENT_HARNESS_TOOL_POLICY_VERSION,
+            pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
+        agent_lifecycle.register(version, db_path=dt._db_path)
+        transition(version, "shadow", db_path=dt._db_path)
+        transition(version, "validated", db_path=dt._db_path)
+        agent_lifecycle.activate(version, db_path=dt._db_path)
+        agent_judge.judge = lambda *a, **k: ("approve", "legacy pass", None)
+        dt.scan_signals()
+        run = sdb.q1("SELECT final_action FROM agent_runs",
+                     db_path=dt._db_path)
+        check("验证并激活的 Harness reject 进入下单前否决链",
+              run and run["final_action"] == "agent_reject" and
+              len(fake.orders) == 0)
+
         work = os.path.join(tmp, "harness_legacy_reject")
         os.makedirs(work, exist_ok=True)
         dt, fake = setup(work)

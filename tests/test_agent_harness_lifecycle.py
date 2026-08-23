@@ -76,6 +76,28 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         self.assertEqual(breakout["strategy_id"],
                          config.BREAKOUT_SIGNAL_STRATEGY_ID)
 
+    def test_veto_effective_only_for_promoted_matching_version(self):
+        metrics = {
+            "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
+            "max_segment_share": .5, "model_cost_data_complete": True,
+            "trace_coverage": 1.0, "probability_coverage": 1.0,
+            "reject_evidence_coverage": 1.0, "brier_skill": .1,
+            "saved_loss": 2.0, "missed_profit": .5, "model_cost_r": .01,
+        }
+        agent_lifecycle.register("ready", db_path=self.path)
+        from storage.agent_lifecycle import transition
+        transition("ready", "shadow", db_path=self.path)
+        self.assertFalse(agent_lifecycle.veto_effective(
+            "ready", db_path=self.path))
+        agent_lifecycle.validate("ready", metrics, db_path=self.path)
+        self.assertFalse(agent_lifecycle.veto_effective(
+            "ready", db_path=self.path))
+        agent_lifecycle.activate("ready", db_path=self.path)
+        self.assertTrue(agent_lifecycle.veto_effective(
+            "ready", db_path=self.path))
+        self.assertFalse(agent_lifecycle.veto_effective(
+            "different", db_path=self.path))
+
 
 if __name__ == "__main__":
     unittest.main()

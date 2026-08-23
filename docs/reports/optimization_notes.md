@@ -911,3 +911,18 @@
   测试隔离、23 条 fix guard 与 diff 检查全绿。当前仍只有候选 27/300、TP 4/60、SL 18/60、
   当前可评价旧证据版本 Harness 3/100 且 reject 0/30；新 context-v3 challenger 尚无到期成熟样本。
   因此结论是“证据不足，继续 paper shadow”，不调阈值、不扩大预算。
+
+## 2026-08-23 Harness 验证后自动否决闭环
+
+- 用户授权：`AGENT_HARNESS_VETO_ENABLED=True` 表示验证通过后可直接接入，但不等于当前版本立即
+  获权；无 active 入场模型、量化门拒绝或 Harness 证据不足仍保持空仓。
+- 决策口径：prompt 升为 `harness-risk-v2-loss-calibrated`，要求风险概率表示未来 4 小时扣费后
+  亏损概率；仅风险概率与信心均不低于 0.70 的结构化 reject 计入晋升和实际否决，中间区间 abstain。
+- 生命周期：策略、模型、prompt、context、schema、retrieval、工具和价格口径共享一个版本函数；
+  100 mature/30 qualified reject 及费用、Trace、校准、证据、分段、净 EV 下界全部通过后，已授权
+  版本从 validated 自动进入 active-veto。任何版本字段不匹配都继续 shadow。
+- 执行边界：Harness 仍只否决不放行；早期候选调用继续保证 2:1 门拒绝时也有反事实样本，但返回值
+  只在阈值、2:1 active 模型、经验与风险等硬门全部放行后才消费。未改变 1%/150/600、交易所侧
+  止损、模拟盘边界或 HTTP 禁止下单约束；扫描器还必须显式传入 paper 授权，live 固定 shadow。
+- 专项证据：策略核 5/5、生命周期 5/5、Harness 端到端 11/11、增量评价 10/10、主决策链
+  53/53，失败 0；覆盖未晋升 shadow、低置信 reject 不拦、同版本 active-veto 拦单和 legacy 权限隔离。

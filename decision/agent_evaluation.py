@@ -221,11 +221,29 @@ def evaluate_agent(db_path=None):
 
 def _harness_version(row: Mapping[str, object]) -> str:
     """策略、模型、上下文、工具和价格口径共同定义可比较版本。"""
-    return config.AGENT_EVALUATION_VERSION + ":harness:" + ":".join(
-        str(row.get(name) or "unknown") for name in (
-        "strategy_id", "model_version", "prompt_version", "context_version",
-        "schema_version", "retrieval_version", "tool_policy_version",
-        "pricing_version"))
+    from decision.agent_lifecycle import version_for_identity
+    return version_for_identity(
+        strategy_id=str(row.get("strategy_id") or "unknown"),
+        model_version=str(row.get("model_version") or "unknown"),
+        prompt_version=str(row.get("prompt_version") or "unknown"),
+        context_version=str(row.get("context_version") or "unknown"),
+        schema_version=str(row.get("schema_version") or "unknown"),
+        retrieval_version=str(row.get("retrieval_version") or "unknown"),
+        tool_policy_version=str(row.get("tool_policy_version") or "unknown"),
+        pricing_version=str(row.get("pricing_version") or "unknown"))
+
+
+def _qualified_harness_reject(row: Mapping[str, object]) -> bool:
+    """A model reject counts only when it meets the deployed veto contract."""
+    try:
+        return (
+            row.get("model_verdict") == "reject" and
+            float(row.get("risk_probability")) >=
+            config.AGENT_HARNESS_REJECT_MIN_RISK and
+            float(row.get("confidence")) >=
+            config.AGENT_HARNESS_REJECT_MIN_CONFIDENCE)
+    except (TypeError, ValueError):
+        return False
 
 
 def _json_object(raw: object) -> dict[str, object]:
@@ -333,6 +351,7 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
                 "n": 0, "reject_n": 0, "incremental_ev": None,
                 "incremental_ev_lower_bound": None}
     trade_impacts, net_returns, rejects = [], [], []
+    effective_rejects: list[bool] = []
     model_cost_r_values: list[float] = []
     model_cost_usd = 0.0
     missing_cost_n = 0
@@ -346,7 +365,8 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
     for row in material:
         cost_r = float(execution_cost_r(row) or 0.0)
         net_r = float(row.get("pnl_r") or 0) - cost_r
-        rejected = row.get("model_verdict") == "reject"
+        rejected = _qualified_harness_reject(row)
+        effective_rejects.append(rejected)
         trade_impact = -net_r if rejected else 0.0
         trade_impacts.append(trade_impact)
         net_returns.append(net_r)
@@ -407,15 +427,15 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
                          if n > 1 else 0.0)
     pre_cost_lower = pre_cost_mean - config.AGENT_EVAL_EV_Z * math.sqrt(
         pre_cost_variance / n)
-    saved = sum(max(0.0, -value) for value, row in zip(net_returns, material)
-                if row.get("model_verdict") == "reject")
-    missed = sum(max(0.0, value) for value, row in zip(net_returns, material)
-                 if row.get("model_verdict") == "reject")
+    saved = sum(max(0.0, -value) for value, rejected in
+                zip(net_returns, effective_rejects) if rejected)
+    missed = sum(max(0.0, value) for value, rejected in
+                 zip(net_returns, effective_rejects) if rejected)
     reject_n = len(rejects)
     baseline_ev = sum(net_returns) / n
     policy_before_model_cost = sum(
-        value for value, row in zip(net_returns, material)
-        if row.get("model_verdict") != "reject") / n
+        value for value, rejected in zip(net_returns, effective_rejects)
+        if not rejected) / n
     policy_ev = (policy_before_model_cost - sum(model_cost_r_values) / n
                  if cost_complete else None)
     loss_rate = sum(label for _, label in brier_pairs) / len(brier_pairs) \
@@ -475,10 +495,10 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
         "trace_coverage": round(replayable_n / n, 6),
         "reject_evidence_coverage": (round(reject_evidence_n / reject_n, 6)
                                      if reject_n else None),
-        "false_accept_n": sum(not (row.get("model_verdict") == "reject") and
-                              value < 0 for value, row in zip(net_returns, material)),
-        "false_reject_n": sum((row.get("model_verdict") == "reject") and
-                              value > 0 for value, row in zip(net_returns, material)),
+        "false_accept_n": sum(not rejected and value < 0 for value, rejected in
+                              zip(net_returns, effective_rejects)),
+        "false_reject_n": sum(rejected and value > 0 for value, rejected in
+                              zip(net_returns, effective_rejects)),
         "max_segment_share": (round(max(segments.values()) / reject_n, 6)
                               if reject_n else 0.0),
         "reason_counts": dict(sorted(reason_counts.items())),
@@ -507,5 +527,9 @@ def sync_harness_lifecycle(db_path=None, strategy_id=None):
             metrics["reject_n"] >= config.AGENT_EVAL_MIN_REJECT):
         row = agent_lifecycle.validate(
             version, metrics, strategy_id=strategy_id, db_path=db_path)
+    if (row["status"] == "validated" and
+            config.AGENT_HARNESS_VETO_ENABLED):
+        row = agent_lifecycle.activate(
+            version, strategy_id=strategy_id, db_path=db_path)
     return {"status": row["status"], "version": version,
             "metrics": metrics}

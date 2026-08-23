@@ -91,13 +91,13 @@ def main():
             sdb.x(
                 "INSERT INTO agent_runs (run_id,signal_id,idempotency_key,created_ts,"
                 "runtime_status,final_action,model_verdict,prompt_version,model_version,"
-                "context_version,schema_version,retrieval_version,risk_probability,"
+                "context_version,schema_version,retrieval_version,risk_probability,confidence,"
                 "reason_codes,evidence_ids,input_snapshot,input_hash,estimated_cost) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [run_id, signal_id, run_id, time.time() + i, "completed",
                  "shadow_reject" if reject else "baseline_pass",
                  "reject" if reject else "approve", "p1", "m1", "c1", "s1", "r1",
-                 0.75 if reject else 0.5,
+                 0.75 if reject else 0.5, 0.8,
                  '["liquidity_failure"]' if reject else "[]",
                  '["market:test"]' if reject else "[]",
                  json.dumps(input_snapshot), stable_hash(input_snapshot), 0.0],
@@ -126,8 +126,8 @@ def main():
         check("GET 消费的 Agent 评价保持只读且不暗含 schema 迁移",
               readonly_ok)
         state = sync_harness_lifecycle(db)
-        check("有增量证据自动 validated 但不自动开启 veto",
-              state["status"] == "validated", str(state))
+        check("用户授权后仍须先过增量门，达标版本才自动 active-veto",
+              state["status"] == "active-veto", str(state))
 
     print(f"\n结果: {passed} 通过, {failed} 失败")
     return 1 if failed else 0

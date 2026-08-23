@@ -872,8 +872,10 @@ class SignalScanMixin:
                 # Harness 是独立增量研究，不得被现役 2:1 模型门卡死。对每个
                 # 去重结构候选先留 shadow Trace；即使随后因额度、分数或无
                 # active 概率模型被拒，4h 路径仍能成熟为 Agent 反事实样本。
-                # 该调用没有任何放行/否决权限，legacy AI 仍只在真实下单链运行。
+                # 只有同一完整 Harness 版本通过验证门并进入 active-veto 后，结果
+                # 才会在全部量化硬门通过后作为额外否决消费；永远不能放行。
                 _harness_call = getattr(self, "agent_model_call", None)
+                _harness_result = None
                 if (signal_id and getattr(config, "AGENT_HARNESS_ENABLED", False)
                         and _harness_call):
                     try:
@@ -881,7 +883,7 @@ class SignalScanMixin:
                         from decision.agent_judge import harness_judge
                         _harness_sentiment = latest_sentiment(
                             db_path=getattr(self, "_db_path", None))
-                        harness_judge(
+                        _harness_result = harness_judge(
                             sig=sig, base=base,
                             score=sig.get("shadow_score") or SIGNAL_SCORE,
                             price=sig.get("entry"), sentiment=_harness_sentiment,
@@ -902,7 +904,10 @@ class SignalScanMixin:
                                 "risk_can_trade": self.risk.can_trade(),
                                 "risk_halted": bool(self.risk.halted),
                                 "risk_halt_reason": self.risk.halt_reason,
-                            })
+                            },
+                            # 仓库授权边界：Harness veto 只允许 OKX 模拟盘；
+                            # live 即使加载相同配置与版本也固定保持 shadow。
+                            allow_veto=not getattr(self, "live_mode", False))
                     except Exception as e:
                         # 影子链故障只记本地告警，不改变任何量化/执行决策。
                         print(f"Agent Harness candidate shadow failed {base}: {e}")
@@ -986,6 +991,18 @@ class SignalScanMixin:
                         _sample_decision(rule_decision="reject",
                                          final_decision="rejected",
                                          reject_reason=_reason)
+                        continue
+                    # Harness 只能在量化、2:1、模型和经验门都已放行后额外否决。
+                    # 生命周期未达 active-veto 时 policy.veto 恒为 False。
+                    if (_harness_result is not None and
+                            _harness_result.policy.veto):
+                        _reason = _harness_result.policy.reason or "validated veto"
+                        self._log_scan_decision(
+                            base, True, sig["dir"], "harness_reject", _reason)
+                        _sample_decision(
+                            rule_decision="pass", ai_verdict="reject",
+                            final_decision="rejected",
+                            reject_reason="harness_reject: " + _reason)
                         continue
                     # 2026-08-23 AI 把关(用户问"agent也会加入判断吗"): 下单前
                     # DeepSeek 二判。只否决不放行——reject 才拦,其余一律继续。

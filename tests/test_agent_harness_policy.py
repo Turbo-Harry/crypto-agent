@@ -28,6 +28,18 @@ class AgentHarnessPolicyTest(unittest.TestCase):
         self.assertEqual(result.final_action, FinalAction.AGENT_REJECT)
         self.assertTrue(result.veto)
 
+    def test_veto_requires_calibrated_risk_and_confidence(self):
+        weak = AgentDecision(
+            Verdict.REJECT, .9, .6, (ReasonCode.LIQUIDITY_FAILURE,),
+            ("market:1",), reason="weak confidence")
+        result = PolicyKernel(
+            veto_enabled=True, shadow=True,
+            min_reject_risk=.7, min_reject_confidence=.7).evaluate(
+                baseline_passed=True, runtime_status=RuntimeStatus.COMPLETED,
+                decision=weak)
+        self.assertFalse(result.veto)
+        self.assertEqual(result.final_action, FinalAction.SHADOW_REJECT)
+
     def test_runtime_failure_is_baseline_pass_not_model_approve(self):
         result = PolicyKernel(veto_enabled=True).evaluate(
             baseline_passed=True, runtime_status=RuntimeStatus.TIMEOUT, decision=None)

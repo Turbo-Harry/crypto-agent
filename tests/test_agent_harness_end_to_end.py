@@ -105,6 +105,45 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         self.assertEqual(result.run.final_action.value, "shadow_reject")
         self.assertFalse(result.policy.veto)
 
+    def test_harness_veto_requires_matching_active_lifecycle(self):
+        from decision import agent_lifecycle
+        from storage.agent_lifecycle import transition
+
+        version = agent_lifecycle.version_for_identity(
+            strategy_id=config.ENTRY_SIGNAL_STRATEGY_ID,
+            model_version=config.AGENT_HARNESS_MODEL,
+            prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
+            context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
+            schema_version=config.SIGNAL_FEATURE_SCHEMA_VERSION,
+            retrieval_version=config.AGENT_HARNESS_RETRIEVAL_VERSION,
+            tool_policy_version=config.AGENT_HARNESS_TOOL_POLICY_VERSION,
+            pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
+        agent_lifecycle.register(version, db_path=self.path)
+        transition(version, "shadow", db_path=self.path)
+        transition(version, "validated", db_path=self.path)
+        agent_lifecycle.activate(version, db_path=self.path)
+        result = harness_judge(
+            {"dir": "long", "stop": 95, "tp": 110},
+            "BTC", 60, 100, {},
+            model_call=lambda prompt: {
+                "verdict": "reject", "risk_probability": .9,
+                "confidence": .8, "reason_codes": ["liquidity_failure"],
+                "evidence_ids": ["market:1"], "reason": "spread"},
+            db_path=self.path, allow_veto=True)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_REJECT)
+        self.assertTrue(result.policy.veto)
+
+        live_shadow = harness_judge(
+            {"dir": "long", "stop": 95, "tp": 110},
+            "ETH", 60, 100, {},
+            model_call=lambda prompt: {
+                "verdict": "reject", "risk_probability": .9,
+                "confidence": .8, "reason_codes": ["liquidity_failure"],
+                "evidence_ids": ["market:1"], "reason": "spread"},
+            db_path=self.path, allow_veto=False)
+        self.assertEqual(live_shadow.run.final_action, FinalAction.SHADOW_REJECT)
+        self.assertFalse(live_shadow.policy.veto)
+
     def test_legacy_entry_retries_keep_one_authoritative_run(self):
         sig = {"dir": "long", "kline_ts": 1_700_000_000_000,
                "entry": 100, "stop": 95, "tp": 110, "atr": 5,
