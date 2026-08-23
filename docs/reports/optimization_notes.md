@@ -1261,3 +1261,15 @@
   `AGENT_PROPOSAL_IMPLEMENTATION_VERSION=agent-proposal-impl-v2-microstructure`，同时进入 v2 cycle key、
   prompt payload 和仅 C 策略的 signal identity；因此该竞态 run 与最终 v2 自然证据永久隔离，A/B
   身份不受影响。v1 回放作用域仍省略该字段，保持原 cycle key/payload/identity。
+- 最终部署证据：实现提交 `38f6ebf`、身份隔离提交 `550bdfd`；最后一轮自动发现的离线测试
+  57/57 通过，params/code graph/AI repo/test isolation/fix guard 全绿。只 kickstart
+  `com.crypto.paper`，PID 14086→34590→34968；`com.crypto.agent` 始终为 PID 90574。首次重启时
+  LaunchAgent 曾有一次旧 `lib/numpy` 导入失败和一次 worker 重启失败，KeepAlive 随即恢复；最终实际
+  job 为 running、程序 `.venv/bin/python`、`PYTHONPATH=/Users/wuhai/crypto-agent`，服务 uptime 195.6s、
+  心跳 0.0s，`/error` 为空。
+- 自然验收：最终进程完成新 K 线 run `proposal-run-16ca0539810bd30a40ba2b76`，cycle key
+  `16ca0539810bd30a40ba2b763698f72bc5767831bb71afcd201d380ad25bdfc0` 与包含 implementation version
+  的本地确定性复算完全一致；`runtime_status=completed`、549ms、模型返回 0 提案，按设计选择空仓。
+  `/status` 空仓、未熔断、敞口 0，`/reconcile balanced=true`，入场模型仍为空且禁止扩大预算；提案
+  接口继续 `shadow_only=true/execution_authority=false`。这证明最终 v2 自然链已运行，不代表其胜率
+  已通过；有效性仍等至少 100 条独立成熟结果。
