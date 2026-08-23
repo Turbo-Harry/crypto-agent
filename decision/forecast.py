@@ -218,13 +218,23 @@ def forecast(entry, atr, direction, stop, tp, hourly_returns,
     mixed, empirical_weight = _blend_probabilities(
         passage, emp_p_tp=emp_p_tp, emp_p_sl=emp_p_sl, emp_n=emp_n,
         explicit_weight=blend)
+    p_hit_tp = round(mixed["tp"], 4)
+    p_hit_sl = round(mixed["sl"], 4)
+    p_timeout = round(mixed["timeout"], 4)
+    # Timeout has no first-touch class direction.  Assigning it a neutral 50%
+    # loss weight yields a predeclared, non-constant prior without pretending
+    # the bootstrap knows the eventual timeout sign.  Harness may only adjust
+    # this frozen prior when it cites current conflicting market evidence.
+    p_loss_prior = round(min(1.0, p_hit_sl + 0.5 * p_timeout), 4)
     return {
         "median": round(terminal["median"], 6),
         "q05": round(terminal["q05"], 6),
         "q95": round(terminal["q95"], 6),
-        "p_hit_tp": round(mixed["tp"], 4),
-        "p_hit_sl": round(mixed["sl"], 4),
-        "p_timeout": round(mixed["timeout"], 4),
+        "p_hit_tp": p_hit_tp,
+        "p_hit_sl": p_hit_sl,
+        "p_timeout": p_timeout,
+        "p_loss_prior": p_loss_prior,
+        "loss_prior_method": "sl_plus_half_timeout_v1",
         "empirical_weight": round(empirical_weight, 4),
         "horizon_bars": int(horizon), "bar_minutes": bar_minutes,
         "horizon_minutes": int(horizon) * bar_minutes,

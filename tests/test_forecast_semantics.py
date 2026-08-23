@@ -80,6 +80,11 @@ def main():
     check("三类概率和为 1",
           abs(out["p_hit_tp"] + out["p_hit_sl"] + out["p_timeout"] - 1) < 1e-6,
           str(out))
+    check("亏损先验固定为止损首触加一半超时",
+          out["p_loss_prior"] == round(
+              out["p_hit_sl"] + 0.5 * out["p_timeout"], 4), str(out))
+    check("亏损先验方法可审计",
+          out["loss_prior_method"] == "sl_plus_half_timeout_v1", str(out))
     check("使用 regime moving block", out["bootstrap"] == "regime_moving_block")
 
     flat_profiles = [{"close_ret": 0.0, "high_ret": math.log(1.03),

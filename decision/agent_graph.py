@@ -18,6 +18,7 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+import config
 from decision.agent_context import build_context, serialize_context
 from decision.agent_contracts import (
     AgentDecision, AgentInput, AgentSemanticError, AgentStep, FinalAction,
@@ -213,6 +214,19 @@ def _validate_decision_semantics(decision: AgentDecision,
         raise AgentSemanticError(
             "governance metadata cannot justify missing evidence: " +
             ",".join(markers))
+    forecast = state["agent_input"].signal.get("forecast")
+    if isinstance(forecast, Mapping):
+        prior = forecast.get("p_loss_prior")
+        if prior is not None and decision.verdict is Verdict.ABSTAIN:
+            try:
+                delta = abs(decision.risk_probability - float(prior))
+            except (TypeError, ValueError) as exc:
+                raise AgentSemanticError(
+                    "forecast p_loss_prior must be numeric") from exc
+            if delta > config.AGENT_HARNESS_ABSTAIN_PRIOR_TOLERANCE:
+                raise AgentSemanticError(
+                    "abstain risk_probability must track frozen "
+                    f"p_loss_prior={float(prior):.4f}")
     if decision.verdict is Verdict.REJECT:
         provenance = state["agent_input"].field_provenance
         allowed = _evidence_ids(state) if provenance else set()
@@ -354,7 +368,9 @@ class _Nodes:
                     "abstain_reason, and reason. Fill concrete market "
                     "missing_information when using insufficient_evidence; "
                     "do not cite model readiness, forecast calibration, or "
-                    "strategy routing as evidence."),
+                    "strategy routing as evidence. For abstain, copy the "
+                    "frozen context.signal.forecast.p_loss_prior into "
+                    "risk_probability within the configured tolerance."),
             }
         prompt = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                             separators=(",", ":"))

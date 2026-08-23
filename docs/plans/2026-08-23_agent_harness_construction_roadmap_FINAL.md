@@ -158,6 +158,16 @@ paper/live 共用该实现，不保留手写编排分支。**
 `→ Agent Evaluation`
 `→ Scoped Mature Memory`
 
+### 4.1 风险概率先验（2026-08-24）
+
+- 每个 forecast 冻结 `p_loss_prior=P(SL first)+0.5×P(timeout)`；超时结果未知时固定取中性 50%，
+  不从当前样本中搜索权重。
+- Agent abstain 表示没有足够市场证据调整先验，输出风险概率必须在先验 ±0.02 内；越界进入一次有界
+  semantic repair，仍不合法则 schema error 并回量化基线。
+- approve/reject 只有引用当前时点冻结证据时才可明显调整；模型不能把先验本身当证据，也不能用
+  模型未激活、预测未校准或策略路由状态作为风险理由。
+- 版本身份升级为 `harness-risk-v5-forecast-loss-prior`；旧版本结果保留但不混计晋升样本。
+
 每一环都必须能通过稳定 ID 关联，并满足：
 
 - 同一 `signal_id + harness_version` 幂等。

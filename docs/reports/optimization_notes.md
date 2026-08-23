@@ -1327,3 +1327,15 @@
   expected slippage 从错误的 7910.24 bp 降至 9.14 bp，XRP 从 200.06 降至 3.34 bp；低深度 INJ/ZRO
   仍诚实保留 81.39/126.31 bp。模型因无三周期同向标的返回 `no_aligned_candidate`，提案、成熟和订单
   均为 0，接口继续 `shadow_only=true/execution_authority=false`。这证明输入单位修复，不证明胜率已转正。
+
+## 2026-08-24 Harness v5 非恒定亏损先验预声明
+
+- 触发证据：最新 v4/v2 自然 Harness run 对不同 forecast 连续返回 0.55；已有评估也出现
+  `probability_std=0`。这类合法 abstain 不会误下单，但不能形成校准风险排序，无法提高否决精准率。
+- 冻结研究：用当前 49 条 15m/4h 成熟候选的费用后亏损标签比较，固定 0.55 的 Brier 为 0.23719，
+  仅 SL-first 为 0.22409，预声明的 `SL-first+0.5×timeout` 为 0.22231，概率 std 0.10228；相较机械常数
+  改善且超过 0.03 方差门。没有采用样本内略优但更复杂的 adverse-timeout 公式，防止结果导向搜索。
+- 固定协议：forecast 新增 `p_loss_prior` 与 `loss_prior_method=sl_plus_half_timeout_v1`；Prompt 身份升级
+  为 `harness-risk-v5-forecast-loss-prior`。abstain 风险概率须在先验 ±0.02，超出触发既有一次 semantic
+  repair；approve/reject 仍须当前证据，全部量化基线、Veto 生命周期、100/30、费用后 EV 与人工授权门
+  不变。此变更先只在现有 shadow Harness 积累独立成熟结果，不预先宣称胜率提高。

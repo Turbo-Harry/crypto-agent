@@ -50,6 +50,9 @@ def main():
     check("默认预测窗口为 16 根 15m = 240min",
           f1["horizon_bars"] == 16 and f1["bar_minutes"] == 15 and
           f1["horizon_minutes"] == 240, str(f1))
+    check("路径亏损先验不是硬编码常数",
+          f1["p_loss_prior"] == round(
+              f1["p_hit_sl"] + 0.5 * f1["p_timeout"], 4), str(f1))
 
     # ---- 高波动 vs 零波动: 触达概率应显著更高 ----
     wild = [0.03, -0.03, 0.02, -0.02] * 40

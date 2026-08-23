@@ -74,6 +74,35 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
         self.assertIsNone(result.run.model_verdict)
 
+    def test_abstain_probability_repairs_to_frozen_loss_prior(self):
+        source = make_input("risk-prior")
+        source = AgentInput(
+            **{**source.to_dict(), "signal": {
+                "base": "BTC", "direction": "long",
+                "forecast": {"p_loss_prior": 0.73,
+                             "loss_prior_method": "sl_plus_half_timeout_v1"}}})
+        calls = []
+
+        def model(prompt):
+            calls.append(json.loads(prompt))
+            probability = 0.55 if len(calls) == 1 else 0.73
+            return {
+                "verdict": "abstain", "risk_probability": probability,
+                "confidence": 0.6,
+                "reason_codes": ["insufficient_evidence"],
+                "missing_information": ["open_interest_change"],
+                "abstain_reason": "market evidence is incomplete",
+                "reason": "insufficient current evidence",
+            }
+
+        result = run_harness(source, baseline_passed=True, model_call=model,
+                             db_path=self.path)
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.risk_probability, 0.73)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("p_loss_prior=0.7300",
+                      calls[1]["semantic_repair"]["violations"][0])
+
     def test_baseline_rejection_never_calls_model(self):
         calls = []
         result = run_harness(make_input(), baseline_passed=False,

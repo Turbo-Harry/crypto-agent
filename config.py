@@ -163,9 +163,10 @@ AGENT_HARNESS_ENABLED = True
 # 且仅 paper 实例显式传入执行授权后才会真正否决；live 永远保持 shadow。
 # Harness 不能恢复任何基线拒单。
 AGENT_HARNESS_VETO_ENABLED = True
-AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v4-semantic-repair-market-evidence"
+AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v5-forecast-loss-prior"
 AGENT_HARNESS_REJECT_MIN_RISK = 0.70
 AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
+AGENT_HARNESS_ABSTAIN_PRIOR_TOLERANCE = 0.02
 # 本轮 Challenger 只改变 Context；模型继续使用现役 deepseek-chat 兼容名，
 # 避免把模型切换与证据补全混成一个无法归因的实验。
 AGENT_HARNESS_MODEL = "deepseek-chat"
