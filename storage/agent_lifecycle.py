@@ -80,6 +80,9 @@ def promotion_ready(metrics: Mapping[str, Any]) -> tuple[bool, str]:
         return False, "trace_coverage<1"
     if float(metrics.get("probability_coverage", 0)) < 1.0:
         return False, "probability_coverage<1"
+    if float(metrics.get("probability_std", 0)) < \
+            config.AGENT_HARNESS_MIN_PROBABILITY_STD:
+        return False, "probability_resolution_too_low"
     if float(metrics.get("reject_evidence_coverage", 0)) < 1.0:
         return False, "reject_evidence_coverage<1"
     if float(metrics.get("brier_skill", -1)) < 0:
@@ -106,4 +109,7 @@ def rollback_needed(metrics: Mapping[str, Any]) -> tuple[bool, str]:
         return True, "segment_concentration"
     if float(metrics.get("brier_skill", -1)) < 0:
         return True, "brier_worse_than_frequency_baseline"
+    if float(metrics.get("probability_std", 0)) < \
+            config.AGENT_HARNESS_MIN_PROBABILITY_STD:
+        return True, "probability_resolution_too_low"
     return False, "within_guardrails"

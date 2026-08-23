@@ -448,6 +448,13 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
                       if loss_rate is not None else None)
     brier_skill = (1 - brier / baseline_brier
                    if brier is not None and baseline_brier else None)
+    risk_values = [probability for probability, _ in brier_pairs]
+    probability_mean = (sum(risk_values) / len(risk_values)
+                        if risk_values else None)
+    probability_std = (math.sqrt(sum(
+        (value - probability_mean) ** 2 for value in risk_values) /
+        len(risk_values)) if risk_values and probability_mean is not None
+        else None)
     stability = {}
     for key, group in sorted(stability_groups.items()):
         group_rejects = [item for item in group if item[0]]
@@ -490,6 +497,10 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
                            if baseline_brier is not None else None),
         "brier_skill": round(brier_skill, 6) if brier_skill is not None else None,
         "probability_coverage": round(len(brier_pairs) / n, 6),
+        "probability_mean": (round(probability_mean, 6)
+                             if probability_mean is not None else None),
+        "probability_std": (round(probability_std, 6)
+                            if probability_std is not None else None),
         "calibration_bins": _calibration_bins(brier_pairs),
         "replayable_n": replayable_n,
         "trace_coverage": round(replayable_n / n, 6),

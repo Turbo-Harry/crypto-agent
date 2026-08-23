@@ -198,6 +198,7 @@ class EntryAccuracyAuditTest(unittest.TestCase):
             "probability_coverage": 1.0,
             "reject_evidence_coverage": 1.0,
             "brier_skill": .1,
+            "probability_std": .1,
             "saved_loss": 10.0,
             "missed_profit": 1.0,
             "model_cost_r": .01,
@@ -319,6 +320,7 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                              "probability_coverage": 1.0,
                              "reject_evidence_coverage": 1.0,
                              "brier_skill": .1,
+                             "probability_std": .1,
                              "saved_loss": 10.0,
                              "missed_profit": 1.0,
                              "model_cost_r": .01})))
@@ -328,6 +330,19 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         self.assertEqual(result["blockers"], [])
         self.assertEqual(result["counts"]["paper_closed"], 60)
         self.assertEqual(result["counts"]["paper_six_dim_closed"], 30)
+
+        with db.tx(db_path=self.path) as conn:
+            metrics = json.loads(conn.execute(
+                "SELECT metrics_json FROM agent_versions WHERE version=?",
+                ("agent-v1",)).fetchone()[0])
+            metrics["probability_std"] = 0.0
+            conn.execute(
+                "UPDATE agent_versions SET metrics_json=? WHERE version=?",
+                (json.dumps(metrics), "agent-v1"))
+
+        no_resolution = audit_status(self.path)
+        self.assertFalse(no_resolution["gates"]["agent_incremental_proven"]["passed"])
+        self.assertFalse(no_resolution["statistically_complete"])
         self.assertEqual(result["counts"]["agent_valid_distinct_signals"], 100)
         self.assertEqual(result["counts"]["agent_reject_distinct_signals"], 30)
         self.assertTrue(result["gates"]["extrema_model_observed"]["passed"])

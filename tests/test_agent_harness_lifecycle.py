@@ -26,6 +26,7 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
             "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
             "max_segment_share": .5, "model_cost_data_complete": True,
             "trace_coverage": 1.0, "probability_coverage": 1.0,
+            "probability_std": .1,
             "reject_evidence_coverage": 1.0, "brier_skill": .1,
             "saved_loss": 2.0, "missed_profit": .5, "model_cost_r": .01,
         }
@@ -51,6 +52,7 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
             "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
             "max_segment_share": .5, "trace_coverage": 1.0,
             "probability_coverage": 1.0, "reject_evidence_coverage": 1.0,
+            "probability_std": .1,
             "brier_skill": .1, "saved_loss": 2.0,
             "missed_profit": .5, "model_cost_r": .01,
         }
@@ -64,6 +66,9 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         bad_evidence = dict(costed, reject_evidence_coverage=.9)
         self.assertEqual(agent_lifecycle.promotion_ready(bad_evidence)[1],
                          "reject_evidence_coverage<1")
+        constant = dict(costed, probability_std=0.0)
+        self.assertEqual(agent_lifecycle.promotion_ready(constant)[1],
+                         "probability_resolution_too_low")
 
     def test_versions_are_strategy_scoped(self):
         agent_lifecycle.register(
@@ -81,6 +86,7 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
             "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
             "max_segment_share": .5, "model_cost_data_complete": True,
             "trace_coverage": 1.0, "probability_coverage": 1.0,
+            "probability_std": .1,
             "reject_evidence_coverage": 1.0, "brier_skill": .1,
             "saved_loss": 2.0, "missed_profit": .5, "model_cost_r": .01,
         }

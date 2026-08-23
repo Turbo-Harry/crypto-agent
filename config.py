@@ -203,6 +203,7 @@ AGENT_HARNESS_SEMANTIC_TTL_DAYS = 180
 AGENT_HARNESS_MEMORY_MIN_STRENGTH = 0.2
 AGENT_EVAL_MIN_VALID = 100               # 有真实路径结果的有效判断门槛
 AGENT_EVAL_MIN_REJECT = 30               # reject 拦截能力最少样本
+AGENT_HARNESS_MIN_PROBABILITY_STD = 0.03 # 防止常数概率碰巧贴近基准率而假通过校准门
 AGENT_EVAL_EV_Z = 1.645                  # Agent 增量 EV 单侧 95% 保守下界
 AGENT_EVALUATION_VERSION = "agent-net-ev-v3-replay-cost"  # v3: 可重放证据 + provider 成本 + 校准门
 # 预测机制：15m OHLC 移动区块 bootstrap，预测未来 16 根（4h）

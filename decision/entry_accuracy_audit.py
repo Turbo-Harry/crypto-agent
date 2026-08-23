@@ -207,6 +207,8 @@ def audit_status(db_path: str | None = None,
             float(agent_metrics.get("reject_evidence_coverage", 0) or 0) >= 1.0 and
             float(agent_metrics.get("brier_skill")
                   if agent_metrics.get("brier_skill") is not None else -1) >= 0 and
+            float(agent_metrics.get("probability_std", 0) or 0) >=
+            config.AGENT_HARNESS_MIN_PROBABILITY_STD and
             float(agent_metrics.get("saved_loss", 0)) >
             float(agent_metrics.get("missed_profit", 0)) +
             float(agent_metrics.get("model_cost_r", 0)))
