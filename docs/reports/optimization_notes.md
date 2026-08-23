@@ -926,3 +926,23 @@
   止损、模拟盘边界或 HTTP 禁止下单约束；扫描器还必须显式传入 paper 授权，live 固定 shadow。
 - 专项证据：策略核 5/5、生命周期 5/5、Harness 端到端 11/11、增量评价 10/10、主决策链
   53/53，失败 0；覆盖未晋升 shadow、低置信 reject 不拦、同版本 active-veto 拦单和 legacy 权限隔离。
+
+## 2026-08-23 confirmed 终值 30 天重放复核
+
+- 数据重建：从 OKX 公共历史接口为 BTC/ETH/SOL/XRP/DOGE/LINK/ADA/AVAX/BNB/LTC 十个
+  USDT SWAP 下载独立研究库；仅保留 `confirm=1`。共 469,745 根 K、900 条历史资金费、4,720 次
+  请求、错误 0；1m 覆盖 99.94%～100%，15m 99.97%～100%，资金费/横截面覆盖 100%。
+- 公平重放：相同市场时点与 4h/1m 首触口径下，A 产生 1,695 候选/1,648 完整路径，B 产生
+  1,994 候选/1,940 完整路径；独立库标记 `research_only=true`，不抵扣自然 paper 成熟度。
+- A 裁决：TP/SL/timeout=450/1,084/114，TP-first 27.31%，毛 EV -0.0827R、成本后
+  -0.9598R；61 因子为 reject 46/insufficient 15、validated 0，多分类 Brier skill -2.44%，
+  概率与极值模型均不生成。
+- B 裁决：TP/SL/timeout=682/1,178/80，TP-first 35.12%，毛 EV +0.1082R，但成本后
+  -0.7359R；61 因子为 reject 35/insufficient 26、validated 0，多分类 Brier skill -4.12%，
+  继续 shadow，不因毛 EV 为正而忽略成本。
+- 成本候选复核：预先关注的 B 多头 `cost_r≤0.35` 在五个顺序时间折中净 EV 分别为
+  -0.3522/+0.2930/无样本/-0.1057/+0.1000R，仅 2 折为正；`≤0.50` 也只有后 2 折为正。
+  正收益不稳定且近期集中，禁止把局部窗口改成硬成本门或直接生成 active 入场模型。
+- 结论：confirmed 终值修复没有证明现有 A/B 具备成本后正期望；维持 2:1 fail-closed、模型空、
+  预算锁定。Harness v2 只继续自然 paper shadow，达到 100 mature/30 qualified reject 并通过完整
+  增量门后才会按用户授权自动进入 paper active-veto；live 固定 shadow。
