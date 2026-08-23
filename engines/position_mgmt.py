@@ -185,6 +185,8 @@ class PositionMixin:
                                        ensure_ascii=False),
                 targets=json.dumps(sig.get("targets") or {},
                                    ensure_ascii=False),
+                strategy_timeframe=config.SIGNAL_SAMPLE_TIMEFRAME,
+                max_hold_hours=config.MAX_HOLD_HOURS,
                 venue=("live" if getattr(self, "live_mode", False) else "spot"))
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
@@ -255,12 +257,19 @@ class PositionMixin:
         # 最小下单量校验：150 USDT 名义买不满最小张数时【拒绝】而不是放大到
         # 最小张数（放大会击穿 150 USDT 小仓位上限，例如 BTC 0.01张=630 USDT）
         min_qty = inst.min_sz * inst.ct_val
-        if qty < min_qty:
-            print(f"⛔ 拒绝开仓 {base}: 名义 {config.MAX_NOTIONAL_PER_TRADE} USDT 只够 {qty} 币 < 最小 {min_qty} 币"
+        # 2026-08-23 XRP 案例: OKX 合约粒度可能非常规(如 XRP lot_sz=0.9772 张
+        # ≈97.72 币),按币口径 floor 后"看起来够"但换算张数再 floor 会归零,
+        # 适配器报"0.0 张 < 最小"落失败台账 → H11 每 5 分钟响一次。
+        # 这里用与适配器完全相同的张数口径预检,把这种拒绝拦在下单前。
+        _contracts = floor_to_lot(qty / inst.ct_val, inst.lot_sz)
+        if qty < min_qty or (inst.min_sz > 0 and _contracts < inst.min_sz):
+            print(f"⛔ 拒绝开仓 {base}: 名义 {config.MAX_NOTIONAL_PER_TRADE} USDT "
+                  f"只够 {qty} 币({_contracts} 张) < 最小 {min_qty} 币"
                   f"（宁可错过，不放大仓位）")
             # 预检拒绝=正常运营(无订单发出),记决策日志,不污染失败台账
             self._log_scan_decision(base, True, sig["dir"], "reject_min_size",
-                                    f"名义不足最小张数(需 {min_qty} 币)")
+                                    f"名义不足最小张数(需 {min_qty} 币,"
+                                    f"实际可买 {_contracts} 张)")
             return None
         # 余额检查（曾发生 USDT 耗尽事故）
         # 2026-08-23 修正: 合约按【保证金】检查,不是全额名义——
@@ -302,6 +311,13 @@ class PositionMixin:
                         self.ledger.release(sym_ledger, sig["dir"], "dir", qty, qty * price)
                 except Exception:
                     pass
+                # 2026-08-23 XRP 案例: 适配器最小张数拒绝是【预检类】拒绝
+                # (无订单发出),按 G10 语义走决策日志,不落失败台账(H11 噪声)
+                if "张 < 最小" in (res.message or ""):
+                    print(f"⛔ 开仓拒绝 {base}: {res.message}（预检类,不落失败台账）")
+                    self._log_scan_decision(base, True, sig["dir"],
+                                            "reject_min_size", res.message)
+                    return None
                 print(f"❌ 开仓失败 {base}: {res.message}")
                 self._log_order_failure(base, inst_id, side, qty, "open", res.message)
                 self._log_scan_decision(base, True, sig["dir"], "open_failed",
@@ -358,6 +374,8 @@ class PositionMixin:
                                    ensure_ascii=False),
                 forecast=json.dumps(sig.get("forecast") or {},
                                     ensure_ascii=False) if sig.get("forecast") else None,
+                strategy_timeframe=config.SIGNAL_SAMPLE_TIMEFRAME,
+                max_hold_hours=config.MAX_HOLD_HOURS,
                 venue=("live" if getattr(self, "live_mode", False) else "swap"))  # 合约腿；实盘标 live(2026-08-23 重新计盈亏)
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
