@@ -454,3 +454,32 @@
 {"ts": 1787433981.564, "type": "open", "payload": {"tid": "txn_1787433981_aa9e", "symbol": "BTC", "dir": "long", "entry": 110.0, "stop": 108.88285714285715, "tp": 112.23428571428572, "qty": 1.36, "lev": 3, "notional": 149.60000000000002}}
 {"ts": 1787433982.02, "type": "order_fail", "payload": {"base": "BTC", "inst_id": "BTC-USDT-SWAP", "side": "buy", "qty": 1.36, "stage": "open", "error": "模拟下单失败"}}
 {"ts": 1787434675.332, "type": "close", "payload": {"tid": "txn_1787431543_5bc7", "symbol": "LINK", "dir": "long", "pnl_usdt": -1.25, "fees_usdt": 0.0686, "funding_usdt": -0.0, "net_pnl_usdt": -1.3186, "pnl_pct": -0.018144646051622876, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787440960.788, "type": "config_reload", "payload": {"changed": ["FORECAST_HORIZON_HOURS", "FORECAST_LOOKBACK_BARS", "ENTRY_STRATEGY_VERSION", "SIGNAL_SAMPLE_TIMEFRAME", "SIGNAL_OUTCOME_HORIZON_HOURS", "SIGNAL_OUTCOME_LABEL_VERSION", "SIGNAL_OUTCOME_SWEEP_SECONDS", "SIGNAL_OUTCOME_MAX_FETCH_BARS", "FACTOR_PURGE_HOURS", "FACTOR_EMBARGO_HOURS", "SIGNAL_TIMEFRAME_SECONDS"]}}
+{"ts": 1787442068.757, "type": "open", "payload": {"tid": "txn_1787442068_4ba9", "symbol": "LTC", "dir": "long", "entry": 52.3946, "stop": 51.667564285714285, "tp": 53.84867142857142, "qty": 0.7943282347242815, "lev": 3, "notional": 41.61851012708484}}
+{"ts": 1787442856.373, "type": "config_reload", "payload": {"changed": ["FORECAST_HORIZON_HOURS", "FORECAST_LOOKBACK_BARS", "DSR_ACCEPT"]}}
+{"ts": 1787442993.36, "type": "config_reload", "payload": {"changed": ["FORECAST_HORIZON_HOURS", "FORECAST_LOOKBACK_BARS", "DSR_ACCEPT"]}}
+{"ts": 1787442993.977, "type": "config_reload", "payload": {"changed": ["FORECAST_HORIZON_HOURS", "FORECAST_LOOKBACK_BARS", "DSR_ACCEPT"]}}
+{"ts": 1787445120.666, "type": "open", "payload": {"tid": "txn_1787445120_76e0", "symbol": "ADA", "dir": "long", "entry": 0.2274, "stop": 0.22344285714285714, "tp": 0.23531428571428573, "qty": 291.0, "lev": 3, "notional": 66.1734}}
+{"ts": 1787448733.376, "type": "open", "payload": {"tid": "txn_1787448733_356f", "symbol": "LINK", "dir": "long", "entry": 11.701, "stop": 11.544714285714287, "tp": 12.013571428571428, "qty": 5.863423325734864, "lev": 3, "notional": 68.60791633442365}}
+{"ts": 1787451113.285, "type": "close", "payload": {"tid": "txn_1787448733_356f", "symbol": "LINK", "dir": "long", "pnl_usdt": -0.97, "fees_usdt": 0.0338, "funding_usdt": -0.0, "net_pnl_usdt": -1.0038, "pnl_pct": -0.014101358858217325, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787451300.287, "type": "close", "payload": {"tid": "txn_1787445120_76e0", "symbol": "ADA", "dir": "long", "pnl_usdt": -1.22, "fees_usdt": 0.0898, "funding_usdt": -0.0, "net_pnl_usdt": -1.3098, "pnl_pct": -0.018469656992084353, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787451428.791, "type": "order_fail", "payload": {"base": "XRP", "inst_id": "XRP-USDT-SWAP", "side": "buy", "qty": 97.0, "stage": "open", "error": "XRP-USDT-SWAP: 0.0 张 < 最小 0.01"}}
+{"ts": 1787451673.924, "type": "close", "payload": {"tid": "txn_1787442068_4ba9", "symbol": "LTC", "dir": "long", "pnl_usdt": -0.59, "fees_usdt": 0.1301, "funding_usdt": 0.0088, "net_pnl_usdt": -0.7289, "pnl_pct": -0.014291549129108643, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787452331.143, "type": "order_fail", "payload": {"base": "XRP", "inst_id": "XRP-USDT-SWAP", "side": "buy", "qty": 97.0, "stage": "open", "error": "XRP-USDT-SWAP: 0.0 张 < 最小 0.01"}}
+{"ts": 1787452631.972, "type": "order_fail", "payload": {"base": "XRP", "inst_id": "XRP-USDT-SWAP", "side": "buy", "qty": 97.0, "stage": "open", "error": "XRP-USDT-SWAP: 0.0 张 < 最小 0.01"}}
+{"ts": 1787452932.518, "type": "order_fail", "payload": {"base": "XRP", "inst_id": "XRP-USDT-SWAP", "side": "buy", "qty": 97.0, "stage": "open", "error": "XRP-USDT-SWAP: 0.0 张 < 最小 0.01"}}
+{"ts": 1787453232.632, "type": "order_fail", "payload": {"base": "XRP", "inst_id": "XRP-USDT-SWAP", "side": "buy", "qty": 97.0, "stage": "open", "error": "XRP-USDT-SWAP: 0.0 张 < 最小 0.01"}}
+{"ts": 1787453532.269, "type": "order_fail", "payload": {"base": "XRP", "inst_id": "XRP-USDT-SWAP", "side": "buy", "qty": 97.0, "stage": "open", "error": "XRP-USDT-SWAP: 0.0 张 < 最小 0.01"}}
+{"ts": 1787455037.638, "type": "order_fail", "payload": {"base": "XRP", "inst_id": "XRP-USDT-SWAP", "side": "buy", "qty": 97.0, "stage": "open", "error": "XRP-USDT-SWAP: 0.0 张 < 最小 0.01"}}
+{"ts": 1787455296.747, "type": "open", "payload": {"tid": "txn_1787455296_0af5", "symbol": "SOL", "dir": "long", "entry": 94.68, "stop": 93.67857142857143, "tp": 96.68285714285715, "qty": 0.9772372209558106, "lev": 3, "notional": 92.52482008009615}}
+{"ts": 1787455871.816, "type": "close", "payload": {"tid": "txn_1787433645_7756", "symbol": "BNB", "dir": "long", "pnl_usdt": -0.71, "fees_usdt": 0.2626, "funding_usdt": 0.0088, "net_pnl_usdt": -0.9814, "pnl_pct": -0.0094705122686182, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787455910.082, "type": "close", "payload": {"tid": "txn_1787433645_3894", "symbol": "BNB", "dir": "long", "pnl_usdt": -0.1, "fees_usdt": 0.0034, "funding_usdt": 0.0015, "net_pnl_usdt": -0.1049, "pnl_pct": -0.01004448270914048, "reason": "止损/止盈", "lessons": 3}}
+{"ts": 1787456002.58, "type": "close", "payload": {"tid": "txn_1787455296_0af5", "symbol": "SOL", "dir": "long", "pnl_usdt": -1.01, "fees_usdt": 0.1259, "funding_usdt": -0.0, "net_pnl_usdt": -1.1359, "pnl_pct": -0.010878749471905376, "reason": "止损/止盈", "lessons": 3}}
+{"ts": 1787457867.529, "type": "close", "payload": {"tid": "txn_1787423615_a0be", "symbol": "LINK", "dir": "long", "pnl_usdt": -0.26, "fees_usdt": 0.0109, "funding_usdt": 0.0015, "net_pnl_usdt": -0.2724, "pnl_pct": -0.02751980915054958, "reason": "止损/止盈", "lessons": 2}}
+{"ts": 1787466848.142, "type": "config_reload", "payload": {"changed": ["ENTRY_MODEL_SHADOW_ONLY"]}}
+{"ts": 1787466848.886, "type": "config_reload", "payload": {"changed": ["ENTRY_MODEL_SHADOW_ONLY"]}}
+{"ts": 1787472748.559, "type": "config_reload", "payload": {"changed": ["SIGNAL_FEATURE_SCHEMA_VERSION"]}}
+{"ts": 1787472748.94, "type": "config_reload", "payload": {"changed": ["SIGNAL_FEATURE_SCHEMA_VERSION"]}}
+{"ts": 1787474086.467, "type": "config_reload", "payload": {"changed": ["SIGNAL_FEATURE_SCHEMA_VERSION"]}}
+{"ts": 1787474674.156, "type": "config_reload", "payload": {"changed": ["FACTOR_MAX_AUTO_CANDIDATES"]}}
+{"ts": 1787474674.207, "type": "config_reload", "payload": {"changed": ["FACTOR_MAX_AUTO_CANDIDATES"]}}
