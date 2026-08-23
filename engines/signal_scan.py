@@ -10,6 +10,7 @@ threshold_learner/signal_cool/_db_path/_notify 等。
 import hashlib
 import math
 import time
+from copy import deepcopy
 
 import config
 from decision.feature_transforms import (cross_sectional_snapshot,
@@ -263,12 +264,14 @@ class SignalScanMixin:
                     "correlation_concentration"),
                 **per_symbol}
 
-    def _run_harness_shadow(self, base, sig, signal_id, *, allow_veto):
-        """Evaluate one frozen strategy candidate without granting authority.
+    def _prepare_harness_shadow(self, base, sig, signal_id, *, allow_veto):
+        """Freeze one Harness call and return a zero-argument runner.
 
         A and B share the Harness runtime and evidence contract, while their
         lifecycle versions remain strategy-scoped.  B always supplies
-        ``allow_veto=False`` because it has no execution path.
+        ``allow_veto=False`` because it has no execution path.  Freezing the
+        account/news/health inputs here lets B defer model network latency until
+        the time-critical A universe scan has completed without time leakage.
         """
         model_call = getattr(self, "agent_model_call", None)
         if (not signal_id or not getattr(config, "AGENT_HARNESS_ENABLED", False)
@@ -277,38 +280,55 @@ class SignalScanMixin:
         try:
             from decision.sentiment import latest_sentiment
             from decision.agent_judge import harness_judge
-            sentiment = latest_sentiment(
-                db_path=getattr(self, "_db_path", None))
-            return harness_judge(
-                sig=sig, base=base,
-                score=sig.get("shadow_score") or SIGNAL_SCORE,
-                price=sig.get("entry"), sentiment=sentiment,
-                model_call=model_call,
-                db_path=getattr(self, "_db_path", None),
-                signal_id=signal_id,
-                account={
-                    "equity_usdt": getattr(self.risk, "equity", None),
-                    "risk_per_trade": config.RISK_PER_TRADE,
-                    "max_notional_per_trade_usdt":
-                        config.MAX_NOTIONAL_PER_TRADE,
-                    "portfolio_notional_usdt": self.ledger.total_notional(),
-                    "max_total_notional_usdt": config.MAX_TOTAL_NOTIONAL,
-                },
-                health={
-                    "risk_can_trade": self.risk.can_trade(),
-                    "risk_halted": bool(self.risk.halted),
-                    "risk_halt_reason": self.risk.halt_reason,
-                },
-                allow_veto=bool(allow_veto))
+            db_path = getattr(self, "_db_path", None)
+            sig_snapshot = deepcopy(sig)
+            sentiment = deepcopy(latest_sentiment(db_path=db_path) or {})
+            account = {
+                "equity_usdt": getattr(self.risk, "equity", None),
+                "risk_per_trade": config.RISK_PER_TRADE,
+                "max_notional_per_trade_usdt": config.MAX_NOTIONAL_PER_TRADE,
+                "portfolio_notional_usdt": self.ledger.total_notional(),
+                "max_total_notional_usdt": config.MAX_TOTAL_NOTIONAL,
+            }
+            health = {
+                "risk_can_trade": self.risk.can_trade(),
+                "risk_halted": bool(self.risk.halted),
+                "risk_halt_reason": self.risk.halt_reason,
+            }
         except Exception as exc:
             strategy_id = (sig.get("strategy_id") or
                            config.ENTRY_SIGNAL_STRATEGY_ID)
-            # 影子链故障只留本地证据，不改变量化或执行决策。
-            print(f"Agent Harness candidate shadow failed "
+            print(f"Agent Harness candidate freeze failed "
                   f"{strategy_id}/{base}: {type(exc).__name__}: {exc}")
             return None
 
-    def _scan_strategy_b_shadow(self, base, as_of_ts=None):
+        def _run():
+            try:
+                return harness_judge(
+                    sig=sig_snapshot, base=base,
+                    score=sig_snapshot.get("shadow_score") or SIGNAL_SCORE,
+                    price=sig_snapshot.get("entry"), sentiment=sentiment,
+                    model_call=model_call, db_path=db_path,
+                    signal_id=signal_id, account=account, health=health,
+                    allow_veto=bool(allow_veto))
+            except Exception as exc:
+                strategy_id = (sig_snapshot.get("strategy_id") or
+                               config.ENTRY_SIGNAL_STRATEGY_ID)
+                # 影子链故障只留本地证据，不改变量化或执行决策。
+                print(f"Agent Harness candidate shadow failed "
+                      f"{strategy_id}/{base}: {type(exc).__name__}: {exc}")
+                return None
+
+        return _run
+
+    def _run_harness_shadow(self, base, sig, signal_id, *, allow_veto):
+        """Evaluate one already-frozen strategy candidate."""
+        runner = self._prepare_harness_shadow(
+            base, sig, signal_id, allow_veto=allow_veto)
+        return runner() if runner is not None else None
+
+    def _scan_strategy_b_shadow(self, base, as_of_ts=None,
+                                deferred_harness=None):
         """15m 突破候选进入共同 4h 标签表；仍只 shadow，绝不触达执行链。"""
         if not config.STRATEGY_B_SHADOW_ENABLED:
             return None
@@ -414,8 +434,13 @@ class SignalScanMixin:
                     reject_reason="strategy_shadow:B_breakout")
                 # B 没有执行路径，但独立 4h 标签可以验证 Harness 是否真能
                 # 拦亏。版本与评价按 B_breakout 隔离，固定不授予 veto。
-                self._run_harness_shadow(
+                runner = self._prepare_harness_shadow(
                     base, sig_b, signal_id, allow_veto=False)
+                if runner is not None:
+                    if deferred_harness is None:
+                        runner()
+                    else:
+                        deferred_harness.append(runner)
             if first_shadow:
                 print(f"  👻 影子信号 B_breakout {base} "
                       f"{sig_b['dir']} @ {sig_b['entry']:.4f} "
@@ -922,6 +947,7 @@ class SignalScanMixin:
         # 冻结整轮的 K 线可见截止点。盘口/现价仍按各标的实际检查时刻读取，
         # 但 15m/1H/4H 形态不能因顺序和网络耗时跨入下一根 K。
         scan_as_of_ts = time.time()
+        deferred_b_harness = []
         n_from_watch = sum(1 for b in scan_pool if b in self.watchlist)
         print(f"\n=== 方向性信号扫描 [{time.strftime('%H:%M:%S')}] "
               f"加密候选 {len(getattr(self, 'crypto_watchlist', []))} 个 + "
@@ -963,7 +989,8 @@ class SignalScanMixin:
             # A/B 必须在任何 A 的额度、冷却、模型或 AI continue 之前各自留样；
             # 否则“先判断行情再选策略”的比较集仍会带选择偏差。
             kl_b = self._scan_strategy_b_shadow(
-                base, as_of_ts=scan_as_of_ts)
+                base, as_of_ts=scan_as_of_ts,
+                deferred_harness=deferred_b_harness)
             # 先形成结构候选，再做任何额度/冷却/规则/AI 门控。此前先检查
             # 额度与冷却会让被拒候选永久缺失，反事实样本带选择偏差。
             sig = self.scan_signal(
@@ -1218,6 +1245,12 @@ class SignalScanMixin:
                             record_profile(base, prof, db_path=self._db_path)
                     except Exception:
                         pass
+
+        # B 的候选、账户、新闻和健康上下文已在各自发现时冻结；纯影子
+        # 模型调用统一移到 A 全池扫描之后，不能阻塞任何潜在执行候选。
+        for run_b_harness in deferred_b_harness:
+            self._long_scan_progress()
+            run_b_harness()
 
         # 与 A/B 量化候选完全分账。无论 AI 是否提案，本轮都不会调用
         # open_position；有效提案只等待既有 4h 完整路径反事实结算。

@@ -1379,3 +1379,14 @@
   LINK/ADA 五条结构候选，`kline_ts` 全为 `1787518800000`，`source_latency_ms` 为 14,968–34,882。
   可比位置的 DOGE 从快照复用前 41,304ms 降至 14,968ms，LINK 从 68,703ms 降至 31,461ms；这是
   自然运行的时点延迟改善，不代表策略胜率已经提高。五条均为 B_breakout shadow，零订单、零持仓。
+
+## 2026-08-24 B 影子 Harness 移出 A 执行关键路径
+
+- 触发证据：05:15 轮次最终共有 7 条 B_breakout Harness run，单次模型延迟 1,378–1,952ms，合计
+  11,905ms；旧接线在每个 B 候选后同步等待，导致后续 A 标的即使可能下单也必须排队。该耗时没有
+  任何执行价值，因为 B 固定 `allow_veto=false`。
+- 实现：`_prepare_harness_shadow` 在发现时深拷贝 signal/sentiment，并冻结账户与健康快照；B 只把
+  零参数 runner 加入本轮队列。全部 A 标的完成后才执行 B runner，Harness 幂等身份、prompt、Trace、
+  生命周期和 4h 标签不变。A Harness 仍保持同步，因为未来 active-veto 必须在 A 下单前完成。
+- 回归：策略 B 新增调用顺序断言，证明 B 模型在最后一个 A 扫描之后才运行；B 候选、forecast、Harness
+  evaluation、零订单和策略身份断言全部保留，目标脚本 34/34；决策闭环 61/61、Harness E2E 12/12。

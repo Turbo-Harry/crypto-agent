@@ -152,7 +152,17 @@ def test_engine_shadow_no_orders(tmp):
         dt._last_watch_refresh = time.time()
         dt._last_scan = 0
         dt.signal_cool = {}
+        call_order = []
+        original_scan_signal = dt.scan_signal
+
+        def _traced_scan_signal(base, *args, **kwargs):
+            call_order.append("A:" + base)
+            return original_scan_signal(base, *args, **kwargs)
+
+        dt.scan_signal = _traced_scan_signal
+
         def _anchored_reject(prompt):
+            call_order.append("B:model")
             payload = json.loads(prompt)
             evidence_id = payload["context"]["field_provenance"]["market"]
             return {
@@ -204,6 +214,11 @@ def test_engine_shadow_no_orders(tmp):
               harness[1] == config.AGENT_HARNESS_PROMPT_VERSION and
               harness[2] == config.BREAKOUT_SIGNAL_STRATEGY_ID and
               harness_eval_n == 1, f"实际 {harness}/{harness_eval_n}")
+        model_idx = call_order.index("B:model") if "B:model" in call_order else -1
+        last_a_idx = max((idx for idx, item in enumerate(call_order)
+                          if item.startswith("A:")), default=-1)
+        check("B 影子模型调用延后到 A 全池扫描完成",
+              model_idx > last_a_idx, f"实际 {call_order}")
         check("journal 零新增交易", len(dt.journal.trades) == 0,
               f"实际 {len(dt.journal.trades)}")
     finally:
