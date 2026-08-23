@@ -1,5 +1,6 @@
-"""Agent 主动提案：严格契约、2:1 几何、幂等、隔离与无执行权限。"""
+"""Agent 主动提案：严格契约、证据门、2:1 几何与无执行权限。"""
 
+import json
 import os
 import tempfile
 import time
@@ -125,6 +126,22 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(proposal["execution_authority"], 0)
         self.assertIsNone(proposal["signal_id"])
 
+    def test_direction_conflict_is_rejected_before_geometry_and_sampling(self):
+        snap = snapshot()
+        output = valid_output(snap)
+        output["proposals"][0]["direction"] = "short"
+        result = run_proposal_cycle(
+            [snap], model_call=lambda _prompt: output,
+            sample_recorder=recorder(self.db_path), db_path=self.db_path)
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["validation_status"], "rejected")
+        self.assertEqual(proposal["validation_reason"],
+                         "direction_evidence_conflict")
+        self.assertEqual(proposal["geometry_valid"], 0)
+        self.assertIsNone(proposal["signal_id"])
+        self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
+                                db_path=self.db_path)["n"], 0)
+
     def test_schema_error_records_run_without_proposal(self):
         result = run_proposal_cycle(
             [snapshot()], model_call=lambda _prompt: {"buy_now": "BTC"},
@@ -146,12 +163,33 @@ class AgentProposalTest(unittest.TestCase):
             snap_rows[config.SIGNAL_CONTEXT_TIMEFRAME],
             snap_rows[config.SIGNAL_REGIME_TIMEFRAME])
         fake = FakeAdapter()
+        inst_id = "BTC-USDT-SWAP"
+        fake.funding_rates[inst_id] = 0.0001
+        fake.open_interests[inst_id] = 110.0
+        fake.basis_values[inst_id] = 0.0012
+        fake.fetch_order_book = lambda _inst_id, _depth: {
+            "bids": [[106.8, 4.0], [106.7, 2.0]],
+            "asks": [[107.0, 2.0], [107.1, 1.0]],
+        }
         holder = type("ProposalScanner", (), {})()
         holder.live_mode = False
-        holder.agent_proposal_model_call = lambda _prompt: valid_output(snap)
+        captured = {}
+
+        def model(prompt):
+            captured.update(json.loads(prompt))
+            return valid_output(snap)
+
+        holder.agent_proposal_model_call = model
         holder.watch_scores = {"BTC": 1.0}
         holder._db_path = self.db_path
         holder.exchange = fake
+        holder._proposal_oi_state = {"BTC": 100.0}
+        holder.rt = type("Realtime", (), {"get_orderflow": lambda _self, _base: {
+            "ofi_event_multilevel": 0.35,
+            "ofi_event_cancel_imbalance": -0.1,
+            "ofi_event_count": 12,
+            "ofi_event_age_ms": 42,
+        }})()
         requested_limits = []
 
         def fetch(_base, tf, limit):
@@ -168,6 +206,19 @@ class AgentProposalTest(unittest.TestCase):
         ])
         self.assertEqual(fake.orders, [])
         self.assertEqual(fake.algos, [])
+        micro = captured["snapshots"][0]["microstructure"]
+        self.assertEqual(micro["funding_rate"], 0.0001)
+        self.assertAlmostEqual(micro["open_interest_change"], 0.1)
+        self.assertEqual(micro["ofi_event_multilevel"], 0.35)
+        self.assertEqual(micro["ofi_event_count"], 12.0)
+        self.assertGreater(micro["book_imbalance"], 0)
+        self.assertGreater(micro["spread_bps"], 0)
+        sample = sdb.q1(
+            "SELECT features FROM signal_samples WHERE signal_id=?",
+            [result["proposals"][0]["signal_id"]], db_path=self.db_path)
+        features = json.loads(sample["features"])["factor_features"]
+        self.assertEqual(features["funding_rate"], 0.0001)
+        self.assertEqual(features["ofi_event_count"], 12.0)
         view = list_proposals(db_path=self.db_path)
         self.assertTrue(view["shadow_only"])
         self.assertFalse(view["execution_authority"])

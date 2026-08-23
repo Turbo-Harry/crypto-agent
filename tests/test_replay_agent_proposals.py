@@ -71,6 +71,7 @@ class AgentProposalReplayTest(unittest.TestCase):
 
     def test_one_event_replays_idempotently_and_settles_without_authority(self):
         calls = []
+        active_prompt_version = replay_tool.config.AGENT_PROPOSAL_PROMPT_VERSION
 
         def model(prompt):
             calls.append(prompt)
@@ -95,6 +96,10 @@ class AgentProposalReplayTest(unittest.TestCase):
         self.assertEqual(first["settled"], 1)
         self.assertEqual(second["runs_deduplicated"], 1)
         self.assertEqual(len(calls), 1)
+        self.assertNotIn("microstructure",
+                         json.loads(calls[0])["snapshots"][0])
+        self.assertEqual(replay_tool.config.AGENT_PROPOSAL_PROMPT_VERSION,
+                         active_prompt_version)
         conn = sqlite3.connect(self.output_db)
         self.assertEqual(conn.execute(
             "SELECT COUNT(*) FROM agent_proposal_runs").fetchone()[0], 1)
@@ -118,45 +123,46 @@ class AgentProposalReplayTest(unittest.TestCase):
 
     def test_full_synthetic_training_gate_still_has_no_execution_authority(self):
         replay_tool._init_output(Path(self.output_db), self.market_db)
-        for index in range(100):
-            event = replay_tool.TRAIN_START_TS + index * 900
-            base = replay_tool.SYMBOLS[index % len(replay_tool.SYMBOLS)]
-            kline_ts = int(event * 1000) - 900_000
-            evidence = (f"market:{base}:{kline_ts}:15m",)
-            snapshot = MarketSnapshot(
-                base=base, kline_ts=kline_ts, reference_entry=100.0,
-                atr=1.0, ema20_15m=101.0, ema50_15m=100.0,
-                momentum_1h=0.01, momentum_4h=0.02, volume_ratio=1.5,
-                evidence_ids=evidence)
-            direction = "long" if index % 2 else "short"
+        with replay_tool._frozen_v1_protocol():
+            for index in range(100):
+                event = replay_tool.TRAIN_START_TS + index * 900
+                base = replay_tool.SYMBOLS[index % len(replay_tool.SYMBOLS)]
+                kline_ts = int(event * 1000) - 900_000
+                evidence = (f"market:{base}:{kline_ts}:15m",)
+                snapshot = MarketSnapshot(
+                    base=base, kline_ts=kline_ts, reference_entry=100.0,
+                    atr=1.0, ema20_15m=101.0, ema50_15m=100.0,
+                    momentum_1h=0.01, momentum_4h=0.02, volume_ratio=1.5,
+                    evidence_ids=evidence)
+                direction = "long" if index % 2 else "short"
 
-            def model(_prompt, *, b=base, d=direction, ev=evidence):
-                return json.dumps({"proposals": [{
-                    "base": b, "direction": d, "confidence": 0.8,
-                    "thesis": "fixture", "evidence_ids": [ev[0]],
-                }]})
+                def model(_prompt, *, b=base, d=direction, ev=evidence):
+                    return json.dumps({"proposals": [{
+                        "base": b, "direction": d, "confidence": 0.8,
+                        "thesis": "fixture", "evidence_ids": [ev[0]],
+                    }]})
 
-            model.model_version = "fixture-model"
-            result = run_proposal_cycle(
-                [snapshot], model_call=model,
-                sample_recorder=lambda **kwargs: record_agent_proposal_sample(
-                    **kwargs, db_path=self.output_db),
-                db_path=self.output_db, event_ts=event)
-            run = result["run"]
-            proposal = result["proposals"][0]
-            replay_tool._record_cost(
-                self.output_db, run["run_id"], "training", 1000, 1000,
-                200, 0.0002)
-            persist_outcome({
-                "signal_id": proposal["signal_id"], "horizon_hours": 4,
-                "tp_first": 1, "sl_first": 0, "timeout": 0,
-                "ambiguous": 0, "pnl_r": 2.0, "mfe_r": 2.1,
-                "mae_r": 0.1, "high_ret_h": 0.02, "low_ret_h": -0.001,
-                "time_to_tp_sec": 60.0, "time_to_sl_sec": None,
-                "time_to_high_sec": 60.0, "time_to_low_sec": 0.0,
-                "settled_at": event + 4 * 3600, "bar_resolution": "1m",
-                "label_version": "fixture-v1",
-            }, db_path=self.output_db)
+                model.model_version = "fixture-model"
+                result = run_proposal_cycle(
+                    [snapshot], model_call=model,
+                    sample_recorder=lambda **kwargs: record_agent_proposal_sample(
+                        **kwargs, db_path=self.output_db),
+                    db_path=self.output_db, event_ts=event)
+                run = result["run"]
+                proposal = result["proposals"][0]
+                replay_tool._record_cost(
+                    self.output_db, run["run_id"], "training", 1000, 1000,
+                    200, 0.0002)
+                persist_outcome({
+                    "signal_id": proposal["signal_id"], "horizon_hours": 4,
+                    "tp_first": 1, "sl_first": 0, "timeout": 0,
+                    "ambiguous": 0, "pnl_r": 2.0, "mfe_r": 2.1,
+                    "mae_r": 0.1, "high_ret_h": 0.02, "low_ret_h": -0.001,
+                    "time_to_tp_sec": 60.0, "time_to_sl_sec": None,
+                    "time_to_high_sec": 60.0, "time_to_low_sec": 0.0,
+                    "settled_at": event + 4 * 3600, "bar_resolution": "1m",
+                    "label_version": "fixture-v1",
+                }, db_path=self.output_db)
 
         result = evaluate_phase(self.output_db, "training")
         self.assertEqual(result["status"], "passed")

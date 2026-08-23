@@ -156,6 +156,7 @@ def record_agent_proposal_sample(*, proposal, snapshot, geometry, run_id: str,
             "volume_ratio": snapshot.volume_ratio,
             "momentum_1h": snapshot.momentum_1h,
             "momentum_4h": snapshot.momentum_4h,
+            **dict(snapshot.market_features),
         },
         "regime": {"source": "agent_proposal_shadow"},
     }

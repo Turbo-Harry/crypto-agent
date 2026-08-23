@@ -191,7 +191,9 @@ AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 # 2R 止盈全部由确定性代码计算。提案只进入反事实标签链，永不调用执行层。
 AGENT_PROPOSAL_SHADOW_ENABLED = True
 AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
-AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v1"
+# v2 adds natural-time microstructure context and a deterministic 15m/1h/4h
+# direction-consistency gate. It remains paper-only shadow evidence.
+AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v2-microstructure"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v1"
 AGENT_PROPOSAL_MAX_SYMBOLS = 5
 AGENT_PROPOSAL_MAX_PROPOSALS = 2

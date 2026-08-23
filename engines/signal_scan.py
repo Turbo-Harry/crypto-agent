@@ -750,6 +750,9 @@ class SignalScanMixin:
             snapshots = []
             now_ms = time.time() * 1000
             for base in ranked[:config.AGENT_PROPOSAL_MAX_SYMBOLS]:
+                progress = getattr(self, "_long_scan_progress", None)
+                if callable(progress):
+                    progress()
                 frames = {}
                 for timeframe in (config.SIGNAL_SAMPLE_TIMEFRAME,
                                   config.SIGNAL_CONTEXT_TIMEFRAME,
@@ -763,10 +766,75 @@ class SignalScanMixin:
                     frames[timeframe] = [
                         row for row in (rows or []) if int(row[0]) <= close_before]
                 try:
+                    inst_id_fn = getattr(self, "_inst_id", None)
+                    inst_id = (inst_id_fn(base) if callable(inst_id_fn)
+                               else f"{base}-USDT-SWAP")
+                    market_features = {}
+                    funding = book = oi = basis = None
+                    try:
+                        funding = self.exchange.fetch_funding_rate(inst_id)
+                    except Exception:
+                        pass
+                    try:
+                        book = self.exchange.fetch_order_book(
+                            inst_id, config.SHADOW_BOOK_DEPTH)
+                    except Exception:
+                        pass
+                    try:
+                        oi = self.exchange.fetch_open_interest(inst_id)
+                    except Exception:
+                        pass
+                    try:
+                        basis = self.exchange.fetch_basis(inst_id)
+                    except Exception:
+                        pass
+                    market_features.update(_microstructure_features(
+                        book, config.SHADOW_BOOK_DEPTH))
+                    market_features.update({
+                        "funding_rate": funding,
+                        "book_imbalance": _book_imbalance(
+                            book, config.SHADOW_BOOK_DEPTH),
+                        "basis": basis,
+                    })
+                    book_state = getattr(self, "_proposal_book_state", {})
+                    previous_book = book_state.get(base)
+                    ofi, current_book = _dynamic_ofi(book, previous_book)
+                    cancel_imbalance = (_cancellation_imbalance(
+                        current_book, previous_book) if current_book else None)
+                    if current_book:
+                        book_state[base] = current_book
+                        self._proposal_book_state = book_state
+                    oi_state = getattr(self, "_proposal_oi_state", {})
+                    previous_oi = oi_state.get(base)
+                    oi_change = ((float(oi) - float(previous_oi)) /
+                                 float(previous_oi)
+                                 if oi is not None and previous_oi else None)
+                    if oi is not None:
+                        oi_state[base] = float(oi)
+                        self._proposal_oi_state = oi_state
+                    event_flow = {}
+                    try:
+                        get_orderflow = getattr(self.rt, "get_orderflow", None)
+                        if get_orderflow:
+                            event_flow = get_orderflow(base) or {}
+                    except Exception:
+                        pass
+                    market_features.update({
+                        "ofi_dynamic": ofi,
+                        "cancel_imbalance": cancel_imbalance,
+                        "open_interest_change": oi_change,
+                        "ofi_event_multilevel": event_flow.get(
+                            "ofi_event_multilevel"),
+                        "ofi_event_cancel_imbalance": event_flow.get(
+                            "ofi_event_cancel_imbalance"),
+                        "ofi_event_count": event_flow.get("ofi_event_count"),
+                        "ofi_event_age_ms": event_flow.get("ofi_event_age_ms"),
+                    })
                     snapshots.append(build_market_snapshot(
                         base, frames[config.SIGNAL_SAMPLE_TIMEFRAME],
                         frames[config.SIGNAL_CONTEXT_TIMEFRAME],
-                        frames[config.SIGNAL_REGIME_TIMEFRAME]))
+                        frames[config.SIGNAL_REGIME_TIMEFRAME],
+                        market_features=market_features))
                 except ValueError:
                     continue
             if not snapshots:

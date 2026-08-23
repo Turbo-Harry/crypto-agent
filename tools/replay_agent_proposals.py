@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -39,6 +40,7 @@ TRAIN_END_TS = 1_784_937_600.0     # 2026-07-25 00:00 UTC
 VALIDATION_END_TS = 1_787_486_400.0  # 2026-08-23 12:00 UTC (inclusive event)
 EVENT_STRIDE_SECONDS = 12 * 3600
 REPLAY_VERSION = "agent-proposal-causal-replay-v1"
+FROZEN_PROMPT_VERSION = "agent-proposal-v1"
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
 
 
@@ -112,7 +114,7 @@ def inventory(market_db: str, phase: str) -> dict[str, Any]:
         "event_count": len(events),
         "market_db": str(path),
         "market_db_sha256": _sha256(path),
-        "prompt_version": config.AGENT_PROPOSAL_PROMPT_VERSION,
+        "prompt_version": FROZEN_PROMPT_VERSION,
         "schema_version": config.AGENT_PROPOSAL_SCHEMA_VERSION,
         "model_version": config.AGENT_JUDGE_MODEL,
     }
@@ -142,7 +144,7 @@ def _init_output(output_db: Path, market_db: str) -> None:
             "market_db": str(Path(market_db).expanduser().resolve()),
             "market_db_sha256": _sha256(Path(market_db).expanduser().resolve()),
             "symbols": list(SYMBOLS), "stride_seconds": EVENT_STRIDE_SECONDS,
-            "prompt_version": config.AGENT_PROPOSAL_PROMPT_VERSION,
+            "prompt_version": FROZEN_PROMPT_VERSION,
             "schema_version": config.AGENT_PROPOSAL_SCHEMA_VERSION,
             "model_version": config.AGENT_JUDGE_MODEL,
         }
@@ -185,6 +187,17 @@ def _estimated_call_cost(prompt: str) -> tuple[int, int, float]:
     return input_tokens, output_tokens, usd
 
 
+@contextmanager
+def _frozen_v1_protocol():
+    """Scope the research process to the predeclared v1 prompt identity."""
+    previous = config.AGENT_PROPOSAL_PROMPT_VERSION
+    config.AGENT_PROPOSAL_PROMPT_VERSION = FROZEN_PROMPT_VERSION
+    try:
+        yield
+    finally:
+        config.AGENT_PROPOSAL_PROMPT_VERSION = previous
+
+
 def _record_cost(output_db: str, run_id: str, phase: str,
                  prompt_chars: int, input_tokens: int,
                  output_tokens: int, cost_usd: float) -> None:
@@ -205,12 +218,27 @@ def replay(market_db: str, output_db: str, phase: str, *,
         training = evaluate_phase(str(output), "training")
         if training.get("status") != "passed":
             raise ValueError("training phase 未通过，validation 保持封存")
-    _init_output(output, market_db)
-    reader = MarketReader(market_db)
-    start, end = _phase_bounds(phase)
-    stats = {"phase": phase, "events": 0, "runs_created": 0,
-             "runs_deduplicated": 0, "proposals": 0, "settled": 0,
-             "missing_path": 0, "empty_snapshots": 0}
+    reader = None
+    with _frozen_v1_protocol():
+        _init_output(output, market_db)
+        reader = MarketReader(market_db)
+        start, end = _phase_bounds(phase)
+        stats = {"phase": phase, "events": 0, "runs_created": 0,
+                 "runs_deduplicated": 0, "proposals": 0, "settled": 0,
+                 "missing_path": 0, "empty_snapshots": 0}
+        try:
+            return _replay_events(
+                reader, output, phase, start, end, stats, model_call, progress)
+        finally:
+            reader.close()
+
+
+def _replay_events(reader: MarketReader, output: Path, phase: str,
+                   start: float, end: float, stats: dict[str, Any],
+                   model_call: Callable[[str], Any],
+                   progress: Callable[[dict[str, Any]], None] | None
+                   ) -> dict[str, Any]:
+    """Replay loop, called only while the frozen v1 protocol is active."""
     try:
         for event in range(int(start), int(end), EVENT_STRIDE_SECONDS):
             stats["events"] += 1
@@ -273,7 +301,7 @@ def replay(market_db: str, output_db: str, phase: str, *,
                               runtime_status=run.get("runtime_status")))
         return stats
     finally:
-        reader.close()
+        pass
 
 
 def main() -> None:
