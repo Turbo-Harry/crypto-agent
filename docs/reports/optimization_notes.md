@@ -946,3 +946,12 @@
 - 结论：confirmed 终值修复没有证明现有 A/B 具备成本后正期望；维持 2:1 fail-closed、模型空、
   预算锁定。Harness v2 只继续自然 paper shadow，达到 100 mature/30 qualified reject 并通过完整
   增量门后才会按用户授权自动进入 paper active-veto；live 固定 shadow。
+
+## 2026-08-23 Harness v34 活体迁移修复
+
+- 现场证据：paper 的 A 候选在 22:48～23:35 连续新增 16 条，但 `agent_runs` 仍停在旧 v1 的
+  21 条。对活体库做只读备份并注入离线假模型复现：Harness 返回 completed，最终却没有 run；解除
+  静默捕获后得到 `sqlite3.OperationalError: agent_runs has no column named evidence_hash`。
+- 修复：schema v34 对已标 v33 的老库幂等补齐完整 replay evidence 列；图的 record 节点不再吞掉
+  Trace 错误。持久化失败时返回 baseline pass、`veto=false` 并输出明确错误，禁止无审计否决。
+- 边界：只修研究审计与 fail-safe，不修改入场阈值、1%/150/600 风控、止损、预算或 live 权限。

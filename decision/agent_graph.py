@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, TypedDict
 
@@ -406,8 +406,19 @@ class _Nodes:
             trace_store.record_run(run, state["agent_input"], db_path=self.db_path)
             if state["baseline_passed"]:
                 trace_store.record_evaluation(run.run_id, db_path=self.db_path)
-        except Exception:
-            pass
+        except Exception as exc:
+            # Trace 是 veto 的审计前提。持久化失败不能静默，更不能让一个
+            # 无法追溯的 Agent reject 改变基线交易动作。
+            error = f"TracePersistenceError:{type(exc).__name__}"
+            print(f"Agent Harness trace persistence failed: {error}: {exc}",
+                  flush=True)
+            run = replace(run, runtime_status=RuntimeStatus.TOOL_ERROR,
+                          final_action=FinalAction.BASELINE_PASS,
+                          model_verdict=None, error_type=error)
+            policy = PolicyResult(
+                final_action=FinalAction.BASELINE_PASS, veto=False,
+                reason="trace persistence failed; baseline preserved")
+            return {"run": run, "policy": policy}
         return {"run": run}
 
 

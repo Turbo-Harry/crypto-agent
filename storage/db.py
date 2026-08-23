@@ -951,6 +951,16 @@ def _migrate_v33_agent_replay_evidence(conn):
     )
 
 
+def _migrate_v34_reconcile_agent_replay_evidence(conn):
+    """v34: 补跑 v33 完整列集，修复已升版老库漏列导致 Trace 静默丢失。
+
+    v33 首次部署后又补入 ``evidence_hash``；已经写入 user_version=33 的
+    活体库不会重跑同号迁移。新版本必须只追加，不能改旧迁移后期待老库
+    自动感知，因此用独立版本幂等重放完整 v33 列集。
+    """
+    _migrate_v33_agent_replay_evidence(conn)
+
+
 def _migrate_v12_signal_supervision(conn):
     """v12: 所有结构候选留样 + 固定 horizon 首触/极值反事实标签。"""
     conn.executescript("""
@@ -1139,6 +1149,7 @@ MIGRATIONS = (
     (31, _migrate_v31_canonical_signal_view),
     (32, _migrate_v32_agent_proposals),
     (33, _migrate_v33_agent_replay_evidence),
+    (34, _migrate_v34_reconcile_agent_replay_evidence),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

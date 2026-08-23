@@ -194,8 +194,35 @@ class AgentHarnessStorageTest(unittest.TestCase):
                          "tool_policy_version", "pricing_version", "confidence",
                          "evidence_ids", "missing_information",
                          "evidence_hash",
-                         "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"}
+                        "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"}
                         <= run_columns)
+
+    def test_v33_database_missing_late_evidence_column_is_reconciled(self):
+        """已标 v33 的活体老库也必须由新版本补齐晚加入的列。"""
+        from storage import db
+
+        db.init_db(self.tmp.name)
+        with sqlite3.connect(self.tmp.name) as conn:
+            conn.execute("ALTER TABLE agent_runs DROP COLUMN evidence_hash")
+            conn.execute("PRAGMA user_version=33")
+
+        db.init_db(self.tmp.name)
+        columns = {
+            row["name"] for row in db.q(
+                "PRAGMA table_info(agent_runs)", db_path=self.tmp.name)
+        }
+        self.assertEqual(db.q1(
+            "PRAGMA user_version", db_path=self.tmp.name)["user_version"], 34)
+        self.assertIn("evidence_hash", columns)
+
+        run = HarnessRun(
+            run_id="run-v34", signal_id="signal-v34",
+            runtime_status=RuntimeStatus.COMPLETED,
+            final_action=FinalAction.BASELINE_PASS,
+            model_verdict=Verdict.APPROVE)
+        stored = agent_harness.record_run(
+            run, self.input, db_path=self.tmp.name)
+        self.assertEqual(stored["evidence_hash"], self.input.evidence_hash)
 
 
 if __name__ == "__main__":

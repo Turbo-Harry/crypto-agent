@@ -6,6 +6,7 @@ import inspect
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from decision.agent_contracts import (
     AgentInput, FinalAction, HarnessConfig, ModelCallResult, RuntimeStatus,
@@ -136,6 +137,29 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(row["prompt_cache_miss_tokens"], 90)
         self.assertEqual(row["pricing_version"], "price-v1")
         self.assertTrue(row["input_snapshot"])
+
+    def test_trace_failure_is_visible_and_cannot_apply_veto(self):
+        def reject(_prompt):
+            return {"verdict": "reject", "risk_probability": .9,
+                    "confidence": .9,
+                    "reason_codes": ["liquidity_failure"],
+                    "evidence_ids": ["market:1"], "reason": "thin"}
+
+        with patch("decision.agent_graph.trace_store.record_run",
+                   side_effect=OSError("disk unavailable")), \
+                patch("builtins.print") as output:
+            result = run_graph_harness(
+                make_input("trace-failure"), baseline_passed=True,
+                model_call=reject,
+                policy_kernel=PolicyKernel(veto_enabled=True, shadow=False),
+                db_path=self.path)
+
+        self.assertFalse(result.policy.veto)
+        self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.TOOL_ERROR)
+        self.assertEqual(result.run.error_type,
+                         "TracePersistenceError:OSError")
+        self.assertIn("trace persistence failed", output.call_args.args[0])
 
     def test_runtime_failures_keep_distinct_statuses(self):
         no_key = run_graph_harness(
