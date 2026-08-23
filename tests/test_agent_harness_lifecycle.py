@@ -22,8 +22,13 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         self.assertEqual(agent_lifecycle.get("h2", db_path=self.path)["status"], "candidate")
         from storage.agent_lifecycle import transition
         transition("h2", "shadow", db_path=self.path)
-        metrics = {"n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
-                   "max_segment_share": .5}
+        metrics = {
+            "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
+            "max_segment_share": .5, "model_cost_data_complete": True,
+            "trace_coverage": 1.0, "probability_coverage": 1.0,
+            "reject_evidence_coverage": 1.0, "brier_skill": .1,
+            "saved_loss": 2.0, "missed_profit": .5, "model_cost_r": .01,
+        }
         agent_lifecycle.validate("h2", metrics, db_path=self.path)
         agent_lifecycle.activate("h2", db_path=self.path)
         active = agent_lifecycle.get("h2", db_path=self.path)
@@ -40,6 +45,25 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         agent_lifecycle.register("h3", db_path=self.path)
         with self.assertRaises(ValueError):
             agent_lifecycle.activate("h3", db_path=self.path)
+
+    def test_promotion_requires_cost_trace_calibration_and_evidence(self):
+        base = {
+            "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
+            "max_segment_share": .5, "trace_coverage": 1.0,
+            "probability_coverage": 1.0, "reject_evidence_coverage": 1.0,
+            "brier_skill": .1, "saved_loss": 2.0,
+            "missed_profit": .5, "model_cost_r": .01,
+        }
+        ok, reason = agent_lifecycle.promotion_ready(base)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "model_cost_incomplete")
+        costed = dict(base, model_cost_data_complete=True)
+        bad_brier = dict(costed, brier_skill=-.01)
+        self.assertEqual(agent_lifecycle.promotion_ready(bad_brier)[1],
+                         "brier_worse_than_frequency_baseline")
+        bad_evidence = dict(costed, reject_evidence_coverage=.9)
+        self.assertEqual(agent_lifecycle.promotion_ready(bad_evidence)[1],
+                         "reject_evidence_coverage<1")
 
     def test_versions_are_strategy_scoped(self):
         agent_lifecycle.register(

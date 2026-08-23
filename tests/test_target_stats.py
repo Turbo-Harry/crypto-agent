@@ -11,8 +11,6 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "lib"))
 
 from engines.signal_scan import compute_targets
 from decision.target_stats import hit_rates, describe

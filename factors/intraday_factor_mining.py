@@ -38,6 +38,7 @@ def load_observations(feature_name: str, db_path=None,
             regime_tag = None
         month = time.strftime("%Y-%m", time.gmtime(float(row["event_ts"])))
         out.append({"signal_id": row["signal_id"], "event_ts": row["event_ts"],
+                    "kline_ts": row["kline_ts"],
                     "label_end_ts": row["event_ts"] + row["horizon_hours"] * 3600,
                     "symbol": row["symbol"], "direction": row["direction"],
                     "regime": regime_tag or "unknown", "month": month,

@@ -17,7 +17,6 @@ os.environ["CRYPTO_AGENT_MODE"] = "paper"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # tests 目录（import test_exchange_layers）
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
 import config
 

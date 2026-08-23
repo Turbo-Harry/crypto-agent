@@ -13,7 +13,6 @@ subscribe 线程安全新增订阅),价格进共享 dict;冷启动用 REST 1m K 
 LIVE_MODE → ~/.crypto_live/okx_live.json(实盘),否则 okx_config.json。
 """
 import os
-import sys
 import json
 import asyncio
 import threading
@@ -21,9 +20,6 @@ import time
 
 import config
 from data.orderflow import OrderFlowAccumulator
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "lib"))
 
 CANDLE_KEEP = 15   # 波动率预热用 1m K 线根数（与旧模块一致）
 

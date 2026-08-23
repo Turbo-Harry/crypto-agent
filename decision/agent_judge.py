@@ -61,8 +61,8 @@ def _read_key():
         return None
 
 
-def _call_llm(user_prompt, key=None, url=None, model=None, timeout=None,
-              system_prompt=None):
+def _request_llm(user_prompt, key=None, url=None, model=None, timeout=None,
+                 system_prompt=None):
     key = key or _read_key()
     if not key:
         return None
@@ -82,7 +82,16 @@ def _call_llm(user_prompt, key=None, url=None, model=None, timeout=None,
         "User-Agent": "Mozilla/5.0 (crypto-agent trade-judge)",
     })
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = json.loads(r.read().decode("utf-8"))
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _call_llm(user_prompt, key=None, url=None, model=None, timeout=None,
+              system_prompt=None):
+    data = _request_llm(
+        user_prompt, key=key, url=url, model=model, timeout=timeout,
+        system_prompt=system_prompt)
+    if not data:
+        return None
     return data["choices"][0]["message"]["content"].strip()
 
 
@@ -93,11 +102,40 @@ def harness_model_available():
 
 def production_harness_model_call(prompt):
     """Paper Harness 的受限 provider 回调；超时由 Harness 参数统一约束。"""
-    return _call_llm(
+    from interfaces.agent import ModelCallResult
+    data = _request_llm(
         prompt,
         timeout=max(0.001, config.AGENT_HARNESS_TIMEOUT_MS / 1000.0),
+        model=config.AGENT_HARNESS_MODEL,
         system_prompt=HARNESS_SYSTEM_PROMPT,
     )
+    if not data:
+        return None
+    usage = data.get("usage") or {}
+    usage_available = bool(usage)
+    input_tokens = int(usage.get("prompt_tokens") or 0) if usage_available else None
+    output_tokens = (int(usage.get("completion_tokens") or 0)
+                     if usage_available else None)
+    hit = (int(usage.get("prompt_cache_hit_tokens") or 0)
+           if usage_available else None)
+    miss_raw = usage.get("prompt_cache_miss_tokens")
+    # 旧 provider 响应没有 cache 明细时，全部输入按 cache miss 保守计费。
+    miss = (int(miss_raw) if miss_raw is not None else
+            max(0, input_tokens - (hit or 0)) if input_tokens is not None else None)
+    estimated_cost = ((
+        (hit or 0) * config.AGENT_HARNESS_INPUT_CACHE_HIT_USD_PER_M +
+        (miss or 0) * config.AGENT_HARNESS_INPUT_CACHE_MISS_USD_PER_M +
+        (output_tokens or 0) * config.AGENT_HARNESS_OUTPUT_USD_PER_M
+    ) / 1_000_000 if usage_available else None)
+    return ModelCallResult(
+        content=data["choices"][0]["message"]["content"].strip(),
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        prompt_cache_hit_tokens=hit, prompt_cache_miss_tokens=miss,
+        estimated_cost=estimated_cost,
+        pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
+
+
+production_harness_model_call.model_version = config.AGENT_HARNESS_MODEL
 
 
 def parse_judgment(text):
@@ -262,7 +300,7 @@ def record_trade_outcome(trade_id, pnl, db_path=None):
 
 
 def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
-                  db_path=None, signal_id=None):
+                  db_path=None, signal_id=None, account=None, health=None):
     """Run the new Harness through an explicitly injected model callback.
 
     ``model_call`` is intentionally required for any model execution.  The
@@ -280,7 +318,8 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
             sdb.init_db(db_path)
             sample = sdb.q1(
                 "SELECT event_ts,kline_ts,strategy_version,timeframe,"
-                "feature_schema_version FROM signal_samples WHERE signal_id=?",
+                "feature_schema_version,features,missing_features,source_latency_ms,"
+                "rule_decision,final_decision FROM signal_samples WHERE signal_id=?",
                 [signal_id], db_path=db_path) or {}
         except Exception:
             sample = {}
@@ -299,7 +338,9 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
     # run_id 与 Harness 的持久化幂等键使用相同稳定身份。否则跨五分钟桶重试
     # 会命中旧 agent_runs，却把 pending evaluation 写到新的孤立 run_id。
     model_version = str(getattr(model_call, "model_version", None) or
-                        getattr(config, "AGENT_JUDGE_MODEL", "unknown"))
+                        getattr(config, "AGENT_HARNESS_MODEL", "unknown"))
+    tool_policy_version = config.AGENT_HARNESS_TOOL_POLICY_VERSION
+    pricing_version = config.AGENT_HARNESS_PRICING_VERSION
     identity = {
         "signal_id": resolved_signal_id,
         "prompt_version": HARNESS_PROMPT_VERSION,
@@ -307,8 +348,29 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
         "context_version": HARNESS_CONTEXT_VERSION,
         "schema_version": schema_version,
         "retrieval_version": HARNESS_RETRIEVAL_VERSION,
+        "tool_policy_version": tool_policy_version,
     }
     digest = stable_hash(identity)[:24]
+    try:
+        sample_features = json.loads(sample.get("features") or "{}")
+        if not isinstance(sample_features, dict):
+            sample_features = {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        sample_features = {}
+    try:
+        sample_missing = json.loads(sample.get("missing_features") or "[]")
+        if not isinstance(sample_missing, list):
+            sample_missing = []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        sample_missing = []
+    account_snapshot = dict(account or {})
+    health_snapshot = {
+        "missing_features": sample_missing,
+        "source_latency_ms": sample.get("source_latency_ms"),
+        "rule_decision": sample.get("rule_decision"),
+        "final_decision_at_snapshot": sample.get("final_decision"),
+        **dict(health or {}),
+    }
     inp = AgentInput(
         run_id=f"agent-{digest}", signal_id=resolved_signal_id,
         event_ts=str(event_ts), kline_ts=str(kline_ts),
@@ -316,17 +378,25 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
         model_version=model_version, context_version=HARNESS_CONTEXT_VERSION,
         schema_version=schema_version,
         retrieval_version=HARNESS_RETRIEVAL_VERSION,
+        tool_policy_version=tool_policy_version,
+        pricing_version=pricing_version,
         signal={"base": base, "direction": sig.get("dir"), "score": score,
                 "entry": price, "stop": sig.get("stop"), "tp": sig.get("tp"),
                 "timeframe": timeframe,
                 "shadow_dims": sig.get("shadow_dims") or {},
-                "forecast": sig.get("forecast") or {}},
-        market={"regime": sig.get("regime"), "timeframe": timeframe},
+                "forecast": sig.get("forecast") or {},
+                "preopen_2to1": sample_features.get("preopen_2to1") or {}},
+        market={"regime": sig.get("regime"), "timeframe": timeframe,
+                "frozen_features": sample_features},
         news=sentiment or {},
+        account=account_snapshot,
+        health=health_snapshot,
         field_provenance={
             "signal": f"signal:{resolved_signal_id}",
             "market": f"signal:{resolved_signal_id}:market",
             "news": f"signal:{resolved_signal_id}:news",
+            "account": f"signal:{resolved_signal_id}:account",
+            "health": f"signal:{resolved_signal_id}:health",
         })
     return run_harness(
         inp, baseline_passed=True, model_call=model_call,

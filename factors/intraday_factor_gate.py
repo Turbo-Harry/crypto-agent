@@ -11,12 +11,13 @@ from decision.entry_probability import execution_cost_r
 from factors.overfit_guard import deflated_sharpe, pbo_cscv
 
 
-EVALUATION_VERSION = "intraday-factor-oos-v5"
+EVALUATION_VERSION = "intraday-factor-oos-v6-grouped-kline"
 
 
 def _dataset_hash(rows):
     evidence = [{"signal_id": row.get("signal_id"),
                  "event_ts": row.get("event_ts"),
+                 "kline_ts": row.get("kline_ts"),
                  "value": row.get("value"), "pnl_r": row.get("pnl_r"),
                  "entry": row.get("entry"), "stop": row.get("stop"),
                  "direction": row.get("direction"),
@@ -50,22 +51,36 @@ def spearman(x, y):
 
 
 def purged_walk_forward_splits(rows: List[dict], folds: int = None):
-    """扩展训练窗 + 连续测试窗；标签窗 purge，测试后 embargo 由下折自然隔离。"""
+    """扩展训练窗 + 连续测试窗，且同一市场时点永不跨 train/test。
+
+    多币候选常在同一根 15m K 批量产生；按行切块会把高度相关的同 K 样本
+    分到训练和测试两边，制造伪样本外提升。这里先按 event_ts 分组再切时间块。
+    """
     folds = int(folds or config.FACTOR_WALK_FORWARD_FOLDS)
     ordered = sorted(range(len(rows)), key=lambda idx: rows[idx]["event_ts"])
-    block = len(ordered) // (folds + 1)
+    groups: list[list[int]] = []
+    def event_group_key(index):
+        return rows[index].get("kline_ts") or rows[index]["event_ts"]
+
+    for idx in ordered:
+        if not groups or event_group_key(groups[-1][0]) != event_group_key(idx):
+            groups.append([])
+        groups[-1].append(idx)
+    block = len(groups) // (folds + 1)
     if block < 1:
         return []
     splits = []
     embargo = config.FACTOR_EMBARGO_HOURS * 3600
     for fold in range(folds):
         test_lo = block * (fold + 1)
-        test_hi = block * (fold + 2) if fold < folds - 1 else len(ordered)
-        test = ordered[test_lo:test_hi]
+        test_hi = block * (fold + 2) if fold < folds - 1 else len(groups)
+        test_groups = groups[test_lo:test_hi]
+        test = [idx for group in test_groups for idx in group]
         if not test:
             continue
-        test_start = rows[test[0]]["event_ts"]
-        train = [idx for idx in ordered[:test_lo]
+        test_start = min(rows[idx]["event_ts"] for idx in test)
+        train_candidates = [idx for group in groups[:test_lo] for idx in group]
+        train = [idx for idx in train_candidates
                  if rows[idx]["label_end_ts"] <= test_start - embargo]
         if len(train) >= 30:
             splits.append((train, test))

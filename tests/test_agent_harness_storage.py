@@ -25,6 +25,10 @@ class AgentHarnessStorageTest(unittest.TestCase):
             strategy_version="strategy-v1", prompt_version="judge-v1",
             model_version="model-v1", context_version="context-v1",
             schema_version="schema-v1", retrieval_version="retrieval-v1",
+            tool_policy_version="tools-v1", pricing_version="price-v1",
+            signal={"entry": 100, "stop": 99},
+            account={"equity_usdt": 1000, "risk_per_trade": .01,
+                     "max_notional_per_trade_usdt": 150},
         )
 
     def tearDown(self):
@@ -41,6 +45,8 @@ class AgentHarnessStorageTest(unittest.TestCase):
         first = agent_harness.record_run(run, self.input, db_path=self.tmp.name)
         second = agent_harness.record_run(run, self.input, db_path=self.tmp.name)
         self.assertEqual(first["run_id"], second["run_id"])
+        self.assertIn('"equity_usdt":1000', first["input_snapshot"])
+        self.assertEqual(first["evidence_hash"], self.input.evidence_hash)
         self.assertEqual(len(agent_harness.list_runs(db_path=self.tmp.name)), 1)
         agent_harness.record_step(AgentStep(
             run_id="run-1", step_no=1, step_type=StepType.MODEL,
@@ -79,9 +85,22 @@ class AgentHarnessStorageTest(unittest.TestCase):
             runtime_status=RuntimeStatus.COMPLETED,
             final_action=FinalAction.SHADOW_REJECT,
             model_verdict=Verdict.REJECT,
+            input_tokens=120, output_tokens=20,
+            prompt_cache_hit_tokens=20, prompt_cache_miss_tokens=100,
+            pricing_version="price-v1", estimated_cost=.0001,
+            risk_probability=.8, confidence=.9,
+            reason_codes=("liquidity_failure",),
+            evidence_ids=("market:1",),
+            missing_information=("orderflow",),
+            decision_reason="thin book",
         )
         agent_harness.record_run(run, agent_input, created_ts=1,
                                  db_path=self.tmp.name)
+        stored_run = db.q1("SELECT * FROM agent_runs WHERE run_id=?",
+                           [run.run_id], db_path=self.tmp.name)
+        self.assertEqual(stored_run["evidence_ids"], '["market:1"]')
+        self.assertEqual(stored_run["input_tokens"], 120)
+        self.assertEqual(stored_run["pricing_version"], "price-v1")
         agent_harness.record_evaluation(
             run.run_id, lifecycle_status=LifecycleStatus.PENDING,
             db_path=self.tmp.name)
@@ -171,7 +190,12 @@ class AgentHarnessStorageTest(unittest.TestCase):
             row["name"] for row in db.q(
                 "PRAGMA table_info(agent_runs)", db_path=self.tmp.name)
         }
-        self.assertTrue({"risk_probability", "reason_codes"} <= run_columns)
+        self.assertTrue({"risk_probability", "reason_codes", "input_snapshot",
+                         "tool_policy_version", "pricing_version", "confidence",
+                         "evidence_ids", "missing_information",
+                         "evidence_hash",
+                         "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"}
+                        <= run_columns)
 
 
 if __name__ == "__main__":

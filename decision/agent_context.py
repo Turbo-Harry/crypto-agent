@@ -39,6 +39,8 @@ def build_context(agent_input: AgentInput) -> dict[str, Any]:
             "context_version": source["context_version"],
             "schema_version": source["schema_version"],
             "retrieval_version": source["retrieval_version"],
+            "tool_policy_version": source["tool_policy_version"],
+            "pricing_version": source["pricing_version"],
         },
         "signal": source["signal"],
         "market": source["market"],
@@ -77,4 +79,3 @@ def missing_fields(agent_input: AgentInput) -> tuple[str, ...]:
     if not payload["field_provenance"]:
         missing.append("field_provenance")
     return tuple(missing)
-

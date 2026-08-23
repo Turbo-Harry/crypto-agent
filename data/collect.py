@@ -1,155 +1,313 @@
-"""
-数据采集脚本 — 定时任务用，多线程增量捞取 K 线到本地 SQLite。
-支持全部周期（1m/15m/1H/4H/1D）和全部标的（加密币 + 美股代币）。
+"""Strict OKX SWAP market-data collector.
 
-用法：
-  python3 data/collect.py --bars 1m,15m,1H,4H,1D --all     # 全周期全标的
-  python3 data/collect.py --bar 1D                         # 单周期（加密观察池）
-  python3 data/collect.py --bar 1m --stocks                # 单周期（美股）
-  python3 data/collect.py --bar 1m --inst BTC-USDT         # 指定单币
-  python3 data/collect.py --bar 1m --top 20                # 加密前20个
-
-存储：data/market.db (SQLite)，表 klines，主键 (inst_id, bar, open_time) 自动去重。
+The legacy ``klines`` table is never modified. New data is written to
+``klines_v2`` only after OKX marks a candle final (``confirm=1``). A daily
+reconciliation mode downloads the complete previous UTC day from
+``history-candles`` and audits every expected timestamp.
 """
-import sys
-import os
-import sqlite3
+
+from __future__ import annotations
+
 import argparse
-import time
 import json
+import os
+import sys
+import threading
+import time
+import urllib.parse
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import config
-from data.fetch_okx import build_observe_pool, fetch_stock_symbols
+from data.market_data import (BAR_MS, audit_window, connect, parse_okx_rows,
+                              record_run, sync_source_gaps, upsert_rows)
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market.db")
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DB = os.path.join(ROOT, "data", "market.db")
 BASE = "https://www.okx.com"
-ALL_BARS = ["1m", "15m", "1H", "4H", "1D"]
+ALL_BARS = ("1m", "15m", "1H", "4H", "1D")
+OKX_BAR = {"1D": "1Dutc"}
+REQUEST_INTERVAL_SECONDS = 0.11
+REQUEST_RETRIES = 4
+
+_rate_lock = threading.Lock()
+_next_request_at = [0.0]
 
 
-def _get(url, timeout=20):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+def _get(url: str, timeout: float = 20.0) -> dict:
+    last_error = None
+    for attempt in range(REQUEST_RETRIES):
+        with _rate_lock:
+            wait = max(0.0, _next_request_at[0] - time.monotonic())
+            if wait:
+                time.sleep(wait)
+            _next_request_at[0] = time.monotonic() + REQUEST_INTERVAL_SECONDS
+        try:
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if str(payload.get("code")) != "0":
+                raise RuntimeError(
+                    f"OKX error {payload.get('code')}: {payload.get('msg')}")
+            return payload
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < REQUEST_RETRIES:
+                time.sleep(min(2.0, 0.25 * (2 ** attempt)))
+    raise RuntimeError(f"request failed after retries: {last_error}")
 
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS klines (
-            inst_id TEXT NOT NULL,
-            bar TEXT NOT NULL,
-            open_time INTEGER NOT NULL,
-            open REAL, high REAL, low REAL, close REAL,
-            volume REAL, quote_volume REAL,
-            PRIMARY KEY (inst_id, bar, open_time)
-        )
-    """)
-    # 索引：按周期查询、按标的+周期查询（避免大数据量全表扫描）
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_bar ON klines(bar)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_inst_bar ON klines(inst_id, bar)")
-    conn.commit()
-    return conn
+def fetch_swap_symbols(top_n: int, *, include_crypto: bool,
+                       include_stocks: bool) -> list[str]:
+    instruments = _get(
+        f"{BASE}/api/v5/public/instruments?instType=SWAP").get("data") or []
+    tickers = _get(
+        f"{BASE}/api/v5/market/tickers?instType=SWAP").get("data") or []
+    turnover = {}
+    for ticker in tickers:
+        try:
+            turnover[ticker["instId"]] = (
+                float(ticker.get("volCcy24h") or 0) *
+                float(ticker.get("last") or 0))
+        except (KeyError, TypeError, ValueError):
+            continue
+    stock_bases = set(config.STOCK_SWAP_TOKENS)
+    crypto = []
+    stocks = []
+    for item in instruments:
+        inst_id = str(item.get("instId") or "")
+        if (item.get("state") != "live" or item.get("settleCcy") != "USDT"
+                or not inst_id.endswith("-USDT-SWAP")):
+            continue
+        base = inst_id.split("-")[0]
+        if base in stock_bases:
+            stocks.append(inst_id)
+            continue
+        if (base in config.STABLECOINS or
+                any(base.endswith(suffix) for suffix in config.LEVERAGED_SUFFIX)):
+            continue
+        crypto.append(inst_id)
+    crypto.sort(key=lambda name: turnover.get(name, 0), reverse=True)
+    stocks.sort(key=lambda name: turnover.get(name, 0), reverse=True)
+    result = []
+    if include_crypto:
+        result.extend(crypto[:max(1, int(top_n))])
+    if include_stocks:
+        result.extend(stocks)
+    return list(dict.fromkeys(result))
 
 
-def fetch_candles(inst_id, bar, limit=100):
-    """拉最近 limit 根 K 线（含最新），返回倒序原始数据。"""
-    try:
-        d = _get(f"{BASE}/api/v5/market/candles?instId={inst_id}&bar={bar}&limit={limit}")
-        if d.get("code") == "0":
-            return d.get("data", [])
-    except Exception:
-        pass
-    return []
+def fetch_recent(inst_id: str, bar: str) -> tuple[list[list[str]], int]:
+    params = urllib.parse.urlencode({
+        "instId": inst_id, "bar": OKX_BAR.get(bar, bar), "limit": "300"})
+    payload = _get(f"{BASE}/api/v5/market/candles?{params}")
+    return payload.get("data") or [], 1
 
 
-def save(conn, inst_id, bar, candles):
-    """增量写入，INSERT OR IGNORE 去重。返回新增条数。"""
-    rows = []
-    for c in candles:
-        rows.append((
-            inst_id, bar, int(c[0]),
-            float(c[1]), float(c[2]), float(c[3]), float(c[4]),
-            float(c[5]), float(c[6]),
-        ))
-    before = conn.total_changes
-    conn.executemany(
-        "INSERT OR IGNORE INTO klines VALUES (?,?,?,?,?,?,?,?,?)", rows)
-    conn.commit()
-    return conn.total_changes - before
-
-
-def build_symbols(args):
-    """根据参数确定要采集的标的列表。"""
-    symbols = []
-    if args.inst:
-        symbols = [args.inst]
-    else:
-        if args.crypto or args.all or (not args.stocks and not args.crypto):
-            pool = build_observe_pool(config.OBSERVE_POOL_SIZE)
-            if args.top:
-                pool = pool[:args.top]
-            symbols.extend(p["instId"] for p in pool)
-        if args.stocks or args.all:
-            symbols.extend(fetch_stock_symbols())
-    # 去重保序
-    seen = set()
-    return [s for s in symbols if not (s in seen or seen.add(s))]
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--bar", default=None, help="单周期，如 1D/4H/1H/15m/1m")
-    parser.add_argument("--bars", default=None, help="多周期逗号分隔，如 1m,15m,1H,4H,1D")
-    parser.add_argument("--inst", default=None, help="指定标的（如 BTC-USDT）")
-    parser.add_argument("--top", type=int, default=None, help="加密币只采前 N 个")
-    parser.add_argument("--stocks", action="store_true", help="采集美股代币")
-    parser.add_argument("--crypto", action="store_true", help="采集加密币观察池")
-    parser.add_argument("--all", action="store_true", help="采集加密+美股（全部标的）")
-    parser.add_argument("--threads", type=int, default=10, help="并发线程数（默认10）")
-    args = parser.parse_args()
-
-    # 确定周期列表
-    if args.bars:
-        bars = [b.strip() for b in args.bars.split(",") if b.strip()]
-    elif args.bar:
-        bars = [args.bar]
-    else:
-        bars = ALL_BARS
-
-    symbols = build_symbols(args)
-    conn = init_db()
-    print(f"采集范围: {len(symbols)} 个标的 × {len(bars)} 个周期 "
-          f"({'、'.join(bars)})，{args.threads} 线程")
-
-    total_new = 0
-    t0 = time.time()
-    # 多线程并发拉取（每个任务 = 一个标的 × 一个周期）
-    tasks = [(sym, bar) for sym in symbols for bar in bars]
-    done = 0
-    with ThreadPoolExecutor(max_workers=args.threads) as pool:
-        futures = {pool.submit(fetch_candles, sym, bar): (sym, bar)
-                   for sym, bar in tasks}
-        for fut in as_completed(futures):
-            sym, bar = futures[fut]
-            done += 1
+def fetch_history_window(inst_id: str, bar: str, start_ms: int,
+                         end_ms: int) -> tuple[list[list[str]], int]:
+    """Download a closed UTC window, paging older from its exclusive end."""
+    target = max(1, (int(end_ms) - int(start_ms)) // BAR_MS[bar])
+    max_pages = (target + 99) // 100 + 4
+    cursor = int(end_ms)
+    unique: dict[int, list[str]] = {}
+    requests = 0
+    for _ in range(max_pages):
+        params = urllib.parse.urlencode({
+            "instId": inst_id, "bar": OKX_BAR.get(bar, bar),
+            "limit": "100", "after": str(cursor)})
+        page = (_get(f"{BASE}/api/v5/market/history-candles?{params}")
+                .get("data") or [])
+        requests += 1
+        if not page:
+            break
+        timestamps = []
+        for row in page:
             try:
-                candles = fut.result()
-                if candles:
-                    total_new += save(conn, sym, bar, candles)
-            except Exception:
-                pass
-            if done % 100 == 0:
-                print(f"  已处理 {done}/{len(tasks)}")
+                ts = int(row[0])
+                timestamps.append(ts)
+                if int(start_ms) <= ts < int(end_ms):
+                    unique[ts] = row
+            except (IndexError, TypeError, ValueError):
+                continue
+        if not timestamps:
+            break
+        oldest = min(timestamps)
+        if oldest < int(start_ms) or oldest >= cursor:
+            break
+        cursor = oldest
+    return [unique[key] for key in sorted(unique)], requests
 
-    cnt = conn.execute("SELECT COUNT(*) FROM klines").fetchone()[0]
-    dt = time.time() - t0
-    print(f"采集完成: {len(tasks)} 个任务, 新增 {total_new} 条, "
-          f"库内累计 {cnt} 条, 耗时 {dt:.1f}s")
+
+def _bars(value: str | None) -> list[str]:
+    result = ([item.strip() for item in value.split(",") if item.strip()]
+              if value else list(ALL_BARS))
+    unknown = [item for item in result if item not in BAR_MS]
+    if unknown:
+        raise ValueError(f"unsupported bars: {unknown}")
+    return result
+
+
+def _symbols(args) -> list[str]:
+    if args.inst:
+        symbols = [item.strip() for item in args.inst.split(",") if item.strip()]
+        bad = [item for item in symbols if not item.endswith("-USDT-SWAP")]
+        if bad:
+            raise ValueError(f"only *-USDT-SWAP is accepted: {bad}")
+        return list(dict.fromkeys(symbols))
+    include_crypto = bool(args.crypto or args.all or
+                          (not args.crypto and not args.stocks))
+    include_stocks = bool(args.stocks or args.all or
+                          (not args.crypto and not args.stocks))
+    return fetch_swap_symbols(
+        args.top or config.OBSERVE_POOL_SIZE,
+        include_crypto=include_crypto, include_stocks=include_stocks)
+
+
+def _window(date_text: str) -> tuple[int, int]:
+    day = datetime.strptime(date_text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    start = int(day.timestamp() * 1000)
+    return start, start + 86_400_000
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bar", help="single bar")
+    parser.add_argument("--bars", help="comma-separated bars")
+    parser.add_argument("--inst", help="comma-separated *-USDT-SWAP ids")
+    parser.add_argument("--top", type=int)
+    parser.add_argument("--stocks", action="store_true")
+    parser.add_argument("--crypto", action="store_true")
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--threads", type=int, default=5)
+    parser.add_argument("--db", default=DEFAULT_DB)
+    parser.add_argument(
+        "--reconcile-date",
+        help="UTC date YYYY-MM-DD; use history-candles and require full coverage")
+    args = parser.parse_args(argv)
+    bars = _bars(args.bars or args.bar)
+    symbols = _symbols(args)
+    if not symbols:
+        raise RuntimeError("empty SWAP universe")
+    mode = "reconcile" if args.reconcile_date else "incremental"
+    start_ms = end_ms = None
+    if args.reconcile_date:
+        start_ms, end_ms = _window(args.reconcile_date)
+
+    started = time.time()
+    run_id = f"market-{int(started * 1000)}-{uuid.uuid4().hex[:8]}"
+    conn = connect(os.path.abspath(args.db))
+    totals = {"requested_series": len(symbols) * len(bars),
+              "successful_series": 0, "failed_series": 0,
+              "received_rows": 0, "confirmed_rows": 0,
+              "inserted_rows": 0, "updated_rows": 0,
+              "invalid_rows": 0, "requests": 0}
+    errors = []
+
+    def download(inst_id: str, bar: str):
+        if args.reconcile_date:
+            raw, requests = fetch_history_window(
+                inst_id, bar, int(start_ms), int(end_ms))
+        else:
+            raw, requests = fetch_recent(inst_id, bar)
+        parsed, parse_stats = parse_okx_rows(
+            inst_id, bar, raw, as_of_ms=end_ms if args.reconcile_date else None,
+            start_ms=start_ms, end_ms=end_ms)
+        source_gaps: list[int] = []
+        if args.reconcile_date:
+            by_time = {int(row["open_time"]): row for row in parsed}
+            expected_times = range(int(start_ms), int(end_ms), BAR_MS[bar])
+            missing = [ts for ts in expected_times if ts not in by_time]
+            if missing:
+                # A missing source bar is data, not a zero candle.  Confirm it
+                # with an independent timestamp-scoped history request before
+                # acknowledging the gap.  Large gaps use a second full scan to
+                # avoid thousands of point requests (for example a new listing).
+                windows = ([(ts, ts + BAR_MS[bar]) for ts in missing]
+                           if len(missing) <= 50 else
+                           [(int(start_ms), int(end_ms))])
+                for gap_start, gap_end in windows:
+                    retry_raw, retry_requests = fetch_history_window(
+                        inst_id, bar, gap_start, gap_end)
+                    requests += retry_requests
+                    retry_parsed, retry_stats = parse_okx_rows(
+                        inst_id, bar, retry_raw, as_of_ms=end_ms,
+                        start_ms=start_ms, end_ms=end_ms)
+                    parse_stats["received"] += retry_stats["received"]
+                    parse_stats["invalid"] += retry_stats["invalid"]
+                    for row in retry_parsed:
+                        by_time[int(row["open_time"])] = row
+                parsed = [by_time[key] for key in sorted(by_time)]
+                source_gaps = [ts for ts in expected_times if ts not in by_time]
+                parse_stats["confirmed"] = len(parsed)
+        return inst_id, bar, parsed, parse_stats, requests, source_gaps
+
+    tasks = [(inst_id, bar) for inst_id in symbols for bar in bars]
+    with ThreadPoolExecutor(max_workers=max(1, min(int(args.threads), 12))) as pool:
+        futures = {pool.submit(download, inst_id, bar): (inst_id, bar)
+                   for inst_id, bar in tasks}
+        for future in as_completed(futures):
+            inst_id, bar = futures[future]
+            try:
+                _, _, parsed, parse_stats, requests, source_gaps = future.result()
+                totals["requests"] += requests
+                totals["received_rows"] += parse_stats["received"]
+                totals["confirmed_rows"] += parse_stats["confirmed"]
+                totals["invalid_rows"] += parse_stats["invalid"]
+                if not parsed or parse_stats["invalid"]:
+                    raise RuntimeError(
+                        f"confirmed={len(parsed)} invalid={parse_stats['invalid']}")
+                saved = upsert_rows(conn, parsed)
+                if args.reconcile_date:
+                    sync_source_gaps(
+                        conn, inst_id, bar, int(start_ms), int(end_ms),
+                        source_gaps)
+                totals["inserted_rows"] += saved["inserted"]
+                totals["updated_rows"] += saved["updated"]
+                totals["successful_series"] += 1
+            except Exception as exc:
+                totals["failed_series"] += 1
+                errors.append(f"{inst_id}:{bar}: {type(exc).__name__}: {exc}")
+
+    audit = None
+    if args.reconcile_date:
+        audit = audit_window(conn, symbols, bars, int(start_ms), int(end_ms))
+        if not audit["complete"]:
+            errors.append(
+                f"quality_gate: unexplained_missing="
+                f"{audit['unexplained_missing']} bad={audit['bad']}")
+    status = "success" if not errors else "failed"
+    record_run(conn, {
+        "run_id": run_id, "started_at": started, "finished_at": time.time(),
+        "mode": mode, "target_date": args.reconcile_date,
+        **{key: totals[key] for key in (
+            "requested_series", "successful_series", "failed_series",
+            "received_rows", "confirmed_rows", "inserted_rows",
+            "updated_rows", "invalid_rows")},
+        "status": status,
+        "details": {"bars": bars, "symbols": symbols, "errors": errors,
+                    "audit": audit},
+    })
     conn.close()
+    report = {"status": status, "mode": mode,
+              "db": os.path.abspath(args.db), "bars": bars,
+              "symbols": len(symbols), **totals,
+              "audit": ({"complete": audit["complete"],
+                         "missing": audit["missing"],
+                         "source_gaps": audit["source_gaps"],
+                         "unexplained_missing": audit["unexplained_missing"],
+                         "bad": audit["bad"]}
+                        if audit else None), "errors": errors[:20],
+              "elapsed_seconds": round(time.time() - started, 2)}
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True), flush=True)
+    return 0 if status == "success" else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

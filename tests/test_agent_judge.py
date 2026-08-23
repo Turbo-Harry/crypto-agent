@@ -12,8 +12,6 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "lib"))
 
 import config
 from decision.agent_judge import (judge, parse_verdict, _memory_block,
@@ -83,6 +81,28 @@ def main():
 
     v1, r1 = parse_verdict('{"verdict":"reject","reason":"短线风险大, 建议观望"}')
     check("parse_verdict 纯 JSON", v1 == "reject" and r1.startswith("短线"), f"{v1}")
+
+    import decision.agent_judge as agent_judge_module
+    original_request = agent_judge_module._request_llm
+    try:
+        agent_judge_module._request_llm = lambda *a, **k: {
+            "choices": [{"message": {"content": '{"verdict":"approve"}'}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20,
+                      "prompt_cache_hit_tokens": 25,
+                      "prompt_cache_miss_tokens": 75},
+        }
+        metered = agent_judge_module.production_harness_model_call("{}")
+    finally:
+        agent_judge_module._request_llm = original_request
+    expected_cost = (
+        25 * config.AGENT_HARNESS_INPUT_CACHE_HIT_USD_PER_M +
+        75 * config.AGENT_HARNESS_INPUT_CACHE_MISS_USD_PER_M +
+        20 * config.AGENT_HARNESS_OUTPUT_USD_PER_M) / 1_000_000
+    check("Harness provider 保存 token/cache 与美元成本口径",
+          metered.input_tokens == 100 and
+          metered.prompt_cache_miss_tokens == 75 and
+          abs(metered.estimated_cost - expected_cost) < 1e-12,
+          str(metered))
 
     # ---- AI 记忆: 判断落表 / 结果回填 / RAG 案例回喂 / 否决扫尾 ----
     tmp = tempfile.mkdtemp(prefix="ai_mem_")

@@ -177,15 +177,10 @@ def audit_status(db_path: str | None = None,
             "WHERE e.lifecycle_status='mature' AND r.runtime_status='completed' "
             "AND r.model_verdict IS NOT NULL AND s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?", scope)
-        valid_signal_ids = {row["signal_id"] for row in legacy_rows}
-        valid_signal_ids.update(row["signal_id"] for row in harness_rows)
-        reject_signal_ids = {row["signal_id"] for row in legacy_rows
-                             if row.get("verdict") == "reject"}
-        reject_signal_ids.update(
+        harness_all_signal_ids = {row["signal_id"] for row in harness_rows}
+        harness_all_reject_ids = {
             row["signal_id"] for row in harness_rows
-            if row.get("final_action") in ("shadow_reject", "agent_reject"))
-        agent_valid = len(valid_signal_ids)
-        agent_reject = len(reject_signal_ids)
+            if row.get("final_action") in ("shadow_reject", "agent_reject")}
 
         agent_version = conn.execute(
             "SELECT version,status,metrics_json FROM agent_versions "
@@ -194,15 +189,27 @@ def audit_status(db_path: str | None = None,
         agent_version_dict = dict(agent_version) if agent_version else None
         agent_metrics = _json_dict(
             agent_version_dict.get("metrics_json")) if agent_version_dict else {}
+        # Harness 的统计门必须按一个完整版本身份计数。legacy AI 与旧
+        # prompt/context/schema 版本只作旁路诊断，不能拼成 100/30 晋升样本。
+        agent_valid = int(agent_metrics.get("n", 0))
+        agent_reject = int(agent_metrics.get("reject_n", 0))
         agent_state_proven = bool(
             agent_version_dict and
             agent_version_dict["status"] in
             ("validated", "active-veto", "observing", "kept") and
             int(agent_metrics.get("n", 0)) >= config.AGENT_EVAL_MIN_VALID and
             int(agent_metrics.get("reject_n", 0)) >= config.AGENT_EVAL_MIN_REJECT and
-            float(agent_metrics.get("incremental_ev_lower_bound",
-                                    agent_metrics.get("incremental_ev", 0))) > 0 and
-            float(agent_metrics.get("max_segment_share", 1.0)) <= 0.8)
+            float(agent_metrics.get("incremental_ev_lower_bound") or 0) > 0 and
+            float(agent_metrics.get("max_segment_share", 1.0) or 1.0) <= 0.8 and
+            bool(agent_metrics.get("model_cost_data_complete", False)) and
+            float(agent_metrics.get("trace_coverage", 0)) >= 1.0 and
+            float(agent_metrics.get("probability_coverage", 0)) >= 1.0 and
+            float(agent_metrics.get("reject_evidence_coverage", 0) or 0) >= 1.0 and
+            float(agent_metrics.get("brier_skill")
+                  if agent_metrics.get("brier_skill") is not None else -1) >= 0 and
+            float(agent_metrics.get("saved_loss", 0)) >
+            float(agent_metrics.get("missed_profit", 0)) +
+            float(agent_metrics.get("model_cost_r", 0)))
 
         gates = {
             "paper_closed": _gate(
@@ -234,11 +241,11 @@ def audit_status(db_path: str | None = None,
                 "极值模型完成独立影子观察；shadow-only 时 accepted 即通过"),
             "agent_sample": _gate(agent_valid >= config.AGENT_EVAL_MIN_VALID,
                                    agent_valid, config.AGENT_EVAL_MIN_VALID,
-                                   "去重且已有路径结果的有效 AI 判断"),
+                                   "当前完整 Harness 版本的自然成熟判断"),
             "agent_reject_sample": _gate(
                 agent_reject >= config.AGENT_EVAL_MIN_REJECT,
                 agent_reject, config.AGENT_EVAL_MIN_REJECT,
-                "有效 AI reject 反事实样本"),
+                "当前完整 Harness 版本的 reject 反事实样本"),
             "agent_incremental_proven": _gate(
                 agent_state_proven,
                 agent_version_dict["status"] if agent_version_dict else None,
@@ -270,6 +277,10 @@ def audit_status(db_path: str | None = None,
                 "validated_factors": validated_factors,
                 "legacy_agent_valid": len(legacy_rows),
                 "harness_agent_mature_valid": len(harness_rows),
+                "harness_all_version_distinct_signals":
+                    len(harness_all_signal_ids),
+                "harness_all_version_reject_distinct_signals":
+                    len(harness_all_reject_ids),
                 "agent_valid_distinct_signals": agent_valid,
                 "agent_reject_distinct_signals": agent_reject,
             },

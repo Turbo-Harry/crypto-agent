@@ -887,7 +887,22 @@ class SignalScanMixin:
                             price=sig.get("entry"), sentiment=_harness_sentiment,
                             model_call=_harness_call,
                             db_path=getattr(self, "_db_path", None),
-                            signal_id=signal_id)
+                            signal_id=signal_id,
+                            account={
+                                "equity_usdt": getattr(self.risk, "equity", None),
+                                "risk_per_trade": config.RISK_PER_TRADE,
+                                "max_notional_per_trade_usdt":
+                                    config.MAX_NOTIONAL_PER_TRADE,
+                                "portfolio_notional_usdt":
+                                    self.ledger.total_notional(),
+                                "max_total_notional_usdt":
+                                    config.MAX_TOTAL_NOTIONAL,
+                            },
+                            health={
+                                "risk_can_trade": self.risk.can_trade(),
+                                "risk_halted": bool(self.risk.halted),
+                                "risk_halt_reason": self.risk.halt_reason,
+                            })
                     except Exception as e:
                         # 影子链故障只记本地告警，不改变任何量化/执行决策。
                         print(f"Agent Harness candidate shadow failed {base}: {e}")

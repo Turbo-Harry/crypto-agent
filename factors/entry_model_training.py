@@ -57,6 +57,9 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
     folds = []
     all_y, all_p, all_base = [], [], []
     selected_truth = []
+    selected_net_returns = []
+    baseline_selected_truth = []
+    baseline_selected_net_returns = []
     all_classes, all_class_p, all_class_base = [], [], []
     for fold, (train_idx, test_idx) in enumerate(splits):
         train = [rows[idx] for idx in train_idx]
@@ -107,12 +110,32 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
         selected = [row for row, prediction in zip(test, predictions)
                     if float(prediction["ev_r_lower"]) > 0]
         selected_y = [row["tp_first"] for row in selected]
+        selected_net = [row["pnl_r"] - row["cost_r"] for row in selected]
+        # 与现役连续信号分在完全相同的覆盖率下比较。直接拿模型子集对
+        # 全候选总体胜率，会把覆盖率变化误报成 precision 提升。
+        baseline_ranked = sorted(
+            test,
+            key=lambda row: (
+                float(row.get("baseline_score"))
+                if row.get("baseline_score") is not None else float("-inf"),
+                str(row.get("signal_id") or ""),
+            ),
+            reverse=True,
+        )
+        baseline_selected = baseline_ranked[:len(selected)]
+        baseline_selected_y = [row["tp_first"] for row in baseline_selected]
+        baseline_selected_net = [row["pnl_r"] - row["cost_r"]
+                                 for row in baseline_selected]
         precision = (sum(selected_y) / len(selected_y)
                      if selected_y else 0.0)
-        baseline_precision = sum(truth) / len(truth)
+        baseline_precision = (sum(baseline_selected_y) /
+                              len(baseline_selected_y)
+                              if baseline_selected_y else 0.0)
         actual_ev = (sum(row["pnl_r"] - row["cost_r"] for row in selected) /
                      len(selected)) if selected else -99.0
-        baseline_ev = sum(row["pnl_r"] - row["cost_r"] for row in test) / len(test)
+        baseline_ev = (sum(baseline_selected_net) / len(baseline_selected_net)
+                       if baseline_selected_net else -99.0)
+        population_ev = sum(row["pnl_r"] - row["cost_r"] for row in test) / len(test)
         folds.append({"fold": fold, "n": len(test), "brier": model_brier,
                       "baseline_brier": base_brier,
                       "log_loss": log_loss(truth, probs),
@@ -121,9 +144,13 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
                       "multiclass_log_loss": multiclass_log_loss(
                           truth_classes, class_probs),
                       "net_ev": actual_ev, "baseline_ev": baseline_ev,
+                      "population_ev": population_ev,
                       "coverage": len(selected) / len(test),
+                      "selected_n": len(selected),
+                      "baseline_selected_n": len(baseline_selected),
                       "precision": precision,
                       "baseline_precision": baseline_precision,
+                      "population_precision": sum(truth) / len(truth),
                       "precision_lift": precision - baseline_precision})
         all_y.extend(truth)
         all_p.extend(probs)
@@ -132,13 +159,20 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
         all_class_p.extend(class_probs)
         all_class_base.extend(class_baseline)
         selected_truth.extend(selected_y)
+        selected_net_returns.extend(selected_net)
+        baseline_selected_truth.extend(baseline_selected_y)
+        baseline_selected_net_returns.extend(baseline_selected_net)
     if not all_y:
         return {"feature_names": list(feature_names), "folds": folds,
                 "brier_skill": None, "good_brier_folds": 0,
                 "multiclass_brier_skill": None, "good_multiclass_folds": 0,
                 "good_ev_folds": 0, "good_precision_folds": 0,
                 "precision": None, "baseline_precision": None,
-                "precision_lift": None, "eligible_for_shadow": False}
+                "population_precision": None, "precision_lift": None,
+                "selected_n": 0, "baseline_selected_n": 0,
+                "baseline_oos_net_ev": None,
+                "oos_net_ev": None, "oos_net_ev_lower_bound": None,
+                "eligible_for_shadow": False}
     base_score = brier(all_y, all_base)
     skill = 1 - brier(all_y, all_p) / base_score if base_score > 0 else 0.0
     good_brier = sum(fold["brier"] <= fold["baseline_brier"] for fold in folds)
@@ -153,13 +187,30 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
                          for fold in folds)
     precision = (sum(selected_truth) / len(selected_truth)
                  if selected_truth else 0.0)
-    baseline_precision = sum(all_y) / len(all_y)
+    baseline_precision = (sum(baseline_selected_truth) /
+                          len(baseline_selected_truth)
+                          if baseline_selected_truth else 0.0)
+    oos_net_ev = (sum(selected_net_returns) / len(selected_net_returns)
+                  if selected_net_returns else None)
+    if selected_net_returns:
+        variance = (sum((value - oos_net_ev) ** 2
+                        for value in selected_net_returns) /
+                    (len(selected_net_returns) - 1)
+                    if len(selected_net_returns) > 1 else 0.0)
+        oos_lower = (oos_net_ev - config.ENTRY_MODEL_EV_Z *
+                     math.sqrt(variance / len(selected_net_returns)))
+    else:
+        oos_lower = None
     eligible = (len(folds) >= config.FACTOR_WALK_FORWARD_FOLDS and
                 skill > config.ENTRY_MODEL_MIN_BRIER_SKILL and
                 good_brier >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
                 good_multi >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
                 good_ev >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
-                good_precision >= config.ENTRY_MODEL_MIN_GOOD_FOLDS)
+                good_precision >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
+                len(selected_net_returns) >=
+                config.MODEL_MIN_SELECTED_EVALUATIONS and
+                precision > baseline_precision and
+                oos_lower is not None and oos_lower > 0)
     return {"feature_names": list(feature_names), "folds": folds,
             "brier_skill": skill,
             "multiclass_brier_skill": multi_skill,
@@ -167,7 +218,16 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
             "good_multiclass_folds": good_multi, "good_ev_folds": good_ev,
             "good_precision_folds": good_precision,
             "precision": precision, "baseline_precision": baseline_precision,
+            "population_precision": sum(all_y) / len(all_y),
             "precision_lift": precision - baseline_precision,
+            "selected_n": len(selected_net_returns),
+            "baseline_selected_n": len(baseline_selected_net_returns),
+            "baseline_oos_net_ev": (
+                sum(baseline_selected_net_returns) /
+                len(baseline_selected_net_returns)
+                if baseline_selected_net_returns else None),
+            "oos_net_ev": oos_net_ev,
+            "oos_net_ev_lower_bound": oos_lower,
             "eligible_for_shadow": eligible}
 
 
@@ -200,15 +260,23 @@ def _load_rows(direction, feature_names, db_path=None, strategy_id=None):
     rows = []
     for sample in samples:
         cost_r = float(execution_cost_r(sample) or 0.0)
+        try:
+            frozen = json.loads(sample.get("features") or "{}")
+            baseline_score = (frozen.get("shadow_score")
+                              if isinstance(frozen, dict) else None)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            baseline_score = None
         rows.append({"signal_id": sample["signal_id"],
                      "event_ts": sample["event_ts"],
+                     "kline_ts": sample["kline_ts"],
                      "label_end_ts": sample["event_ts"] +
                      sample["horizon_hours"] * 3600,
                      "features": extract_features(sample),
                      "tp_first": int(sample["tp_first"]),
                      "sl_first": int(sample["sl_first"]),
                      "timeout": int(sample["timeout"]),
-                     "pnl_r": float(sample["pnl_r"]), "cost_r": cost_r})
+                     "pnl_r": float(sample["pnl_r"]), "cost_r": cost_r,
+                     "baseline_score": baseline_score})
     return rows
 
 
@@ -231,9 +299,24 @@ def train_entry_model(direction, db_path=None, feature_names=None,
         return {"status": "insufficient_data", "strategy_id": strategy_id,
                 "n": len(rows),
                 "tp_n": tp_n, "sl_n": sl_n, "features": names}
-    version = "entry-logit-ovr-v3"
-    data_digest = hashlib.sha256(
-        "|".join(row["signal_id"] for row in rows).encode("utf-8")).hexdigest()
+    version = "entry-logit-ovr-v4-grouped-kline-ci"
+    # 不能只哈希 signal_id：标签回填、成本口径或特征修正后，即使候选身份
+    # 不变，也必须生成新的制品身份，避免错误复用旧模型。
+    data_evidence = [{
+        "signal_id": row["signal_id"],
+        "event_ts": row["event_ts"],
+        "kline_ts": row.get("kline_ts"),
+        "label_end_ts": row["label_end_ts"],
+        "features": {name: row["features"].get(name) for name in names},
+        "tp_first": row["tp_first"],
+        "sl_first": row["sl_first"],
+        "timeout": row["timeout"],
+        "pnl_r": row["pnl_r"],
+        "cost_r": row["cost_r"],
+    } for row in rows]
+    data_digest = hashlib.sha256(json.dumps(
+        data_evidence, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
     signature = hashlib.sha256(json.dumps({
         "data_hash": data_digest, "version": version, "features": names,
         "strategy_id": strategy_id,

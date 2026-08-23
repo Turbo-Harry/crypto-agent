@@ -11,6 +11,7 @@ from interfaces.agent import (
     AgentStep,
     HarnessRun,
     LifecycleStatus,
+    canonical_json,
     stable_hash,
 )
 from storage import db
@@ -35,6 +36,7 @@ def record_run(run: HarnessRun, agent_input: AgentInput | None = None,
             "context": agent_input.context_version,
             "schema": agent_input.schema_version,
             "retrieval": agent_input.retrieval_version,
+            "tool_policy": agent_input.tool_policy_version,
         })[:16]
         versions = {
             "prompt_version": agent_input.prompt_version,
@@ -42,26 +44,37 @@ def record_run(run: HarnessRun, agent_input: AgentInput | None = None,
             "context_version": agent_input.context_version,
             "schema_version": agent_input.schema_version,
             "retrieval_version": agent_input.retrieval_version,
+            "tool_policy_version": agent_input.tool_policy_version,
+            "pricing_version": agent_input.pricing_version,
         }
     idempotency = stable_hash({"signal_id": run.signal_id, "harness_version": harness_version})
     db.x(
         "INSERT OR IGNORE INTO agent_runs ("
         "run_id,signal_id,idempotency_key,created_ts,completed_ts,runtime_status,"
         "final_action,model_verdict,run_role,parent_run_id,prompt_version,model_version,"
-        "context_version,schema_version,retrieval_version,input_hash,response_hash,"
-        "latency_ms,model_latency_ms,input_tokens,output_tokens,estimated_cost,error_type,"
-        "risk_probability,reason_codes) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "context_version,schema_version,retrieval_version,tool_policy_version,"
+        "pricing_version,input_hash,evidence_hash,input_snapshot,response_hash,latency_ms,"
+        "model_latency_ms,input_tokens,output_tokens,prompt_cache_hit_tokens,"
+        "prompt_cache_miss_tokens,estimated_cost,error_type,risk_probability,confidence,"
+        "reason_codes,evidence_ids,missing_information,abstain_reason,decision_reason) "
+        "VALUES (" + ",".join("?" for _ in range(36)) + ")",
         [run.run_id, run.signal_id, idempotency, now, now,
          run.runtime_status.value, run.final_action.value,
          run.model_verdict.value if run.model_verdict else None, run.run_role.value,
          run.parent_run_id, versions.get("prompt_version"), versions.get("model_version"),
          versions.get("context_version"), versions.get("schema_version"),
-         versions.get("retrieval_version"), run.input_hash,
+         versions.get("retrieval_version"), versions.get("tool_policy_version"),
+         run.pricing_version or versions.get("pricing_version"), run.input_hash,
+         agent_input.evidence_hash if agent_input is not None else None,
+         canonical_json(agent_input.to_dict()) if agent_input is not None else None,
          run.response_hash, run.latency_ms, run.model_latency_ms, run.input_tokens,
-         run.output_tokens, run.estimated_cost, run.error_type,
-         run.risk_probability,
-         json.dumps(list(run.reason_codes), ensure_ascii=False)], db_path=db_path)
+         run.output_tokens, run.prompt_cache_hit_tokens,
+         run.prompt_cache_miss_tokens, run.estimated_cost, run.error_type,
+         run.risk_probability, run.confidence,
+         json.dumps(list(run.reason_codes), ensure_ascii=False),
+         json.dumps(list(run.evidence_ids), ensure_ascii=False),
+         json.dumps(list(run.missing_information), ensure_ascii=False),
+         run.abstain_reason, run.decision_reason], db_path=db_path)
     return db.q1("SELECT * FROM agent_runs WHERE idempotency_key=?", [idempotency], db_path=db_path) or {}
 
 

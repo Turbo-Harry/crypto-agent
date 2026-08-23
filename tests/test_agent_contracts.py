@@ -30,6 +30,19 @@ class AgentContractsTest(unittest.TestCase):
             signal={"a": 1, "b": 2},
         )
         self.assertEqual(left.input_hash, right.input_hash)
+
+    def test_evidence_hash_pairs_versions_but_input_hash_keeps_identity(self):
+        base = dict(
+            run_id="r1", signal_id="s1", event_ts="1", kline_ts="1",
+            strategy_version="strategy-v1", prompt_version="p1",
+            model_version="m1", context_version="c1",
+            schema_version="s1", retrieval_version="r1",
+            signal={"base": "BTC", "direction": "long"})
+        champion = AgentInput(**base)
+        challenger = AgentInput(**dict(
+            base, run_id="r2", prompt_version="p2", model_version="m2"))
+        self.assertNotEqual(champion.input_hash, challenger.input_hash)
+        self.assertEqual(champion.evidence_hash, challenger.evidence_hash)
         self.assertEqual(idempotency_key("s1", "h1"), idempotency_key("s1", "h1"))
 
     def test_reject_requires_reason_and_evidence(self):

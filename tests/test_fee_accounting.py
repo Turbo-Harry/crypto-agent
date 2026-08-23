@@ -9,8 +9,6 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "lib"))
 
 from execution.trade_journal import (estimate_fees_usdt,
                                      net_realized_pnl_usdt,

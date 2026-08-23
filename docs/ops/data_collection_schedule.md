@@ -1,110 +1,81 @@
-# 定时采集数据 — 三种方式
+# 严谨行情采集与每日对账
 
-采集范围：
-- **加密币**：观察池前 N 个（USDT 计价，7×24）
-- **美股代币**：OKX 的 tokenized stocks（X 开头，如 XAAPL/XNVDA/XTSLA，约 65 个）
+当前研究行情写入 `data/market.db` 的 `klines_v2` 表。旧 `klines` 不删除，状态为
+`legacy_unverified`，因为它曾将未收线快照用 `INSERT OR IGNORE` 固化；当前研究不得默认读取。
 
-## 方式一：常驻进程（推荐，最省心）
+## 数据契约
 
-直接跑，进程自己调度（分钟级每 60 秒、日线+美股每天 UTC 0:05）：
+- 来源：OKX 公共行情 API；不携带账户凭证。
+- 场所：仅 `*-USDT-SWAP`，不混入现货。
+- 周期：`1m / 15m / 1H / 4H / 1D`；日线按 UTC 边界。
+- 收线：只接收 OKX `confirm=1`，并再次校验 `close_time <= as_of_ms`。
+- 身份：`source + venue + inst_id + bar + open_time` 唯一。
+- 修订：同一 K 线再次取得不同终值时 UPSERT；相同终值幂等不重复。
+- 血缘：保存来源、场所、UTC 时区、收线标志、采集时间、as-of 和原始值哈希。
+- 缺口：首次扫描缺少的时间槽会逐点再次查询；仍不存在时写入 `market_data_gaps`，不补零、不
+  插值。只有未经二次复核的缺口才令命令返回非零。
+- 失败：网络、解析、非法 OHLC、空终值或未解释缺口都会令命令返回非零。
 
-```bash
-# 前台运行（测试）
-python3 data/collect_daemon.py --bar 1m --top 20
+## 常驻调度
 
-# 后台运行
-nohup python3 data/collect_daemon.py --bar 1m --top 20 > collect.log 2>&1 &
-```
+macOS launchd 作业名为 `com.okx.collect`，入口是 `data/collect_daemon.py`。守护进程会：
 
-每日 UTC 0:05 会自动执行：
-1. 日线采集（加密币观察池）
-2. 日线采集（美股代币）
-3. 上传当日快照到 COS
+1. 按各周期节奏采集最近已收线 K 线；
+2. 每个 UTC 新自然日，对前一 UTC 日的全部观察标的、全部五个周期调用历史接口回补；
+3. 对每条序列核对精确预期数量与 OHLC/收线/场所/时区不变量，源端缺失需独立复核并留证；
+4. 全部完整后才记成功并备份；失败则保留明细，15 分钟后重试。
 
-## 手动采集命令
-
-```bash
-python3 data/collect.py --bar 1D            # 日线（加密币观察池）
-python3 data/collect.py --stocks --bar 1D   # 日线（美股代币）
-python3 data/collect.py --bar 1m --top 20   # 分钟级（前20加密币）
-```
-
-## 方式二：crontab（Linux/macOS 通用）
+查看状态和日志：
 
 ```bash
-crontab -e
+launchctl list | grep com.okx.collect
+tail -f data/collect.log
 ```
 
-加入以下两行：
+## 手动采集与对账
 
-```cron
-# 每分钟采集 1 分钟线（前 20 币）
-* * * * * cd /Users/wuhai/Desktop/untitled\ folder/crypto-agent && python3 data/collect.py --bar 1m --top 20 >> data/collect.log 2>&1
-
-# 每天 UTC 0:05 采集日线（全部观察池）
-5 0 * * * cd /Users/wuhai/Desktop/untitled\ folder/crypto-agent && python3 data/collect.py --bar 1D >> data/collect.log 2>&1
-```
-
-> 注意：cron 每分钟启动一个 Python 进程，开销略大但简单可靠。
-
-## 方式三：launchd（macOS 原生，开机自启）
-
-把 `data/com.okx.collect.plist` 复制到 `~/Library/LaunchAgents/`，然后：
+只采最近终值：
 
 ```bash
-cp data/com.okx.collect.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.okx.collect.plist
-launchctl start com.okx.collect
+PYTHONPATH=.:lib python3 data/collect.py --bars 1m,15m,1H,4H,1D
+PYTHONPATH=.:lib python3 data/collect.py --inst BTC-USDT-SWAP --bars 1m,15m
 ```
 
-## 容量估算
+回补并严格审计某个 UTC 自然日：
 
-| 周期 | 采集范围 | 条数/天 | 体积/天 | 体积/年 |
-|---|---|---|---|---|
-| 1m | 前 20 币 | 28,800 | ~2.3MB | ~850MB |
-| 1D | 60 币 | 60 | 可忽略 | 可忽略 |
+```bash
+PYTHONPATH=.:lib python3 data/collect.py --reconcile-date 2026-08-22 --all
+PYTHONPATH=.:lib python3 tools/market_data_audit.py --date 2026-08-22
+```
 
-SQLite 单库可承受 GB 级，一年 850MB 没问题；数据多了可归档到 Parquet。
+两条命令只要存在失败序列、未解释缺口或坏行都会返回退出码 1，适合接监控。运行证据保存在
+`market_collection_runs`；数据集资格保存在 `market_datasets`。
 
-## 查询积累的数据
+## 查询示例
 
 ```python
 import sqlite3
+
 conn = sqlite3.connect("data/market.db")
-# 某币某周期的K线
 rows = conn.execute(
-    "SELECT open_time, open, high, low, close FROM klines "
-    "WHERE inst_id='BTC-USDT' AND bar='1m' ORDER BY open_time").fetchall()
+    "SELECT open_time,open,high,low,close,as_of_ms "
+    "FROM klines_v2 WHERE source='okx' AND venue='swap' "
+    "AND time_zone='UTC' AND confirmed=1 "
+    "AND inst_id='BTC-USDT-SWAP' AND bar='15m' ORDER BY open_time"
+).fetchall()
 ```
 
-## 数据上传到腾讯云 COS（备份）
+不得把旧 `klines` 的历史行直接复制到 `klines_v2`。需要历史数据时必须从 OKX 历史接口重新
+获取终值，让确认标志、场所身份和 as-of 可审计。
 
-采集的数据自动上传到 COS 备份，形成"本地采集 → 云端备份"闭环。
+## 备份
+
+每日严格对账成功后，守护进程调用 `data/upload.py` 上传 `market.db`。手动备份命令：
 
 ```bash
-# 手动上传（market.db）
 python3 data/upload.py
-
-# 手动上传（含历史缓存打包）
 python3 data/upload.py --full
 ```
 
-常驻进程（collect_daemon.py）已在每天日线采集后自动上传 market.db。
-
-COS 存储位置：bucket `clawdbot-1300609114`（region ap-beijing），按日期分目录：
-
-```
-crypto-data/
-├── 2026-08-15/
-│   └── market.db           # 每日采集快照（按 UTC 日期分目录）
-├── 2026-08-16/
-│   └── market.db           # 每天一个独立快照，可回溯、不覆盖
-└── history/
-    └── cache_okx.tar.gz    # 6年历史日线缓存（一次性）
-```
-
-> 注意：
-> - tccli 日志写 `~/.tccli/log/` 受沙箱限制，upload.py 用 HOME 重定向解决
->   （凭证已复制到工作目录 `.tccli-home/.tccli/`）。
-> - tccli cos 的 upload/list/delete 必须显式 `--region ap-beijing`，否则报 NoSuchBucket。
-
+备份成功不等于数据完整；数据资格以 `market_collection_runs.status=success` 和
+`tools/market_data_audit.py` 的 `complete=true` 为准。

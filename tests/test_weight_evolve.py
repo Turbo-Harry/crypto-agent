@@ -15,8 +15,6 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "lib"))
 
 import config
 from decision.weight_evolve import (effective_weights, propose, approve,

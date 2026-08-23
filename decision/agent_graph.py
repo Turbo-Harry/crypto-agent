@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from decision.agent_context import build_context, serialize_context
 from decision.agent_contracts import (
     AgentDecision, AgentInput, AgentStep, FinalAction, HarnessConfig, HarnessRun,
-    RuntimeStatus, StepStatus, StepType, Verdict, strict_parse_model_output,
+    ModelCallResult, RuntimeStatus, StepStatus, StepType, Verdict, strict_parse_model_output,
     stable_hash,
 )
 from decision.agent_memory import retrieve_for_input
@@ -76,6 +76,12 @@ class _GraphState(TypedDict, total=False):
     model_error_type: str | None
     model_started_at: str
     model_latency_ms: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    prompt_cache_hit_tokens: int | None
+    prompt_cache_miss_tokens: int | None
+    estimated_cost: float | None
+    pricing_version: str | None
     started_monotonic: float
 
 
@@ -108,6 +114,12 @@ def _durable_result(agent_input: AgentInput, *, db_path: str | None) -> HarnessR
         reason_codes = tuple(json.loads(row.get("reason_codes") or "[]"))
     except (TypeError, ValueError, json.JSONDecodeError):
         reason_codes = ()
+    def _json_tuple(name: str) -> tuple[str, ...]:
+        try:
+            value = json.loads(row.get(name) or "[]")
+            return tuple(str(item) for item in value) if isinstance(value, list) else ()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return ()
     run = HarnessRun(
         run_id=str(row["run_id"]), signal_id=str(row["signal_id"]),
         runtime_status=runtime, final_action=action, model_verdict=verdict,
@@ -115,8 +127,16 @@ def _durable_result(agent_input: AgentInput, *, db_path: str | None) -> HarnessR
         latency_ms=row.get("latency_ms"),
         model_latency_ms=row.get("model_latency_ms"),
         input_tokens=row.get("input_tokens"), output_tokens=row.get("output_tokens"),
+        prompt_cache_hit_tokens=row.get("prompt_cache_hit_tokens"),
+        prompt_cache_miss_tokens=row.get("prompt_cache_miss_tokens"),
+        pricing_version=row.get("pricing_version"),
         estimated_cost=row.get("estimated_cost"), error_type=row.get("error_type"),
-        risk_probability=row.get("risk_probability"), reason_codes=reason_codes)
+        risk_probability=row.get("risk_probability"),
+        confidence=row.get("confidence"), reason_codes=reason_codes,
+        evidence_ids=_json_tuple("evidence_ids"),
+        missing_information=_json_tuple("missing_information"),
+        abstain_reason=row.get("abstain_reason"),
+        decision_reason=row.get("decision_reason"))
     policy = PolicyResult(
         final_action=action, veto=action is FinalAction.AGENT_REJECT,
         reason="idempotent durable result")
@@ -272,8 +292,21 @@ class _Nodes:
         try:
             runnable = RunnableLambda(self.model_call).with_config(
                 {"run_name": "trading_risk_critic"})
-            raw = runnable.invoke(prompt)
-            return {**common, "raw_response": raw,
+            provider_result = runnable.invoke(prompt)
+            if isinstance(provider_result, ModelCallResult):
+                raw = provider_result.content
+                usage = {
+                    "input_tokens": provider_result.input_tokens,
+                    "output_tokens": provider_result.output_tokens,
+                    "prompt_cache_hit_tokens": provider_result.prompt_cache_hit_tokens,
+                    "prompt_cache_miss_tokens": provider_result.prompt_cache_miss_tokens,
+                    "estimated_cost": provider_result.estimated_cost,
+                    "pricing_version": provider_result.pricing_version,
+                }
+            else:
+                raw = provider_result
+                usage = {}
+            return {**common, **usage, "raw_response": raw,
                     "response_hash": stable_hash(raw),
                     "model_latency_ms": round((time.monotonic() - started) * 1000),
                     "model_outcome": "completed"}
@@ -351,8 +384,21 @@ class _Nodes:
                 latency_ms=round(
                     (time.monotonic() - state["started_monotonic"]) * 1000),
                 model_latency_ms=state.get("model_latency_ms"),
+                input_tokens=state.get("input_tokens"),
+                output_tokens=state.get("output_tokens"),
+                prompt_cache_hit_tokens=state.get("prompt_cache_hit_tokens"),
+                prompt_cache_miss_tokens=state.get("prompt_cache_miss_tokens"),
+                pricing_version=(state.get("pricing_version") or
+                                 state["agent_input"].pricing_version),
+                estimated_cost=state.get("estimated_cost"),
                 risk_probability=decision.risk_probability if decision else None,
+                confidence=decision.confidence if decision else None,
                 reason_codes=decision.reason_codes if decision else (),
+                evidence_ids=decision.evidence_ids if decision else (),
+                missing_information=(decision.missing_information
+                                     if decision else ()),
+                abstain_reason=decision.abstain_reason if decision else None,
+                decision_reason=decision.reason if decision else None,
                 error_type=(None if runtime in (
                     RuntimeStatus.COMPLETED, RuntimeStatus.DISABLED,
                     RuntimeStatus.NO_KEY) else runtime.value))

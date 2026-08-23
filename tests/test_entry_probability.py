@@ -145,7 +145,12 @@ def main():
           evaluation["good_multiclass_folds"] >= 4, str(evaluation))
     check("同等覆盖率下 precision 提升且至少 4/5 折稳定",
           evaluation["precision_lift"] > 0 and
-          evaluation["good_precision_folds"] >= 4, str(evaluation))
+          evaluation["good_precision_folds"] >= 4 and
+          all(fold["selected_n"] == fold["baseline_selected_n"]
+              for fold in evaluation["folds"]), str(evaluation))
+    check("实际样本外放行收益 95% 下界为正且样本不少于观察门",
+          evaluation["selected_n"] >= config.MODEL_MIN_SELECTED_EVALUATIONS and
+          evaluation["oos_net_ev_lower_bound"] > 0, str(evaluation))
     combo_evaluation = evaluate_rows(
         synthetic_rows(), ["edge", "edge_aux"])
     check("多个已验证因子会作为同一特征向量联合做 5 折样本外回测",

@@ -10,7 +10,7 @@
   6. 信号阈值卡（80 vs 自适应阈值）
 
 全部离线（FakeAdapter + 临时 SQLite），CI 可跑。
-运行：PYTHONPATH=lib python3 tests/test_decision_loop.py
+运行：PYTHONPATH=. .venv/bin/python tests/test_decision_loop.py
 """
 import os
 import json
@@ -19,7 +19,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
+# 旧 lib/ 是 Python 3.9 构建产物，不加入 Python 3.12 的测试搜索路径。
 
 from decision.self_evolving_trader import SelfEvolvingTrader
 from decision.experience_scoring import ScoredExperience
@@ -504,10 +504,15 @@ def test_harness_shadow_keeps_legacy_authority(tmp):
         dt.agent_model_call = reject_shadow
         agent_judge.judge = lambda *a, **k: ("approve", "legacy pass", None)
         dt.scan_signals()
-        run = sdb.q1("SELECT final_action FROM agent_runs",
+        run = sdb.q1("SELECT final_action,input_snapshot FROM agent_runs",
                      db_path=dt._db_path)
         check("Harness reject 留下 shadow_reject Trace",
               run and run["final_action"] == "shadow_reject")
+        frozen = json.loads(run["input_snapshot"])
+        check("Harness 冻结账户风险、数据质量与完整候选特征",
+              frozen["account"]["equity_usdt"] > 0 and
+              "risk_can_trade" in frozen["health"] and
+              bool(frozen["market"]["frozen_features"]))
         check("legacy approve 时 Harness reject 不得拦单", len(fake.orders) >= 1)
 
         work = os.path.join(tmp, "harness_legacy_reject")

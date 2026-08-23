@@ -140,15 +140,24 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         def fake_call(prompt, **kwargs):
             captured["prompt"] = prompt
             captured.update(kwargs)
-            return '{"verdict":"approve","risk_probability":0.1,"confidence":0.8}'
+            return {
+                "choices": [{"message": {"content":
+                    '{"verdict":"approve","risk_probability":0.1,"confidence":0.8}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5,
+                          "prompt_cache_hit_tokens": 4,
+                          "prompt_cache_miss_tokens": 6},
+            }
 
-        with mock.patch.object(agent_judge, "_call_llm", side_effect=fake_call):
+        with mock.patch.object(agent_judge, "_request_llm", side_effect=fake_call):
             raw = agent_judge.production_harness_model_call("immutable-context")
-        self.assertIn('"verdict":"approve"', raw)
+        self.assertIn('"verdict":"approve"', raw.content)
         self.assertEqual(captured["prompt"], "immutable-context")
         self.assertEqual(captured["timeout"], config.AGENT_HARNESS_TIMEOUT_MS / 1000.0)
+        self.assertEqual(captured["model"], config.AGENT_HARNESS_MODEL)
         self.assertIn("evidence_ids", captured["system_prompt"])
         self.assertIn("insufficient_evidence", captured["system_prompt"])
+        self.assertEqual(raw.pricing_version, config.AGENT_HARNESS_PRICING_VERSION)
+        self.assertGreater(raw.estimated_cost, 0)
 
     def test_provider_availability_never_exposes_key(self):
         with mock.patch.object(agent_judge, "_read_key", return_value="secret"):

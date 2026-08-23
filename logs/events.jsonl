@@ -483,3 +483,12 @@
 {"ts": 1787474086.467, "type": "config_reload", "payload": {"changed": ["SIGNAL_FEATURE_SCHEMA_VERSION"]}}
 {"ts": 1787474674.156, "type": "config_reload", "payload": {"changed": ["FACTOR_MAX_AUTO_CANDIDATES"]}}
 {"ts": 1787474674.207, "type": "config_reload", "payload": {"changed": ["FACTOR_MAX_AUTO_CANDIDATES"]}}
+{"ts": 1787491419.276, "type": "config_reload", "payload": {"changed": ["AGENT_HARNESS_CONTEXT_VERSION"]}}
+{"ts": 1787491419.775, "type": "config_reload", "payload": {"changed": ["AGENT_HARNESS_CONTEXT_VERSION"]}}
+{"ts": 1787492722.708, "type": "open", "payload": {"tid": "txn_1787492722_e2d9", "symbol": "ENA", "dir": "long", "entry": 0.17242, "stop": 0.16812785714285713, "tp": 0.1810042857142857, "qty": 29.0, "lev": 3, "notional": 5.000179999999999}}
+{"ts": 1787493229.237, "type": "config_reload", "payload": {"changed": ["AGENT_HARNESS_CONTEXT_VERSION"]}}
+{"ts": 1787493229.482, "type": "config_reload", "payload": {"changed": ["AGENT_HARNESS_CONTEXT_VERSION"]}}
+{"ts": 1787493649.075, "type": "open", "payload": {"tid": "txn_1787493649_5f12", "symbol": "POL", "dir": "long", "entry": 0.10744, "stop": 0.10654857142857142, "tp": 0.10922285714285714, "qty": 46.0, "lev": 3, "notional": 4.94224}}
+{"ts": 1787493982.658, "type": "config_reload", "payload": {"changed": ["AGENT_EVALUATION_VERSION"]}}
+{"ts": 1787494598.399, "type": "close", "payload": {"tid": "txn_1787492722_e2d9", "symbol": "ENA", "dir": "long", "pnl_usdt": -0.05, "fees_usdt": 0.0056, "funding_usdt": -0.0, "net_pnl_usdt": -0.0556, "pnl_pct": -0.010497622085604792, "reason": "对账:交易所无持仓,闭环台账", "lessons": 2}}
+{"ts": 1787494828.41, "type": "open", "payload": {"tid": "txn_1787494828_e3de", "symbol": "HYPE", "dir": "long", "entry": 80.622, "stop": 79.83221428571429, "tp": 82.20157142857143, "qty": 0.12000000000000002, "lev": 3, "notional": 9.674640000000002}}

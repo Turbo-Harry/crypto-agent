@@ -193,6 +193,14 @@ class EntryAccuracyAuditTest(unittest.TestCase):
             "reject_n": config.AGENT_EVAL_MIN_REJECT,
             "incremental_ev_lower_bound": .1,
             "max_segment_share": .5,
+            "model_cost_data_complete": True,
+            "trace_coverage": 1.0,
+            "probability_coverage": 1.0,
+            "reject_evidence_coverage": 1.0,
+            "brier_skill": .1,
+            "saved_loss": 10.0,
+            "missed_profit": 1.0,
+            "model_cost_r": .01,
         })
         with db.tx(db_path=self.path) as conn:
             conn.executemany(
@@ -232,6 +240,29 @@ class EntryAccuracyAuditTest(unittest.TestCase):
     def test_unknown_strategy_is_rejected(self):
         with self.assertRaises(ValueError):
             audit_status(self.path, strategy_id="unknown")
+
+    def test_legacy_and_old_harness_versions_cannot_be_combined_for_gate(self):
+        self._insert_candidates(config.AGENT_EVAL_MIN_VALID)
+        metrics = {
+            "n": 1, "reject_n": 0, "incremental_ev_lower_bound": 0,
+            "max_segment_share": 0, "model_cost_data_complete": False,
+        }
+        with db.tx(db_path=self.path) as conn:
+            for idx in range(config.AGENT_EVAL_MIN_VALID):
+                conn.execute(
+                    "INSERT INTO ai_judgments (ts,base,direction,verdict,"
+                    "call_status,outcome_r,signal_id) VALUES (?,?,?,?,?,?,?)",
+                    (idx, "BTC", "long", "reject" if idx < 30 else "approve",
+                     "valid", -1.0, f"sig-{idx:04d}"))
+            conn.execute(
+                "INSERT INTO agent_versions (version,role,status,created_ts,metrics_json) "
+                "VALUES (?,?,?,?,?)",
+                ("current-harness", "challenger", "shadow", 2,
+                 json.dumps(metrics)))
+        result = audit_status(self.path)
+        self.assertEqual(result["counts"]["legacy_agent_valid"], 100)
+        self.assertEqual(result["counts"]["agent_valid_distinct_signals"], 1)
+        self.assertFalse(result["gates"]["agent_sample"]["passed"])
 
     def test_all_statistical_gates_can_be_proven_without_writes(self):
         self._insert_candidates()
@@ -282,7 +313,15 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                  json.dumps({"n": config.AGENT_EVAL_MIN_VALID,
                              "reject_n": config.AGENT_EVAL_MIN_REJECT,
                              "incremental_ev_lower_bound": .1,
-                             "max_segment_share": .5})))
+                             "max_segment_share": .5,
+                             "model_cost_data_complete": True,
+                             "trace_coverage": 1.0,
+                             "probability_coverage": 1.0,
+                             "reject_evidence_coverage": 1.0,
+                             "brier_skill": .1,
+                             "saved_loss": 10.0,
+                             "missed_profit": 1.0,
+                             "model_cost_r": .01})))
 
         result = audit_status(self.path)
         self.assertTrue(result["statistically_complete"], result["blockers"])

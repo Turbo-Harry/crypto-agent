@@ -10,14 +10,11 @@ ccxt 对 OKX 的 WebSocket 未实现，故用原生 WebSocket（websocket-client
 用法：
   python3 realtime_okx.py    # 实时打印 BTC/ETH 价格 + 资金费率
 """
-import sys
-import os
 import json
 import threading
 import time
 from collections import deque
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import websocket
 
 import config

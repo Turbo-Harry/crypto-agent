@@ -176,6 +176,19 @@ def main():
                      config.FACTOR_EMBARGO_HOURS * 3600
                      for train, test in splits)
     check("purge+4H embargo 无标签重叠", no_overlap)
+    tied = []
+    for idx, row in enumerate(data):
+        kline_ts = int(row["event_ts"] // 900)
+        tied.append(dict(row, signal_id=f"t{idx}a", kline_ts=kline_ts))
+        tied.append(dict(row, signal_id=f"t{idx}b", event_ts=row["event_ts"] + 1,
+                         label_end_ts=row["label_end_ts"] + 1,
+                         kline_ts=kline_ts))
+    grouped_splits = purged_walk_forward_splits(tied)
+    grouped_safe = all(
+        {tied[idx]["kline_ts"] for idx in train}.isdisjoint(
+            {tied[idx]["kline_ts"] for idx in test})
+        for train, test in grouped_splits)
+    check("同一 15m K 的跨币批次不会横跨训练与测试", grouped_safe)
 
     with tempfile.TemporaryDirectory() as td:
         db = os.path.join(td, "factor.db")

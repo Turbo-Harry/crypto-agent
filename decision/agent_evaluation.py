@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import math
 from typing import Iterable, Mapping, Sequence
 
 import config
+from interfaces.agent import stable_hash
 
 
 @dataclass(frozen=True)
@@ -108,19 +110,60 @@ def compare_same_inputs(champion: Sequence[Mapping[str, object]],
                         challenger: Sequence[Mapping[str, object]]) -> dict[str, object]:
     """Compare only paired frozen inputs; unpaired rows are excluded."""
 
-    left = {str(row["input_hash"]): row for row in champion if row.get("input_hash")}
-    right = {str(row["input_hash"]): row for row in challenger if row.get("input_hash")}
-    keys = sorted(set(left) & set(right))
-    disagreements = sum(left[key].get("verdict") != right[key].get("verdict") for key in keys)
-    return {"paired_n": len(keys), "disagreements": disagreements,
-            "agreement_rate": (1.0 - disagreements / len(keys)) if keys else None,
-            "input_hashes": keys}
+    def pairing_key(row: Mapping[str, object]) -> str | None:
+        value = row.get("evidence_hash") or row.get("input_hash")
+        return str(value) if value else None
+
+    left = {key: row for row in champion if (key := pairing_key(row))}
+    right = {key: row for row in challenger if (key := pairing_key(row))}
+    common = sorted(set(left) & set(right))
+    mismatches = [key for key in common
+                  if (left[key].get("pnl_r") is not None and
+                      right[key].get("pnl_r") is not None and
+                      float(left[key]["pnl_r"]) != float(right[key]["pnl_r"]))]
+    keys = [key for key in common if key not in set(mismatches)]
+    disagreements = sum(left[key].get("verdict") != right[key].get("verdict")
+                        for key in keys)
+    champion_rows = [left[key] for key in keys]
+    challenger_rows = [right[key] for key in keys]
+    champion_cost = sum(float(row.get("model_cost_r") or 0)
+                        for row in champion_rows)
+    challenger_cost = sum(float(row.get("model_cost_r") or 0)
+                          for row in challenger_rows)
+    champion_metrics = summarize(champion_rows, model_cost=champion_cost)
+    challenger_metrics = summarize(challenger_rows, model_cost=challenger_cost)
+    champion_precision = (
+        sum(float(left[key].get("pnl_r") or 0) < 0 for key in keys
+            if left[key].get("verdict") == "reject") /
+        champion_metrics.reject_n if champion_metrics.reject_n else None)
+    challenger_precision = (
+        sum(float(right[key].get("pnl_r") or 0) < 0 for key in keys
+            if right[key].get("verdict") == "reject") /
+        challenger_metrics.reject_n if challenger_metrics.reject_n else None)
+    return {
+        "paired_n": len(keys), "outcome_mismatch_n": len(mismatches),
+        "disagreements": disagreements,
+        "agreement_rate": (1.0 - disagreements / len(keys)) if keys else None,
+        "champion": champion_metrics.__dict__,
+        "challenger": challenger_metrics.__dict__,
+        "reject_coverage_delta": (
+            (challenger_metrics.reject_n - champion_metrics.reject_n) / len(keys)
+            if keys else None),
+        "blocked_loss_precision_delta": (
+            challenger_precision - champion_precision
+            if challenger_precision is not None and champion_precision is not None
+            else None),
+        "missed_profit_delta": (challenger_metrics.missed_profit -
+                                champion_metrics.missed_profit),
+        "incremental_ev_delta": (challenger_metrics.incremental_ev -
+                                 champion_metrics.incremental_ev),
+        "input_hashes": keys,
+    }
 
 
 def evaluate_agent(db_path=None):
     """评价旧 AI 把关相对纯量化基线的 15m/4h 反事实增量。"""
     import storage.db as sdb
-    sdb.init_db(db_path)
     rows = sdb.q(
         "SELECT a.base,a.direction,a.verdict,a.reason_code,a.risk_probability,"
         "a.outcome_r,s.entry,s.stop,s.features,s.horizon_hours "
@@ -177,33 +220,107 @@ def evaluate_agent(db_path=None):
 
 
 def _harness_version(row: Mapping[str, object]) -> str:
-    """模型 + prompt/context/schema/retrieval 共同定义一个可比较 Agent 版本。"""
+    """策略、模型、上下文、工具和价格口径共同定义可比较版本。"""
     return config.AGENT_EVALUATION_VERSION + ":harness:" + ":".join(
         str(row.get(name) or "unknown") for name in (
-        "model_version", "prompt_version", "context_version",
-        "schema_version", "retrieval_version"))
+        "strategy_id", "model_version", "prompt_version", "context_version",
+        "schema_version", "retrieval_version", "tool_policy_version",
+        "pricing_version"))
 
 
-def evaluate_harness(db_path=None, version=None):
+def _json_object(raw: object) -> dict[str, object]:
+    try:
+        value = json.loads(raw or "{}")
+        return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _regime_label(raw_features: object) -> str:
+    """把冻结的结构化 regime 压成稳定、可哈希的分段标签。"""
+    regime = _json_object(raw_features).get("regime")
+    if isinstance(regime, Mapping):
+        for name in ("tag", "state"):
+            if regime.get(name):
+                return str(regime[name])
+        market = regime.get("market_state")
+        if isinstance(market, Mapping) and market.get("state"):
+            return str(market["state"])
+        return "unknown"
+    return str(regime or "unknown")
+
+
+def _risk_budget_usdt(row: Mapping[str, object]) -> float | None:
+    """Rebuild the paper risk amount frozen at decision time.
+
+    The model invoice is denominated in USD while outcomes are in R.  A cost
+    can only enter incremental R when equity, risk fraction and notional cap
+    were frozen in the input snapshot; otherwise promotion must remain blocked.
+    """
+
+    snapshot = _json_object(row.get("input_snapshot"))
+    account = snapshot.get("account")
+    signal = snapshot.get("signal")
+    if not isinstance(account, Mapping) or not isinstance(signal, Mapping):
+        return None
+    try:
+        entry = float(signal.get("entry") or row.get("entry") or 0)
+        stop = float(signal.get("stop") or row.get("stop") or 0)
+        equity = float(account.get("equity_usdt") or 0)
+        risk_fraction = float(account.get("risk_per_trade") or 0)
+        notional_cap = float(account.get("max_notional_per_trade_usdt") or 0)
+    except (TypeError, ValueError):
+        return None
+    if min(entry, stop, equity, risk_fraction, notional_cap) <= 0:
+        return None
+    stop_fraction = abs(entry - stop) / entry
+    risk = min(equity * risk_fraction, notional_cap * stop_fraction)
+    return risk if risk > 0 else None
+
+
+def _calibration_bins(pairs: Sequence[tuple[float, bool]]) -> list[dict[str, object]]:
+    bins: list[dict[str, object]] = []
+    for idx in range(5):
+        low, high = idx / 5, (idx + 1) / 5
+        selected = [(p, label) for p, label in pairs
+                    if low <= p <= high and (idx == 4 or p < high)]
+        if not selected:
+            continue
+        bins.append({
+            "low": low, "high": high, "n": len(selected),
+            "mean_probability": round(sum(p for p, _ in selected) /
+                                      len(selected), 6),
+            "actual_loss_rate": round(sum(bool(label) for _, label in selected) /
+                                      len(selected), 6),
+        })
+    return bins
+
+
+def evaluate_harness(db_path=None, version=None, strategy_id=None):
     """按成熟的 15m/4h 路径评价 Harness；费用后、分版本、带 EV 下界。"""
     import storage.db as sdb
-    sdb.init_db(db_path)
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
     rows = sdb.q(
         "SELECT r.model_version,r.prompt_version,r.context_version,r.schema_version,"
-        "r.retrieval_version,r.model_verdict,r.final_action,r.risk_probability,"
-        "r.reason_codes,r.created_ts,s.symbol,s.direction,s.entry,s.stop,s.features,"
-        "s.horizon_hours,"
+        "r.retrieval_version,r.tool_policy_version,r.model_verdict,r.final_action,"
+        "r.risk_probability,r.confidence,r.reason_codes,r.evidence_ids,"
+        "r.missing_information,r.input_hash,r.input_snapshot,r.estimated_cost,"
+        "r.pricing_version,r.created_ts,s.strategy_id,s.symbol,s.direction,s.entry,"
+        "s.stop,s.features,s.event_ts,s.horizon_hours,"
         "e.pnl_r FROM agent_runs r JOIN agent_evaluations e ON e.run_id=r.run_id "
         "JOIN signal_samples_canonical s ON s.signal_id=r.signal_id "
         "WHERE e.lifecycle_status='mature' AND r.runtime_status='completed' "
-        "AND r.model_verdict IS NOT NULL AND s.timeframe=? AND s.horizon_hours=?",
-        [config.SIGNAL_SAMPLE_TIMEFRAME, config.SIGNAL_OUTCOME_HORIZON_HOURS],
+        "AND r.model_verdict IS NOT NULL AND s.strategy_id=? "
+        "AND s.timeframe=? AND s.horizon_hours=?",
+        [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
+         config.SIGNAL_OUTCOME_HORIZON_HOURS],
         db_path=db_path)
     groups = defaultdict(list)
     for row in rows:
         groups[_harness_version(row)].append(row)
     if not groups:
         return {"status": "insufficient_data", "version": version,
+                "strategy_id": strategy_id,
                 "n": 0, "reject_n": 0, "incremental_ev": None,
                 "incremental_ev_lower_bound": None}
     if version is None:
@@ -212,26 +329,54 @@ def evaluate_harness(db_path=None, version=None):
     material = groups.get(version, [])
     if not material:
         return {"status": "insufficient_data", "version": version,
+                "strategy_id": strategy_id,
                 "n": 0, "reject_n": 0, "incremental_ev": None,
                 "incremental_ev_lower_bound": None}
-    impacts, net_returns, rejects = [], [], []
-    brier_pairs = []
+    trade_impacts, net_returns, rejects = [], [], []
+    model_cost_r_values: list[float] = []
+    model_cost_usd = 0.0
+    missing_cost_n = 0
+    brier_pairs: list[tuple[float, bool]] = []
     segments = defaultdict(int)
     reason_counts = defaultdict(int)
+    stability_groups: dict[str, list[tuple[bool, float, float]]] = defaultdict(list)
+    replayable_n = 0
+    reject_evidence_n = 0
     from decision.entry_probability import execution_cost_r
     for row in material:
         cost_r = float(execution_cost_r(row) or 0.0)
         net_r = float(row.get("pnl_r") or 0) - cost_r
         rejected = row.get("model_verdict") == "reject"
-        impact = -net_r if rejected else 0.0
-        impacts.append(impact)
+        trade_impact = -net_r if rejected else 0.0
+        trade_impacts.append(trade_impact)
         net_returns.append(net_r)
+        snapshot = _json_object(row.get("input_snapshot"))
+        if (snapshot and row.get("input_hash") and
+                stable_hash(snapshot) == row.get("input_hash")):
+            replayable_n += 1
+        estimated_usd = row.get("estimated_cost")
+        if estimated_usd is None:
+            missing_cost_n += 1
+        else:
+            usd = max(0.0, float(estimated_usd))
+            model_cost_usd += usd
+            risk_budget = _risk_budget_usdt(row)
+            if usd == 0:
+                model_cost_r_values.append(0.0)
+            elif risk_budget is None:
+                missing_cost_n += 1
+            else:
+                model_cost_r_values.append(usd / risk_budget)
+        regime = _regime_label(row.get("features"))
+        month = datetime.fromtimestamp(
+            float(row.get("event_ts") or 0), tz=timezone.utc).strftime("%Y-%m")
+        for key in (
+                f"direction:{row.get('direction') or 'unknown'}",
+                f"symbol:{row.get('symbol') or 'unknown'}",
+                f"regime:{regime}", f"month:{month}"):
+            stability_groups[key].append((rejected, net_r, trade_impact))
         if rejected:
             rejects.append(row)
-            try:
-                regime = json.loads(row.get("features") or "{}").get("regime")
-            except (TypeError, ValueError, json.JSONDecodeError):
-                regime = None
             segments[(row.get("symbol"), row.get("direction"), regime)] += 1
             try:
                 codes = json.loads(row.get("reason_codes") or "[]")
@@ -239,61 +384,128 @@ def evaluate_harness(db_path=None, version=None):
                 codes = []
             for code in codes:
                 reason_counts[str(code)] += 1
+            try:
+                evidence = json.loads(row.get("evidence_ids") or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                evidence = []
+            if evidence:
+                reject_evidence_n += 1
         if row.get("risk_probability") is not None:
             brier_pairs.append((float(row["risk_probability"]), net_r < 0))
     n = len(material)
-    mean = sum(impacts) / n
+    cost_complete = missing_cost_n == 0 and len(model_cost_r_values) == n
+    impacts = ([trade - model_cost for trade, model_cost in
+                zip(trade_impacts, model_cost_r_values)] if cost_complete else [])
+    mean = sum(impacts) / n if impacts else None
     variance = (sum((value - mean) ** 2 for value in impacts) / (n - 1)
-                if n > 1 else 0.0)
-    lower = mean - config.AGENT_EVAL_EV_Z * math.sqrt(variance / n)
+                if impacts and n > 1 and mean is not None else 0.0)
+    lower = (mean - config.AGENT_EVAL_EV_Z * math.sqrt(variance / n)
+             if mean is not None else None)
+    pre_cost_mean = sum(trade_impacts) / n
+    pre_cost_variance = (sum((value - pre_cost_mean) ** 2
+                             for value in trade_impacts) / (n - 1)
+                         if n > 1 else 0.0)
+    pre_cost_lower = pre_cost_mean - config.AGENT_EVAL_EV_Z * math.sqrt(
+        pre_cost_variance / n)
     saved = sum(max(0.0, -value) for value, row in zip(net_returns, material)
                 if row.get("model_verdict") == "reject")
     missed = sum(max(0.0, value) for value, row in zip(net_returns, material)
                  if row.get("model_verdict") == "reject")
     reject_n = len(rejects)
     baseline_ev = sum(net_returns) / n
-    policy_ev = sum(value for value, row in zip(net_returns, material)
-                    if row.get("model_verdict") != "reject") / n
+    policy_before_model_cost = sum(
+        value for value, row in zip(net_returns, material)
+        if row.get("model_verdict") != "reject") / n
+    policy_ev = (policy_before_model_cost - sum(model_cost_r_values) / n
+                 if cost_complete else None)
+    loss_rate = sum(label for _, label in brier_pairs) / len(brier_pairs) \
+        if brier_pairs else None
+    brier = (brier_score([pair[0] for pair in brier_pairs],
+                         [pair[1] for pair in brier_pairs])
+             if brier_pairs else None)
+    baseline_brier = (brier_score([loss_rate] * len(brier_pairs),
+                                  [pair[1] for pair in brier_pairs])
+                      if loss_rate is not None else None)
+    brier_skill = (1 - brier / baseline_brier
+                   if brier is not None and baseline_brier else None)
+    stability = {}
+    for key, group in sorted(stability_groups.items()):
+        group_rejects = [item for item in group if item[0]]
+        stability[key] = {
+            "n": len(group), "reject_n": len(group_rejects),
+            "false_accept_n": sum(not rejected and net_r < 0
+                                  for rejected, net_r, _ in group),
+            "false_reject_n": sum(rejected and net_r > 0
+                                  for rejected, net_r, _ in group),
+            "incremental_ev_before_model_cost": round(
+                sum(item[2] for item in group) / len(group), 6),
+        }
+    evaluated = (
+        n >= config.AGENT_EVAL_MIN_VALID and
+        reject_n >= config.AGENT_EVAL_MIN_REJECT and cost_complete and
+        replayable_n == n and len(brier_pairs) == n)
     return {
-        "status": ("evaluated" if n >= config.AGENT_EVAL_MIN_VALID and
-                   reject_n >= config.AGENT_EVAL_MIN_REJECT else
-                   "insufficient_data"),
-        "version": version, "n": n, "reject_n": reject_n,
+        "status": "evaluated" if evaluated else "insufficient_data",
+        "version": version, "strategy_id": strategy_id,
+        "n": n, "reject_n": reject_n,
+        "reject_coverage": round(reject_n / n, 6),
         "saved_loss": round(saved, 6), "missed_profit": round(missed, 6),
         "blocked_loss_precision": (round(sum(
             1 for value, row in zip(net_returns, material)
             if row.get("model_verdict") == "reject" and value < 0) / reject_n, 6)
             if reject_n else None),
-        "incremental_ev": round(policy_ev - baseline_ev, 6),
-        "incremental_ev_lower_bound": round(lower, 6),
+        "model_cost_usd": round(model_cost_usd, 8),
+        "model_cost_r": (round(sum(model_cost_r_values), 8)
+                         if cost_complete else None),
+        "model_cost_data_complete": cost_complete,
+        "model_cost_missing_n": missing_cost_n,
+        "incremental_ev_before_model_cost": round(pre_cost_mean, 6),
+        "incremental_ev_before_model_cost_lower_bound": round(pre_cost_lower, 6),
+        "incremental_ev": round(mean, 6) if mean is not None else None,
+        "incremental_ev_lower_bound": round(lower, 6) if lower is not None else None,
         "baseline_ev_r": round(baseline_ev, 6),
-        "agent_policy_ev_r": round(policy_ev, 6),
-        "brier": (round(brier_score(
-            [pair[0] for pair in brier_pairs], [pair[1] for pair in brier_pairs]), 6)
-            if brier_pairs else None),
+        "agent_policy_ev_r": round(policy_ev, 6) if policy_ev is not None else None,
+        "brier": round(brier, 6) if brier is not None else None,
+        "baseline_brier": (round(baseline_brier, 6)
+                           if baseline_brier is not None else None),
+        "brier_skill": round(brier_skill, 6) if brier_skill is not None else None,
+        "probability_coverage": round(len(brier_pairs) / n, 6),
+        "calibration_bins": _calibration_bins(brier_pairs),
+        "replayable_n": replayable_n,
+        "trace_coverage": round(replayable_n / n, 6),
+        "reject_evidence_coverage": (round(reject_evidence_n / reject_n, 6)
+                                     if reject_n else None),
+        "false_accept_n": sum(not (row.get("model_verdict") == "reject") and
+                              value < 0 for value, row in zip(net_returns, material)),
+        "false_reject_n": sum((row.get("model_verdict") == "reject") and
+                              value > 0 for value, row in zip(net_returns, material)),
         "max_segment_share": (round(max(segments.values()) / reject_n, 6)
                               if reject_n else 0.0),
         "reason_counts": dict(sorted(reason_counts.items())),
+        "stability": stability,
     }
 
 
-def sync_harness_lifecycle(db_path=None):
+def sync_harness_lifecycle(db_path=None, strategy_id=None):
     """自动登记/验证 Harness 版本；只到 validated，绝不自动开启 veto。"""
     from decision import agent_lifecycle
     from storage.agent_lifecycle import transition
-    metrics = evaluate_harness(db_path=db_path)
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    metrics = evaluate_harness(db_path=db_path, strategy_id=strategy_id)
     if not metrics.get("version"):
         return {"status": "no_mature_samples", "metrics": metrics}
     version = metrics["version"]
-    row = agent_lifecycle.get(version, db_path=db_path)
+    row = agent_lifecycle.get(version, strategy_id=strategy_id, db_path=db_path)
     if not row:
-        row = agent_lifecycle.register(version, db_path=db_path)
+        row = agent_lifecycle.register(
+            version, strategy_id=strategy_id, db_path=db_path)
     if row["status"] == "candidate":
         row = transition(version, "shadow", reason="mature_samples_available",
-                         metrics=metrics, db_path=db_path)
+                         metrics=metrics, strategy_id=strategy_id, db_path=db_path)
     if (row["status"] == "shadow" and
             metrics["n"] >= config.AGENT_EVAL_MIN_VALID and
             metrics["reject_n"] >= config.AGENT_EVAL_MIN_REJECT):
-        row = agent_lifecycle.validate(version, metrics, db_path=db_path)
+        row = agent_lifecycle.validate(
+            version, metrics, strategy_id=strategy_id, db_path=db_path)
     return {"status": row["status"], "version": version,
             "metrics": metrics}

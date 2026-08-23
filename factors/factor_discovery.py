@@ -9,12 +9,8 @@ gplearn 的 SymbolicTransformer 自动组合基础算子，进化出 IC 高的�
     ↓ Spearman IC 检验（因子值 vs 未来收益）
   有效因子（IC 显著，训练/测试分离防过拟合）
 """
-import sys
-import os
 from datetime import datetime, timezone
 
-# 旧 Python 3.9 lib 只作末级兼容路径，不能覆盖 Python 3.12 .venv。
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import numpy as np
 from data.fetch_okx import fetch_btc_klines
 from data.fetch_fear_greed import fetch_fng

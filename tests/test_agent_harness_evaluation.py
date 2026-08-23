@@ -37,6 +37,26 @@ class AgentHarnessEvaluationTest(unittest.TestCase):
         self.assertEqual(result["paired_n"], 1)
         self.assertEqual(result["disagreements"], 1)
 
+    def test_challenger_reports_precision_ev_and_reject_coverage_deltas(self):
+        champion = [
+            {"input_hash": "champion-loss", "evidence_hash": "loss",
+             "verdict": "approve", "pnl_r": -1},
+            {"input_hash": "champion-win", "evidence_hash": "win",
+             "verdict": "approve", "pnl_r": 2},
+        ]
+        challenger = [
+            {"input_hash": "challenger-loss", "evidence_hash": "loss",
+             "verdict": "reject", "pnl_r": -1, "model_cost_r": .1},
+            {"input_hash": "challenger-win", "evidence_hash": "win",
+             "verdict": "approve", "pnl_r": 2, "model_cost_r": .1},
+        ]
+        result = compare_same_inputs(champion, challenger)
+        self.assertEqual(result["paired_n"], 2)
+        self.assertGreater(result["incremental_ev_delta"], 0)
+        self.assertGreater(result["reject_coverage_delta"], 0)
+        self.assertEqual(result["outcome_mismatch_n"], 0)
+        self.assertAlmostEqual(result["challenger"]["model_cost"], .2)
+
 
 if __name__ == "__main__":
     unittest.main()

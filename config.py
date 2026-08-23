@@ -160,10 +160,20 @@ AGENT_JUDGE_LESSONS_TOP = 3             # 回喂的该币 trusted/discarded 教�
 AGENT_HARNESS_ENABLED = True
 AGENT_HARNESS_VETO_ENABLED = False
 AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v1"
+# 本轮 Challenger 只改变 Context；模型继续使用现役 deepseek-chat 兼容名，
+# 避免把模型切换与证据补全混成一个无法归因的实验。
+AGENT_HARNESS_MODEL = "deepseek-chat"
 # LangGraph/LangChain 唯一运行时切换会生成新的可审计 Harness 身份；
 # paper/live 共用同一编排实现，但模型仍固定 shadow、无执行权限。
-AGENT_HARNESS_CONTEXT_VERSION = "context-v2-langgraph"
+AGENT_HARNESS_CONTEXT_VERSION = "context-v3-accuracy-evidence"
 AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
+AGENT_HARNESS_TOOL_POLICY_VERSION = "tool-policy-v1"
+# DeepSeek 2026-08-23 官方美元价（每百万 token）；只用于 shadow 成本审计。
+# cache 明细缺失时按 cache miss 计费，防止低估模型成本。
+AGENT_HARNESS_PRICING_VERSION = "deepseek-v4-flash-usd-2026-08-23"
+AGENT_HARNESS_INPUT_CACHE_HIT_USD_PER_M = 0.0028
+AGENT_HARNESS_INPUT_CACHE_MISS_USD_PER_M = 0.14
+AGENT_HARNESS_OUTPUT_USD_PER_M = 0.28
 AGENT_HARNESS_MAX_TOOL_CALLS = 3
 AGENT_HARNESS_MAX_STEPS = 8
 AGENT_HARNESS_TIMEOUT_MS = 4000
@@ -188,7 +198,7 @@ AGENT_HARNESS_MEMORY_MIN_STRENGTH = 0.2
 AGENT_EVAL_MIN_VALID = 100               # 有真实路径结果的有效判断门槛
 AGENT_EVAL_MIN_REJECT = 30               # reject 拦截能力最少样本
 AGENT_EVAL_EV_Z = 1.645                  # Agent 增量 EV 单侧 95% 保守下界
-AGENT_EVALUATION_VERSION = "agent-net-ev-v2"  # v2: 交易成本 + 保守期望资金费
+AGENT_EVALUATION_VERSION = "agent-net-ev-v3-replay-cost"  # v3: 可重放证据 + provider 成本 + 校准门
 # 预测机制：15m OHLC 移动区块 bootstrap，预测未来 16 根（4h）
 # 价格分布 + 触达概率；与同一 15m/4h 标签口径的历史实证率混合。
 FORECAST_ENABLED = True                 # 开关

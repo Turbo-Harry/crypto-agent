@@ -51,11 +51,12 @@ def upload_file(local_path, cos_key):
     return ok
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--full", action="store_true", help="同时打包上传历史缓存")
     parser.add_argument("--date", default=None, help="指定日期 YYYY-MM-DD（默认今天 UTC）")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    results = []
 
     # 日期目录：默认今天 UTC，可指定
     date_str = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -64,7 +65,11 @@ def main():
     # 1. 上传当日采集快照 → crypto-data/{date}/market.db
     db_path = os.path.join(ROOT, "data", "market.db")
     if os.path.exists(db_path):
-        upload_file(db_path, f"{COS_PREFIX}/{date_str}/market.db")
+        results.append(upload_file(
+            db_path, f"{COS_PREFIX}/{date_str}/market.db"))
+    else:
+        print(f"  [错误] 数据库不存在: {db_path}")
+        results.append(False)
 
     # 2. （可选）打包上传历史缓存 → crypto-data/history/cache_okx.tar.gz
     if args.full:
@@ -73,9 +78,14 @@ def main():
         if os.path.exists(cache_dir):
             with tarfile.open(tar_path, "w:gz") as tar:
                 tar.add(cache_dir, arcname="cache_okx")
-            upload_file(tar_path, f"{COS_PREFIX}/history/cache_okx.tar.gz")
+            results.append(upload_file(
+                tar_path, f"{COS_PREFIX}/history/cache_okx.tar.gz"))
             os.remove(tar_path)
+        else:
+            print(f"  [错误] 历史缓存不存在: {cache_dir}")
+            results.append(False)
+    return 0 if results and all(results) else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

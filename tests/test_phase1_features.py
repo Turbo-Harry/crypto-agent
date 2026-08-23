@@ -13,7 +13,6 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
 import engines.directional_trader as dt_mod
 from tests.test_phase0_review import _make_trader, _silence_notify, \

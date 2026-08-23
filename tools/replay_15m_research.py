@@ -59,6 +59,13 @@ class MarketReader:
         self.path = os.path.abspath(path)
         self.conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
         self.conn.row_factory = sqlite3.Row
+        # Current collector writes strict confirmed SWAP rows to klines_v2.
+        # Legacy/replay fixtures keep using klines; once v2 exists we never
+        # silently fall back to the known-unfinalized legacy snapshots.
+        has_v2 = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND "
+            "name='klines_v2'").fetchone()
+        self._kline_table = "klines_v2" if has_v2 else "klines"
         self._series_cache: dict[tuple[str, str], list[list[float]]] = {}
         self._times_cache: dict[tuple[str, str], list[int]] = {}
         self._cross_cache: dict[tuple[int, tuple[str, ...]], dict] = {}
@@ -68,7 +75,8 @@ class MarketReader:
 
     def symbols(self) -> list[str]:
         rows = self.conn.execute(
-            "SELECT inst_id FROM klines WHERE inst_id LIKE '%-USDT-SWAP' "
+            f"SELECT inst_id FROM {self._kline_table} "
+            "WHERE inst_id LIKE '%-USDT-SWAP' "
             "AND bar IN ('1m','15m','1H','4H') GROUP BY inst_id "
             "HAVING COUNT(DISTINCT bar)=4 ORDER BY inst_id").fetchall()
         return [str(row[0]) for row in rows]
@@ -79,7 +87,8 @@ class MarketReader:
             return self._series_cache[key]
         rows = self.conn.execute(
             "SELECT open_time,open,high,low,close,volume,quote_volume "
-            "FROM klines WHERE inst_id=? AND bar=? ORDER BY open_time",
+            f"FROM {self._kline_table} WHERE inst_id=? AND bar=? "
+            "ORDER BY open_time",
             [inst_id, bar]).fetchall()
         result = [[int(row[0]), *[float(value or 0) for value in row[1:]]]
                   for row in rows]

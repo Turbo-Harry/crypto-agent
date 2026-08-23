@@ -863,3 +863,51 @@
 - 守卫：代码图纳入 `storage/interfaces`，新增服务直连 `storage.db`、核心 import `tools.*`、跨包私有符号三类拒绝项；专项接口测试同时验证 Protocol、行为快照和 AST 边界。
 - 行为边界：未修改任何策略参数、风险闸门、下单语义或 HTTP 下单权限；本轮只做离线验证，不启动或重启 paper/live 实例。
 - 实测证据：接口边界 17/17、服务接口 53/53；自动发现 51/51 个独立测试脚本通过、失败 0。compileall、AI 入口/文档、参数集中化、代码图及 selftest、测试隔离、21 条历史修复护栏和 diff 检查全部通过。
+
+## 2026-08-23 行情终值、每日回补与质量审计闭环
+
+- 审计结论：旧 `klines` 抽样对比 OKX 官方终值时，1m 每 99 根有 76～80 根不同，15m 有
+  94 根不同。根因是未收线 K 首次快照配合 `INSERT OR IGNORE` 永久冻结；旧表缺来源、场所、
+  时区、收线和 as-of，正式登记为 `legacy_unverified`，保留但退出当前 15m 研究默认路径。
+- 严谨数据集：同一 `market.db` 新建 `klines_v2`，仅写 OKX `USDT-SWAP`、`confirm=1`、UTC
+  终值；保存 close time、采集时间、as-of 和原始值哈希，校验 OHLCV 不变量，并用终值 UPSERT
+  支持修订与幂等。15m 重放一旦发现 v2 就不再静默回退旧表，健康检查也改查 confirmed v2。
+- 闭环调度：采集失败不再吞异常，运行指标落 `market_collection_runs`；守护进程每天回补前一
+  UTC 日五个周期并精确审计。源端缺失时间槽做独立定点二次查询，仍不存在才进入
+  `market_data_gaps`，不补零、不插值；交易所后续补发终值会原子撤销缺口。备份脚本失败改为
+  非零退出，避免守护进程把“上传失败”报成成功。
+- 生产实测：只重启 `com.okx.collect` 行情作业，未重启或操作 paper/live 交易引擎。首轮五周期
+  增量均为 89/89 序列成功、非法行 0，当前未收线 K 全部排除。2026-08-22 全量对账为
+  445/445 序列成功、坏行 0；89 个标的五周期未解释缺口 0。9 个美股/商品合约的 1m 共 22 个
+  时间槽经历史接口二次确认缺失，显式保留，陈旧缺口 0。官方抽样复核 BTC/ETH/AAVE/XRP/
+  DOGE 的重叠 confirmed 1m 行均为 mismatch=0；边缘 1～2 行差异是采集时点后的新收线，不是值错。
+- 回归证据：数据质量专项 8/8、15m 重放 12/12；自动发现全量 53/53 脚本通过、失败 0。
+  py_compile、代码图、参数集中化、测试隔离、AI 文档检查和 diff 检查全绿。COS 本次实际上传
+  仍失败，现已正确显示失败；不把本地完整性结论夸大成云备份成功。
+
+## 2026-08-23 入场与 Agent Harness 精准率证据链加固
+
+- 基线裁决：A_pullback 当前独立 15m/4h 路径 23 条，TP first=4、SL first=18、timeout=1，
+  TP-first precision=17.39%，毛 EV=-0.3931R，平均交易成本约 0.2686R，净 EV=-0.6617R；long
+  3 条全部 SL，short 20 条净 EV=-0.5907R。当前证据明确反对“已经提高胜率”的结论。
+- Harness 基线：成熟旧结果 16 条中 approve/abstain/reject 都落在亏损路径；当前完整旧版本仍没有
+  30 个 reject，且旧行缺输入快照、结构化证据和 provider 成本，不能用于新版本晋升。
+- 可重放链：schema v33 为 `agent_runs` 增加完整版本、canonical 输入快照、跨版本 evidence hash、
+  confidence、证据/缺失信息、cache token 与美元成本。champion/challenger 只比较相同 evidence hash；
+  GET 评价保持只读。provider 用量缺 cache 明细时按 cache miss 保守计价。
+- Harness 门：当前版本按策略独立计 100 mature/30 reject；晋升同时要求费用后增量 EV 单侧 95% 下界
+  大于 0、`saved_loss > missed_profit + model_cost`、Brier 不劣于频率基线、Trace/概率/reject 证据覆盖
+  100%、最大单段占比不超过 0.8。生命周期仍最多自动到 validated，`veto=false` 未改变。
+- 入场模型门：同一 15m K 的跨币批次不可拆分 train/test；5 折 purged walk-forward 用现役连续分
+  Top-K 做完全同覆盖率对照。除 Brier skill>5%、至少 4/5 折稳定外，新增至少 30 个 OOS 放行样本
+  和实际费用后净收益 95% 下界>0；标签、成本或特征修正会改变完整数据哈希，不复用旧制品。
+- 运行修复：全量测试发现 CI/测试/ccxtpro 入口仍可注入旧 Python 3.9 `lib/`；已统一到 Python 3.12
+  `.venv` 并增加 AST 护栏。只重启 `com.crypto.paper`，最终 PID 44390；`com.crypto.agent` live PID
+  90574 未变化。paper `/health=ok`，最终代码重启后观察 63.5 秒、心跳 3.1 秒，空仓、账本敞口 0、近 5 分钟
+  引擎错误 0、SQLite quick_check=ok，`/reconcile balanced=true`、`/error` 为空；OKX 模拟盘六类
+  pending 条件单（conditional/oco/trigger/move_order_stop/iceberg/twap）均为 0；Harness
+  `shadow_enabled=true`、`veto_enabled=false`。
+- 工程证据：自动发现 53/53 个离线测试脚本通过、失败 0；compileall、AI 仓库、代码图、参数集中化、
+  测试隔离、23 条 fix guard 与 diff 检查全绿。当前仍只有候选 27/300、TP 4/60、SL 18/60、
+  当前可评价旧证据版本 Harness 3/100 且 reject 0/30；新 context-v3 challenger 尚无到期成熟样本。
+  因此结论是“证据不足，继续 paper shadow”，不调阈值、不扩大预算。

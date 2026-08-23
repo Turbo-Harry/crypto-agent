@@ -74,7 +74,22 @@ def promotion_ready(metrics: Mapping[str, Any]) -> tuple[bool, str]:
     for key, minimum in required:
         if int(metrics.get(key, 0)) < minimum:
             return False, f"{key}<{minimum}"
-    if float(metrics.get("incremental_ev_lower_bound", metrics.get("incremental_ev", 0))) <= 0:
+    if not bool(metrics.get("model_cost_data_complete", False)):
+        return False, "model_cost_incomplete"
+    if float(metrics.get("trace_coverage", 0)) < 1.0:
+        return False, "trace_coverage<1"
+    if float(metrics.get("probability_coverage", 0)) < 1.0:
+        return False, "probability_coverage<1"
+    if float(metrics.get("reject_evidence_coverage", 0)) < 1.0:
+        return False, "reject_evidence_coverage<1"
+    if float(metrics.get("brier_skill", -1)) < 0:
+        return False, "brier_worse_than_frequency_baseline"
+    if float(metrics.get("saved_loss", 0)) <= (
+            float(metrics.get("missed_profit", 0)) +
+            float(metrics.get("model_cost_r", 0))):
+        return False, "saved_loss<=missed_profit+model_cost"
+    lower = metrics.get("incremental_ev_lower_bound")
+    if lower is None or float(lower) <= 0:
         return False, "incremental_ev_lower_bound<=0"
     if float(metrics.get("max_segment_share", 1.0)) > 0.8:
         return False, "single_segment_dominates"
@@ -82,10 +97,13 @@ def promotion_ready(metrics: Mapping[str, Any]) -> tuple[bool, str]:
 
 
 def rollback_needed(metrics: Mapping[str, Any]) -> tuple[bool, str]:
-    if float(metrics.get("incremental_ev", 0)) < 0:
+    incremental = metrics.get("incremental_ev")
+    if incremental is None or float(incremental) < 0:
         return True, "incremental_ev_negative"
     if float(metrics.get("missed_profit", 0)) > float(metrics.get("saved_loss", 0)):
         return True, "missed_profit_exceeds_saved_loss"
     if float(metrics.get("max_segment_share", 0)) > 0.8:
         return True, "segment_concentration"
+    if float(metrics.get("brier_skill", -1)) < 0:
+        return True, "brier_worse_than_frequency_baseline"
     return False, "within_guardrails"

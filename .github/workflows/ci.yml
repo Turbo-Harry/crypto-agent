@@ -48,7 +48,7 @@ jobs:
       - name: Full offline test suite (auto-discovered)
         env:
           CRYPTO_AGENT_MODE: paper
-          PYTHONPATH: "lib:."
+          PYTHONPATH: "."
         run: |
           test_files=(tests/test_*.py)
           if [ "${#test_files[@]}" -lt 1 ]; then

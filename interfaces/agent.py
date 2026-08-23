@@ -124,6 +124,8 @@ class AgentInput:
     context_version: str
     schema_version: str
     retrieval_version: str
+    tool_policy_version: str = "tool-policy-v1"
+    pricing_version: str = "unpriced"
     signal: Mapping[str, Any] = field(default_factory=dict)
     market: Mapping[str, Any] = field(default_factory=dict)
     news: Mapping[str, Any] = field(default_factory=dict)
@@ -138,6 +140,22 @@ class AgentInput:
     @property
     def input_hash(self) -> str:
         return stable_hash(self.to_dict())
+
+    @property
+    def evidence_hash(self) -> str:
+        """Hash frozen market evidence while deliberately excluding versions.
+
+        Prompt/model/context versions must differ between champion and
+        challenger.  Pairing on ``input_hash`` would therefore yield zero
+        matches even when both evaluated the same market snapshot.
+        """
+
+        source = self.to_dict()
+        return stable_hash({name: source[name] for name in (
+            "signal_id", "event_ts", "kline_ts", "strategy_version",
+            "signal", "market", "news", "account", "health", "memory",
+            "field_provenance",
+        )})
 
 
 @dataclass(frozen=True)
@@ -203,9 +221,19 @@ class HarnessRun:
     model_latency_ms: int | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    prompt_cache_hit_tokens: int | None = None
+    prompt_cache_miss_tokens: int | None = None
+    pricing_version: str | None = None
+    # Provider invoice estimate in USD.  Trading evaluation converts it to R
+    # only when the frozen input contains a reproducible paper risk budget.
     estimated_cost: float | None = None
     risk_probability: float | None = None
+    confidence: float | None = None
     reason_codes: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
+    missing_information: tuple[str, ...] = ()
+    abstain_reason: str | None = None
+    decision_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.runtime_status is RuntimeStatus.COMPLETED and self.model_verdict is None:
@@ -217,6 +245,19 @@ class HarnessRun:
 
     def to_dict(self) -> dict[str, Any]:
         return _as_plain(asdict(self))
+
+
+@dataclass(frozen=True)
+class ModelCallResult:
+    """Provider-neutral model content plus billable usage metadata."""
+
+    content: Any
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    prompt_cache_hit_tokens: int | None = None
+    prompt_cache_miss_tokens: int | None = None
+    estimated_cost: float | None = None
+    pricing_version: str | None = None
 
 
 @dataclass(frozen=True)

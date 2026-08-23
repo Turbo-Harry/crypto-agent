@@ -1,5 +1,6 @@
 """T8 Agent 有效判断/失败拆分与反事实净增量。"""
 import os
+import json
 import sys
 import tempfile
 import time
@@ -9,6 +10,7 @@ sys.path.insert(0, ROOT)
 
 from decision.agent_evaluation import (evaluate_agent, evaluate_harness,
                                        sync_harness_lifecycle)
+from interfaces.agent import stable_hash
 
 passed = failed = 0
 
@@ -39,6 +41,7 @@ def main():
                 "stop": 99.0 if direction == "long" else 101.0,
                 "tp": 102.0 if direction == "long" else 98.0,
                 "atr": 1.0, "kline_ts": 1_700_000_000_000 + i * 900_000,
+                "regime": {"tag": "high_vol" if i % 2 else "mid_vol"},
                 "shadow_dims": {name: 0.5 for name in config.SHADOW_DIMS}}
             signal_id, _ = record_signal_sample(
                 ("BTC", "ETH", "SOL")[i % 3], signal, "swap", db_path=db,
@@ -84,16 +87,21 @@ def main():
             pnl_r = -1.0 if i < 30 else (2.0 if reject else
                                          (0.4 if i % 2 else -0.2))
             run_id = f"harness-{i}"
+            input_snapshot = {"account": {}, "signal": {}}
             sdb.x(
                 "INSERT INTO agent_runs (run_id,signal_id,idempotency_key,created_ts,"
                 "runtime_status,final_action,model_verdict,prompt_version,model_version,"
                 "context_version,schema_version,retrieval_version,risk_probability,"
-                "reason_codes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "reason_codes,evidence_ids,input_snapshot,input_hash,estimated_cost) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [run_id, signal_id, run_id, time.time() + i, "completed",
                  "shadow_reject" if reject else "baseline_pass",
                  "reject" if reject else "approve", "p1", "m1", "c1", "s1", "r1",
-                 0.8 if reject else 0.2,
-                 '["liquidity_failure"]' if reject else "[]"], db_path=db)
+                 0.75 if reject else 0.5,
+                 '["liquidity_failure"]' if reject else "[]",
+                 '["market:test"]' if reject else "[]",
+                 json.dumps(input_snapshot), stable_hash(input_snapshot), 0.0],
+                db_path=db)
             sdb.x(
                 "INSERT INTO agent_evaluations (run_id,lifecycle_status,pnl_r) "
                 "VALUES (?,?,?)", [run_id, "mature", pnl_r], db_path=db)
@@ -104,8 +112,19 @@ def main():
               harness["incremental_ev_lower_bound"] > 0, str(harness))
         check("Harness 风险概率与标准 reason code 可审计",
               harness["brier"] is not None and
-              harness["reason_counts"].get("liquidity_failure") == 40,
+              harness["reason_counts"].get("liquidity_failure") == 40 and
+              "regime:high_vol" in harness["stability"],
               str(harness))
+        original_init = sdb.init_db
+        try:
+            sdb.init_db = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("只读评价不得触发 schema 初始化/迁移"))
+            readonly_ok = (evaluate_agent(db)["valid_n"] == 120 and
+                           evaluate_harness(db)["n"] == 120)
+        finally:
+            sdb.init_db = original_init
+        check("GET 消费的 Agent 评价保持只读且不暗含 schema 迁移",
+              readonly_ok)
         state = sync_harness_lifecycle(db)
         check("有增量证据自动 validated 但不自动开启 veto",
               state["status"] == "validated", str(state))

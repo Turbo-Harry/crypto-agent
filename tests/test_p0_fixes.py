@@ -12,7 +12,6 @@ import tempfile
 import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
 from exchange.base import ExchangeError
 from exchange.fake_adapter import FakeAdapter

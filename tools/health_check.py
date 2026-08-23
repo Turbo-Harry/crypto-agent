@@ -100,14 +100,16 @@ except Exception:
     age = 1e9
 check("H4 方向性心跳新鲜(<60s)", age < 60, f"年龄 {age:.0f}s")
 
-# ---------- H5 行情数据新鲜（看板/研究用 market.db） ----------
+# ---------- H5 严格行情新鲜（confirmed OKX SWAP / klines_v2） ----------
 try:
-    row = q(MARKET_DB, "SELECT MAX(open_time) m FROM klines WHERE bar='1m'")
+    row = q(MARKET_DB, "SELECT MAX(open_time) m FROM klines_v2 WHERE bar='1m' "
+                       "AND source='okx' AND venue='swap' AND confirmed=1")
     mage = (time.time() * 1000 - (row[0]["m"] or 0)) / 1000
 except Exception as e:
     mage = 1e9
-check("H5 行情数据新鲜(<60min)", mage < 3600,
-      f"最新 1m K 线 {mage/60:.0f} 分钟前" if mage < 1e8 else "market.db 不可读")
+check("H5 confirmed SWAP 行情新鲜(<60min)", mage < 3600,
+      f"最新 1m K 线 {mage/60:.0f} 分钟前" if mage < 1e8
+      else "market.db.klines_v2 不可读")
 
 # ---------- H6 引擎错误（2026-08-17 口径修正） ----------
 # 旧口径"24h ≤3"在 0.5-1 req/s 的请求量下无意义(单请求 SSL 抖动即触发,

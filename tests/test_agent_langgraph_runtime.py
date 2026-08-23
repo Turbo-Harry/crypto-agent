@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from decision.agent_contracts import (
-    AgentInput, FinalAction, HarnessConfig, RuntimeStatus,
+    AgentInput, FinalAction, HarnessConfig, ModelCallResult, RuntimeStatus,
 )
 from decision.agent_graph import build_harness_graph, run_graph_harness
 from decision.agent_harness import run_harness
@@ -113,6 +113,29 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(db.q1(
             "SELECT COUNT(*) n FROM agent_runs", db_path=self.path)["n"], 1)
+
+    def test_provider_usage_and_structured_evidence_are_persisted(self):
+        def metered(_prompt):
+            return ModelCallResult(
+                content={"verdict": "reject", "risk_probability": .8,
+                         "confidence": .9,
+                         "reason_codes": ["liquidity_failure"],
+                         "evidence_ids": ["market:1"], "reason": "thin"},
+                input_tokens=100, output_tokens=20,
+                prompt_cache_hit_tokens=10,
+                prompt_cache_miss_tokens=90,
+                estimated_cost=.00002, pricing_version="price-v1")
+
+        result = run_graph_harness(
+            make_input("metered"), baseline_passed=True,
+            model_call=metered, db_path=self.path)
+        self.assertEqual(result.run.input_tokens, 100)
+        row = db.q1("SELECT * FROM agent_runs WHERE run_id=?",
+                    [result.run.run_id], db_path=self.path)
+        self.assertEqual(row["evidence_ids"], '["market:1"]')
+        self.assertEqual(row["prompt_cache_miss_tokens"], 90)
+        self.assertEqual(row["pricing_version"], "price-v1")
+        self.assertTrue(row["input_snapshot"])
 
     def test_runtime_failures_keep_distinct_statuses(self):
         no_key = run_graph_harness(

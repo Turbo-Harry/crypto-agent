@@ -8,6 +8,7 @@
 
 新增修复后在此登记护栏：一条 (名称, 检查函数) = 一条不会复发的教训。
 """
+import ast
 import os
 import re
 
@@ -33,6 +34,32 @@ def _scan(pattern, rel_glob_ok):
             line = src[:m.start()].count("\n") + 1
             hits.append(f"{rel}:{line}")
     return hits
+
+
+def _test_files():
+    tests_dir = os.path.join(ROOT, "tests")
+    return [f"tests/{name}" for name in os.listdir(tests_dir)
+            if name.startswith("test_") and name.endswith(".py")]
+
+
+def _injects_legacy_lib(rel):
+    """AST 检测 sys.path.insert/append(..., "lib")，兼容跨行写法。"""
+    try:
+        tree = ast.parse(_read(rel), filename=rel)
+    except (SyntaxError, ValueError):
+        return True
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in {"insert", "append"}:
+            continue
+        owner = node.func.value
+        if not (isinstance(owner, ast.Attribute) and owner.attr == "path"):
+            continue
+        if any(isinstance(child, ast.Constant) and child.value == "lib"
+               for child in ast.walk(node)):
+            return True
+    return False
 
 
 GUARDS = [
@@ -137,6 +164,18 @@ GUARDS = [
      lambda: "LIVE_HARD_STOP_USDT" in _read("engines/review_pipeline.py")
              and "net_pnl" in _read("engines/review_pipeline.py")
              and "fees_usdt" in _read("engines/review_pipeline.py")),
+    # G22 Python 3.12 测试不得把旧 Python 3.9 lib/ 混入 sys.path；否则
+    # numpy/pydantic 的二进制扩展会从错误 ABI 加载，全量回归产生伪红。
+    ("G22 Python 3.12 测试不混入旧 lib",
+     lambda: ('PYTHONPATH: "."' in _read(".github/workflows/ci.yml")
+              and not any(_injects_legacy_lib(rel) for rel in _test_files()))),
+    # G23 service/decision/data 的运行链也不得注入旧 lib；只修测试路径仍会
+    # 让 LaunchAgent 在启动时从 Python 3.9 目录加载 numpy ABI 并崩溃。
+    ("G23 Python 3.12 服务运行链不混入旧 lib",
+     lambda: not any(_injects_legacy_lib(rel) for rel in (
+         "service/main.py", "decision/threshold_learning.py",
+         "data/realtime_okx.py", "data/realtime_ccxtpro.py",
+         "factors/factor_discovery.py", "factors/factor_evolution.py"))),
 ]
 
 

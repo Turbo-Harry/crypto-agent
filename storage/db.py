@@ -287,16 +287,27 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     context_version TEXT,
     schema_version TEXT,
     retrieval_version TEXT,
+    tool_policy_version TEXT,
+    pricing_version TEXT,
     input_hash TEXT,
+    evidence_hash TEXT,
+    input_snapshot TEXT,
     response_hash TEXT,
     latency_ms INTEGER,
     model_latency_ms INTEGER,
     input_tokens INTEGER,
     output_tokens INTEGER,
+    prompt_cache_hit_tokens INTEGER,
+    prompt_cache_miss_tokens INTEGER,
     estimated_cost REAL,
     error_type TEXT,
     risk_probability REAL,
-    reason_codes TEXT
+    confidence REAL,
+    reason_codes TEXT,
+    evidence_ids TEXT,
+    missing_information TEXT,
+    abstain_reason TEXT,
+    decision_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_runs_signal ON agent_runs(signal_id, created_ts);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(runtime_status, created_ts);
@@ -916,6 +927,30 @@ def _migrate_v32_agent_proposals(conn):
     """)
 
 
+def _migrate_v33_agent_replay_evidence(conn):
+    """v33: Harness 保存可重放输入、结构化证据与 provider 用量成本。"""
+    columns = {
+        "tool_policy_version": "TEXT",
+        "pricing_version": "TEXT",
+        "input_snapshot": "TEXT",
+        "evidence_hash": "TEXT",
+        "prompt_cache_hit_tokens": "INTEGER",
+        "prompt_cache_miss_tokens": "INTEGER",
+        "confidence": "REAL",
+        "evidence_ids": "TEXT",
+        "missing_information": "TEXT",
+        "abstain_reason": "TEXT",
+        "decision_reason": "TEXT",
+    }
+    for name, declaration in columns.items():
+        _add_column_if_missing(conn, "agent_runs", name, declaration)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_versions ON agent_runs("
+        "model_version,prompt_version,context_version,schema_version,"
+        "retrieval_version,tool_policy_version,created_ts)"
+    )
+
+
 def _migrate_v12_signal_supervision(conn):
     """v12: 所有结构候选留样 + 固定 horizon 首触/极值反事实标签。"""
     conn.executescript("""
@@ -1103,6 +1138,7 @@ MIGRATIONS = (
     (30, _migrate_v30_trade_agent_strategy_id),
     (31, _migrate_v31_canonical_signal_view),
     (32, _migrate_v32_agent_proposals),
+    (33, _migrate_v33_agent_replay_evidence),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
