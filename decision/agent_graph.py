@@ -347,10 +347,14 @@ class _Nodes:
                 "violations": list(state.get("semantic_errors", ())),
                 "previous_response": state.get("raw_response"),
                 "instruction": (
-                    "Return one corrected JSON object for the same frozen "
-                    "candidate. Fill concrete market missing_information when "
-                    "using insufficient_evidence; do not cite model readiness, "
-                    "forecast calibration, or strategy routing as evidence."),
+                    "Return exactly one corrected JSON object for the same "
+                    "frozen candidate, without Markdown or extra fields. "
+                    "Include verdict, risk_probability, confidence, "
+                    "reason_codes, evidence_ids, missing_information, "
+                    "abstain_reason, and reason. Fill concrete market "
+                    "missing_information when using insufficient_evidence; "
+                    "do not cite model readiness, forecast calibration, or "
+                    "strategy routing as evidence."),
             }
         prompt = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                             separators=(",", ":"))
@@ -456,12 +460,30 @@ class _Nodes:
                     "decision": None, "retry_model": False,
                     "semantic_errors": (str(exc),), "steps": steps}
         except Exception as exc:
-            item = AgentStep(**base, status=StepStatus.FAILED,
-                             error_type=type(exc).__name__,
-                             fallback_action="baseline_pass")
+            retry_count = int(state.get("model_retry_count", 0))
+            error = f"{type(exc).__name__}:{str(exc)[:240]}"
+            item = AgentStep(
+                **base, status=StepStatus.FAILED,
+                output_hash=state.get("response_hash"),
+                retry_count=retry_count, error_type=error,
+                fallback_action="baseline_pass")
+            steps = self.append(state, item)
+            # Malformed/truncated JSON is repairable in the same way as a
+            # semantic violation.  It remains fail-closed after the bounded
+            # retry and can never turn an invalid reject into a veto.
+            if retry_count < max(0, self.config.max_semantic_retries):
+                return {
+                    "decision": None, "retry_model": True,
+                    "semantic_errors": (error,),
+                    "model_retry_count": retry_count + 1,
+                    "model_step_no": step_no + 1,
+                    "policy_step_no": int(
+                        state.get("policy_step_no", step_no + 1)) + 1,
+                    "steps": steps,
+                }
             return {"runtime_status": RuntimeStatus.SCHEMA_ERROR,
                     "decision": None, "retry_model": False,
-                    "steps": self.append(state, item)}
+                    "semantic_errors": (error,), "steps": steps}
 
     def policy(self, state: _GraphState) -> dict[str, Any]:
         policy = self.policy_kernel.evaluate(

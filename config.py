@@ -173,7 +173,7 @@ AGENT_HARNESS_MODEL = "deepseek-chat"
 # paper/live 共用同一编排实现，但模型仍固定 shadow、无执行权限。
 AGENT_HARNESS_CONTEXT_VERSION = "context-v3-accuracy-evidence"
 AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
-AGENT_HARNESS_TOOL_POLICY_VERSION = "tool-policy-v1"
+AGENT_HARNESS_TOOL_POLICY_VERSION = "tool-policy-v2-structural-repair"
 # DeepSeek 2026-08-23 官方美元价（每百万 token）；只用于 shadow 成本审计。
 # cache 明细缺失时按 cache miss 计费，防止低估模型成本。
 AGENT_HARNESS_PRICING_VERSION = "deepseek-v4-flash-usd-2026-08-23"

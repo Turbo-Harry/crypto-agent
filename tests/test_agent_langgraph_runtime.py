@@ -147,6 +147,37 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
         self.assertIsNone(result.decision)
 
+    def test_structural_error_gets_one_bounded_repair(self):
+        calls = []
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return '{"verdict":"abstain"'
+            return {
+                "verdict": "approve", "risk_probability": .3,
+                "confidence": .8, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "frozen evidence aligned",
+            }
+
+        result = run_graph_harness(
+            make_input("structural-repair"), baseline_passed=True,
+            model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("ValueError", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
+        rows = db.q(
+            "SELECT status,retry_count,error_type FROM agent_steps "
+            "WHERE run_id=? AND step_type='model' ORDER BY step_no",
+            [result.run.run_id], db_path=self.path)
+        self.assertEqual(
+            [(row["status"], row["retry_count"]) for row in rows],
+            [("failed", 0), ("completed", 1)])
+        self.assertIn("ValueError", rows[0]["error_type"])
+
     def test_reject_evidence_is_repaired_to_declared_anchor(self):
         calls = []
         inp = replace(

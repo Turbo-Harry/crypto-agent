@@ -1102,3 +1102,21 @@
   bootstrap seed 固定绑定 `FORECAST_REPLAY_SEED_VERSION + inst_id + kline_ts + direction`，实时
   与历史重放可逐候选复算；forecast 随首次候选快照一起冻结，仍保持 B `final_decision=rejected`、
   Harness `allow_veto=false`、订单和 journal 均为 0。引擎专项 33/33 通过。
+- B 留样部署：提交 `9b7695b` 后只 kickstart `com.crypto.paper`；模拟盘 PID 79777→11627，
+  第二心跳年龄 3.8s，`/reconcile balanced=true`、持仓/台账均空、`/error` 为空。8090 实盘仍为
+  原 PID 90574，未重启、未写入。新 forecast 覆盖率须从下一次自然 B 候选起统计，历史缺失不回填。
+
+## 2026-08-24 Harness 结构错误有界修复
+
+- 现象审计：完整 v4 Prompt 的自然运行中 completed=21、schema_error=8；失败响应的累计
+  output_tokens 最小 200、8/8 均不低于 200。部分单次响应恰好撞到 200-token 上限，另一些先触发
+  语义修复、第二次又成为普通 `ValueError`。旧图只重试 `AgentSemanticError`，普通 JSON/schema
+  错误直接丢样本，导致相同的一次修复预算没有被使用。
+- 修复：`agent_graph.validate` 对结构解析/契约错误也使用既有的一次有界 repair；repair 指令明确
+  只返回一个无 Markdown/额外字段的完整 JSON，并列出全部必填字段。第二次仍无效则保持
+  `schema_error + baseline_pass`，无效 reject 永远不能成为 veto；失败 step 保存错误类型、摘要、
+  response hash 和 retry_count，便于区分截断与语义违规。
+- 证据隔离：运行行为变化后把 `AGENT_HARNESS_TOOL_POLICY_VERSION` 升为
+  `tool-policy-v2-structural-repair`，新旧版本不混计 100/30 成熟度。专项新增“首轮截断 JSON、
+  第二轮合法 approve”路径，15/15 通过；这只提高有效 shadow 样本产量，不改变 0.70 reject 门、
+  生命周期门或 veto 权限，真实失败率改善必须等新版本自然候选验证。

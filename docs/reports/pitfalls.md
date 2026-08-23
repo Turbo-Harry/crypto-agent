@@ -892,3 +892,14 @@
   断言 forecast 已冻结、B 仍 rejected、Harness 仍 shadow、fake orders 与 journal 均为 0。
 - 预防：多策略共享标签链时，验收必须逐策略检查 features 中每个模型输入的覆盖率，不能只检查
   表行数和 outcome 数；实时与 replay 的派生证据必须共享算法、seed 身份和 as-of 边界。
+
+### 2026-08-24 只修语义错误会把可恢复的截断 JSON 当永久失败
+
+- 现象：Harness v4 有 8 条 schema_error，全部失败运行累计输出至少 200 tokens；普通 ValueError
+  在首轮发生时不会进入已有 repair，先语义失败再结构失败时也只留下笼统 schema_error。
+- 根因：图把“字段语义违规”视为可恢复，却把截断/畸形 JSON 和 Pydantic 契约错误视为不可恢复；
+  provider 输出上限和二次修复都可能产生后者，两类错误的人为分流浪费了同一有界重试预算。
+- 修复：结构错误与语义错误共用一次严格 repair，错误详情进入 step；重试耗尽继续 fail-closed，
+  同时升级 tool-policy 身份，避免修复前后有效率和 EV 证据混计。
+- 预防：结构化模型链必须分别测试“首轮结构错后恢复”“结构错重试仍错”和“语义错重试仍错”；
+  提高完成率只能减少无效样本，不能自动证明判断更准，也不能因此降低生命周期晋升门。
