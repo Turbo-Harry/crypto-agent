@@ -64,11 +64,14 @@ class WatchItem(BaseModel):
     base: str
     score: Optional[float]
     budget: int
+    pool: str                  # crypto | stock
 
 
 class WatchlistOut(BaseModel):
     date: str
-    items: List[WatchItem]
+    crypto_items: List[WatchItem]
+    stock_items: List[WatchItem]
+    items: List[WatchItem]     # 兼容字段：两个独立池的并集
 
 
 class SignalOut(BaseModel):
@@ -132,6 +135,8 @@ class ScanOut(BaseModel):
     date: str
     fallback: bool
     candidates: List[dict]      # {base, dir, score, ...}
+    crypto_candidates: List[dict]
+    stock_candidates: List[dict]
 
 
 class RiskEventOut(BaseModel):

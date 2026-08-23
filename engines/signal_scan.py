@@ -733,14 +733,19 @@ class SignalScanMixin:
                 w = screen_daily(progress_cb=self._long_scan_progress,
                                  exchange=self.exchange, db_path=self._db_path)
                 if w:
-                    self.watchlist = [c["base"] for c in w]
+                    self.crypto_watchlist = [c["base"] for c in w
+                                             if not c.get("is_stock")]
+                    self.stock_watchlist = [c["base"] for c in w
+                                            if c.get("is_stock")]
+                    self.watchlist = self.crypto_watchlist + self.stock_watchlist
                     self.watch_scores = {c["base"]: c["score"] for c in w}
                     self._watch_date = time.strftime("%Y-%m-%d")
                     self._last_watch_refresh = time.time()
                     self._notify(
                         "🔍 每日候选池刷新\n"
-                        + " · ".join(self.watchlist)
-                        + f"\n共 {len(self.watchlist)} 个")
+                        + "加密：" + (" · ".join(self.crypto_watchlist) or "空")
+                        + "\n美股：" + (" · ".join(self.stock_watchlist) or "空")
+                        + f"\n合计 {len(self.watchlist)} 个")
             except Exception as e:
                 print(f"候选池刷新失败，沿用旧池: {e}")
         # 2026-08-16 采集加速（用户指示）：扫描池 = 当日候选池 ∪ 回退主流池
@@ -755,7 +760,9 @@ class SignalScanMixin:
             scan_pool = [b for b in scan_pool if b not in _blocked]
         n_from_watch = sum(1 for b in scan_pool if b in self.watchlist)
         print(f"\n=== 方向性信号扫描 [{time.strftime('%H:%M:%S')}] "
-              f"候选池 {n_from_watch} 个 + 回退池 {len(scan_pool) - n_from_watch} 个 ===")
+              f"加密候选 {len(getattr(self, 'crypto_watchlist', []))} 个 + "
+              f"美股候选 {len(getattr(self, 'stock_watchlist', []))} 个 + "
+              f"回退池 {len(scan_pool) - n_from_watch} 个 ===")
         if config.SCAN_EVOLVE_ENABLED:
             try:
                 from decision.scan_evolve import tick as scan_evolve_tick

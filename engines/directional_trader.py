@@ -252,13 +252,18 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             config.LIVE_MAX_TOTAL if self.live_mode
             else config.MAX_TOTAL_NOTIONAL))
         # 每日候选池（用户要求：每天扫全市场挑适合下单的币；评分用于动态笔数）
-        from engines.daily_scan import load_watchlist
-        _watch = load_watchlist(db_path=self._db_path)
-        self.watchlist = list(_watch.keys())
-        self.watch_scores = _watch
+        from engines.daily_scan import load_watchlists
+        _watch_pools = load_watchlists(db_path=self._db_path)
+        self.crypto_watchlist = list(_watch_pools["crypto"])
+        self.stock_watchlist = list(_watch_pools["stock"])
+        self.watchlist = self.crypto_watchlist + self.stock_watchlist
+        self.watch_scores = {**_watch_pools["crypto"], **_watch_pools["stock"]}
         self._watch_date = ""
         self._last_watch_refresh = 0
-        print(f"今日候选池 {len(self.watchlist)} 个: {self.watchlist}")
+        print(f"今日加密候选池 {len(self.crypto_watchlist)} 个: "
+              f"{self.crypto_watchlist}")
+        print(f"今日美股候选池 {len(self.stock_watchlist)} 个: "
+              f"{self.stock_watchlist}")
         for b in self.watchlist:
             print(f"  {b}: 当日评分 {self.watch_scores.get(b)} → 允许笔数 {self._trade_budget(b)}")
         # 阈值自适应（决策阈值用分数→盈亏分布校准）

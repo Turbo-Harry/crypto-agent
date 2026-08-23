@@ -1,5 +1,5 @@
 """
-每日候选扫描 — 全市场筛选"当天适合下单"的币，输出当日 watchlist。
+每日候选扫描 — 全市场筛选"当天适合下单"的标的，输出当日 watchlist。
 
 用户要求：每天扫描一下什么币适合下单（抓最佳时机，不频繁交易）。
 
@@ -13,7 +13,8 @@ SWAP_ONLY 下观察池直接用合约 ticker（成交额已在适配层归一成
   4. 1h ATR% 在甜蜜区（太静没肉、太疯危险）
   5. 4h 趋势与 1h 同向（顺大势做小势，只在明确趋势里挑）
 
-评分：趋势强度(40%) + ATR 甜蜜度(20%) + 成交额排名(40%) → 取前 N 输出 watchlist。
+评分：趋势强度(40%) + ATR 甜蜜度(20%) + 成交额排名(40%)。
+加密货币与美股/公司代币分别排名、分别取 Top-N，互不挤占席位。
 """
 import json
 import os
@@ -146,9 +147,30 @@ def _spot_observe_pool(exchange: ExchangeAdapter, pool_top):
     return pool[:pool_top]
 
 
+def _score_pool(candidates):
+    """在单一资产类别内评分排序。
+
+    成交额是相对排名项，必须在加密与美股池内各自计算；
+    否则即使最后分别截断，美股分数仍会被加密成交额分布污染。
+    """
+    ranked = list(candidates)
+    if not ranked:
+        return ranked
+    vol_sorted = sorted(ranked, key=lambda x: x["vol24h"], reverse=True)
+    vol_rank = {c["instId"]: i for i, c in enumerate(vol_sorted)}
+    n = len(vol_sorted)
+    for c in ranked:
+        c["score"] = (0.4 * (1 - vol_rank[c["instId"]] / max(n - 1, 1))
+                      + 0.4 * min(abs(c["trend_dev"]) / 0.03, 1.0)
+                      + 0.2 * max(0, 1 - abs(c["atr_pct"] - 0.02) / 0.03))
+    return sorted(ranked, key=lambda x: -x["score"])
+
+
 def screen_daily(pool_top=60, watch_n=None, progress_cb=None,
                  exchange=None, db_path=None):
-    """全市场筛选（加密 + 美股代币），返回候选列表（按评分降序）。
+    """全市场筛选（加密 + 美股代币），返回两池候选的并集。
+
+    watch_n 是每个资产池的独立上限，不是两池合计上限。
     progress_cb(2026-08-17): 每处理一个候选调用一次——供引擎在长扫描期间
     插拍止损监控/心跳/tick 进度(网络慢时 60 币扫描可阻塞主循环数十分钟,
     与 51 分钟盲窗同源事故)。
@@ -257,30 +279,26 @@ def screen_daily(pool_top=60, watch_n=None, progress_cb=None,
             continue
     print(f"  阶段3 4h 共振: {len(stage2)} → {len(stage3)} 个")
 
-    # 评分排序：成交额排名 40% + 趋势强度 40% + ATR 甜蜜度 20%
-    if stage3:
-        vol_sorted = sorted(stage3, key=lambda x: x["vol24h"], reverse=True)
-        vol_rank = {c["instId"]: i for i, c in enumerate(vol_sorted)}
-        n = len(vol_sorted)
-        for c in stage3:
-            c["score"] = (0.4 * (1 - vol_rank[c["instId"]] / max(n - 1, 1))
-                          + 0.4 * min(abs(c["trend_dev"]) / 0.03, 1.0)
-                          + 0.2 * max(0, 1 - abs(c["atr_pct"] - 0.02) / 0.03))
-        stage3.sort(key=lambda x: -x["score"])
-
-    watch = stage3[:watch_n]
-    if not watch:
-        # 空结果：今日无高评分候选 → 回退主流池并标注（宁可错过，但系统仍需盯盘）
-        print("  今日无通过筛选的候选 → 回退主流池（BTC/ETH/SOL/XRP/DOGE）")
+    # 两类资产各自评分、各自截断：美股不再与高成交额加密币抢同一 Top-N。
+    crypto_ranked = _score_pool(c for c in stage3 if not c.get("is_stock"))
+    stock_ranked = _score_pool(c for c in stage3 if c.get("is_stock"))
+    crypto_watch = crypto_ranked[:watch_n]
+    stock_watch = stock_ranked[:watch_n]
+    crypto_fallback = not crypto_watch
+    if crypto_fallback:
+        # 加密池空时只回退加密主流池；美股池空时保持空，不拿异类资产填充。
+        print("  今日无通过筛选的加密候选 → 回退主流池（BTC/ETH/SOL/XRP/DOGE）")
         fallback = [b for b in config.SYMBOLS[:5] if b not in blocked] or config.SYMBOLS[:5]
-        watch = [{"base": b, "instId": _inst_id(b), "dir": 0, "score": 0.0,
-                  "trend_dev": 0.0, "atr_pct": 0.0, "price": 0.0,
-                  "is_stock": False}
-                 for b in fallback]
+        crypto_watch = [
+            {"base": b, "instId": _inst_id(b), "dir": 0, "score": 0.0,
+             "trend_dev": 0.0, "atr_pct": 0.0, "price": 0.0,
+             "is_stock": False}
+            for b in fallback]
+    watch = crypto_watch + stock_watch
     result = {
         "date": time.strftime("%Y-%m-%d"),
         "generated_at": time.time(),
-        "fallback": bool(not stage3),
+        "fallback": crypto_fallback,
         "candidates": [{k: c[k] for k in ("base", "instId", "dir", "score",
                                            "trend_dev", "atr_pct", "price", "is_stock")}
                        for c in watch],
@@ -299,10 +317,14 @@ def screen_daily(pool_top=60, watch_n=None, progress_cb=None,
                 [result["date"], c["base"], c.get("instId"), c.get("dir", 0),
                  c.get("score", 0.0), c.get("trend_dev", 0.0), c.get("atr_pct", 0.0),
                  c.get("price", 0.0), 1 if c.get("is_stock") else 0])
-    print(f"  结果: 选出 {len(watch)} 个候选 → {'隔离库' if db_path else 'crypto_agent.db'}:watchlist")
-    for c in watch:
-        print(f"    {c['base']:<10} {'多' if c['dir']>0 else '空'}  趋势{c['trend_dev']*100:+.1f}%  "
-              f"ATR{c['atr_pct']*100:.1f}%  评分{c['score']:.2f}")
+    print(f"  结果: 加密 {len(crypto_watch)} 个 + 美股 {len(stock_watch)} 个"
+          f" → {'隔离库' if db_path else 'crypto_agent.db'}:watchlist")
+    for label, candidates in (("加密", crypto_watch), ("美股", stock_watch)):
+        print(f"    [{label}候选池]")
+        for c in candidates:
+            print(f"      {c['base']:<10} {'多' if c['dir']>0 else '空'}  "
+                  f"趋势{c['trend_dev']*100:+.1f}%  "
+                  f"ATR{c['atr_pct']*100:.1f}%  评分{c['score']:.2f}")
     # 每天扫一次候选,顺手清过期流水(频率合适;失败不影响候选池)。
     try:
         pruned = sdb.prune_old_rows(db_path=db_path)
@@ -326,20 +348,34 @@ def trades_budget(score):
     return 1
 
 
-def load_watchlist(fallback=None, db_path=None):
-    """读当日 watchlist（SQLite），返回 {base: score}（评分用于动态笔数）。
-    过期/缺失回退固定池（无评分 → 默认笔数）。"""
+def load_watchlists(fallback=None, db_path=None):
+    """读当日两个独立候选池，返回 crypto/stock 评分字典。
+
+    过期/缺失时仅加密池回退固定主流币，美股池保持空。
+    """
     fallback = fallback or config.SYMBOLS[:5]
     try:
         import storage.db as sdb
         sdb.init_db(db_path)
-        rows = sdb.q("SELECT base, score FROM watchlist WHERE date=?",
+        rows = sdb.q("SELECT base, score, is_stock FROM watchlist WHERE date=?",
                      [time.strftime("%Y-%m-%d")], db_path=db_path)
         if rows:
-            return {r["base"]: r["score"] for r in rows}
+            crypto = {r["base"]: r["score"] for r in rows
+                      if not r.get("is_stock")}
+            return {
+                "crypto": crypto or {b: None for b in fallback},
+                "stock": {r["base"]: r["score"] for r in rows
+                          if r.get("is_stock")},
+            }
     except Exception:
         pass
-    return {b: None for b in fallback}
+    return {"crypto": {b: None for b in fallback}, "stock": {}}
+
+
+def load_watchlist(fallback=None, db_path=None):
+    """兼容旧调用方：返回两个独立池的有序并集。"""
+    pools = load_watchlists(fallback=fallback, db_path=db_path)
+    return {**pools["crypto"], **pools["stock"]}
 
 
 if __name__ == "__main__":

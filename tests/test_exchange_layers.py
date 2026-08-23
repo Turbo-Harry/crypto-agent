@@ -404,6 +404,40 @@ def test_trading_layers_no_okx_url():
           not leaks, "; ".join(leaks[:4]))
 
 
+def test_daily_scan_independent_asset_pools():
+    """加密与美股各自取 Top-N，低成交额美股不被加密币挤出。"""
+    print("== daily_scan 加密/美股独立候选池 ==")
+    import tempfile
+    from exchange.models import Instrument
+    from engines.daily_scan import screen_daily, load_watchlists
+
+    bases = ["BTC", "ETH", "SOL", "NVDA", "TSLA"]
+    instruments = {
+        f"{base}-USDT-SWAP": Instrument(
+            f"{base}-USDT-SWAP", base, "swap", ct_val=1, lot_sz=1, min_sz=1)
+        for base in bases}
+    fake = FakeAdapter(instruments=instruments)
+    kl = make_candles(120, base=100.0, drift=0.2)
+    for i, base in enumerate(bases):
+        inst = f"{base}-USDT-SWAP"
+        fake.candles[inst] = kl
+        fake.last_prices[inst] = kl[-1].close
+        # 美股成交额低于三个加密币，但仍过硬门槛。
+        fake.ticker_vol_usdt[inst] = (10_000_000 - i * 1_000_000
+                                      if i < 3 else 2_000_000 - i * 100_000)
+    db = os.path.join(tempfile.mkdtemp(prefix="tst_split_scan_"), "scan.db")
+    w = screen_daily(exchange=fake, db_path=db, pool_top=5, watch_n=2)
+    crypto = [c["base"] for c in w if not c["is_stock"]]
+    stocks = [c["base"] for c in w if c["is_stock"]]
+    check("加密池独立取 2 个", len(crypto) == 2, f"实际 {crypto}")
+    check("美股池独立取 2 个", set(stocks) == {"NVDA", "TSLA"},
+          f"实际 {stocks}")
+    loaded = load_watchlists(db_path=db)
+    check("落库后仍分两池",
+          set(loaded["crypto"]) == set(crypto)
+          and set(loaded["stock"]) == set(stocks), str(loaded))
+
+
 if __name__ == "__main__":
     test_quantity_helpers()
     test_min_size_reject()
@@ -414,6 +448,7 @@ if __name__ == "__main__":
     test_candle_range_pagination()
     test_daily_scan_offline_fallback()
     test_daily_scan_drops_untradable()
+    test_daily_scan_independent_asset_pools()
     test_trading_layers_no_okx_url()
     test_full_trade_flow()
     print(f"\n结果: {passed} 通过, {failed} 失败")

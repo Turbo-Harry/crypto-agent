@@ -168,6 +168,11 @@ def main():
           client.get("/agent/proposals").status_code == 200
           and client.get("/agent/proposals").json()["shadow_only"] is True
           and client.get("/agent/proposals").json()["execution_authority"] is False)
+    watch = client.get("/watchlist").json()
+    check("/watchlist 分开返回加密/美股候选池",
+          "crypto_items" in watch and "stock_items" in watch
+          and all(item["pool"] == "crypto" for item in watch["crypto_items"])
+          and all(item["pool"] == "stock" for item in watch["stock_items"]))
     check("/agent/evaluation 返回成熟度统计",
           client.get("/agent/evaluation").status_code == 200
           and "incremental_ev" in client.get("/agent/evaluation").json()

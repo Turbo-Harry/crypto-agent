@@ -174,11 +174,24 @@ def status(request: Request):
 
 @router.get("/watchlist", response_model=WatchlistOut, tags=["观测"])
 def watchlist(request: Request):
-    """今日候选池（评分 → 允许笔数）。"""
+    """今日加密/美股独立候选池（评分 → 允许笔数）。"""
     t = _trader(request)
-    items = [WatchItem(base=b, score=t.watch_scores.get(b),
-                       budget=t._trade_budget(b)) for b in t.watchlist]
-    return WatchlistOut(date=time.strftime("%Y-%m-%d"), items=items)
+    crypto_bases = list(getattr(t, "crypto_watchlist", []))
+    stock_bases = list(getattr(t, "stock_watchlist", []))
+    # 兼容测试/外部宿主只提供旧 watchlist 属性的情况。
+    if not crypto_bases and not stock_bases:
+        stock_set = set(config.STOCK_SWAP_TOKENS)
+        crypto_bases = [b for b in t.watchlist if b not in stock_set]
+        stock_bases = [b for b in t.watchlist if b in stock_set]
+    crypto_items = [WatchItem(base=b, score=t.watch_scores.get(b),
+                              budget=t._trade_budget(b), pool="crypto")
+                    for b in crypto_bases]
+    stock_items = [WatchItem(base=b, score=t.watch_scores.get(b),
+                             budget=t._trade_budget(b), pool="stock")
+                   for b in stock_bases]
+    return WatchlistOut(date=time.strftime("%Y-%m-%d"),
+                        crypto_items=crypto_items, stock_items=stock_items,
+                        items=crypto_items + stock_items)
 
 
 @router.get("/signals/{base}", response_model=SignalOut, tags=["观测"])
@@ -352,15 +365,25 @@ def scan_daily(request: Request):
     except Exception as e:
         raise HTTPException(500, f"扫描失败: {e}")
     # 同步刷新引擎的候选池（避免等跨天自动刷新）
-    t.watchlist = [c["base"] for c in w]
+    t.crypto_watchlist = [c["base"] for c in w if not c.get("is_stock")]
+    t.stock_watchlist = [c["base"] for c in w if c.get("is_stock")]
+    t.watchlist = t.crypto_watchlist + t.stock_watchlist
     t.watch_scores = {c["base"]: c["score"] for c in w}
     t._watch_date = time.strftime("%Y-%m-%d")
     t._last_watch_refresh = time.time()
-    return ScanOut(date=time.strftime("%Y-%m-%d"), fallback=bool(w and w[0].get("score") == 0.0),
-                   candidates=[{"base": c["base"], "dir": c.get("dir"),
-                                "score": round(c.get("score", 0), 3),
-                                "atr_pct": round(c.get("atr_pct", 0), 4),
-                                "price": c.get("price")} for c in w])
+    candidates = [{"base": c["base"], "dir": c.get("dir"),
+                   "score": round(c.get("score", 0), 3),
+                   "atr_pct": round(c.get("atr_pct", 0), 4),
+                   "price": c.get("price"),
+                   "pool": "stock" if c.get("is_stock") else "crypto"}
+                  for c in w]
+    return ScanOut(
+        date=time.strftime("%Y-%m-%d"),
+        fallback=any(c["pool"] == "crypto" and c["score"] == 0.0
+                     for c in candidates),
+        candidates=candidates,
+        crypto_candidates=[c for c in candidates if c["pool"] == "crypto"],
+        stock_candidates=[c for c in candidates if c["pool"] == "stock"])
 
 
 @router.get("/scan/evolve", response_model=ScanEvolveOut, tags=["观测"])

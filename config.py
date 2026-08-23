@@ -291,7 +291,7 @@ MIN_PRICE = 0.01              # 最低价格
 MIN_TREND_DEV = 0.003         # EMA20 偏离 EMA50 ≥ 0.3% 才算有趋势（0.5%→0.3%）
 ATR_SWEET_LOW = 0.003         # 1h ATR% 下限 0.3%（0.5%→0.3%）
 ATR_SWEET_HIGH = 0.08         # 1h ATR% 上限 8%（6%→8%）
-WATCH_N = 12                  # 每日候选池数量（8→12）
+WATCH_N = 12                  # 每类每日候选池上限（加密/美股各自 Top-N）
 # ---- 经验库（experience_scoring） ----
 DECAY_HALFLIFE_DAYS = 30      # 分数向 50 回归的半衰期
 REVIVE_DAYS = 60              # discarded 经验 N 天后复活为 unverified

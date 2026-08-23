@@ -847,3 +847,10 @@
 - 观测：新增只读 `GET /agent/proposals`，显示运行健康、2:1、概率门、signal_id 与成熟 TP/SL/timeout 结果。
 - 工程修复：初版出现 `decision → engines` 反向依赖，改为引擎层显式注入 sample recorder 后代码图恢复单向。
 - 最终证据：专项 7/7、服务接口 52/52、完整自动发现 49/49 个测试脚本、compileall、AI 文档/链接、参数集中化、代码图、隔离、21 条 fix guard 与 diff 检查全部通过，失败 0。部署前 OKX 模拟盘完成迷你开仓→SL/TP→取消→平仓冒烟，全部 `sCode=0`；仅重启 8091 paper，PID 63433 → 75913，schema=32，健康、空仓、账本/交易所对账一致、`/error` 为空，六类 pending 条件单合计 0。`/agent/proposals` 返回 `shadow_only=true`、`execution_authority=false`，启动日志确认 paper shadow provider ready；8090 live PID 89187 始终未变化。
+
+## 2026-08-23 加密/美股每日候选池拆分
+
+- 问题：两类资产原先共用一个成交额排名和 `WATCH_N` 截断，美股沙盘合约即使通过全部硬门，也可能被高成交额加密币挤出每日候选。
+- 实现：流动性、1H 趋势/ATR、4H 共振仍完全共用同一组保守闸门；通过后按显式 `is_stock` 分类，成交额分数在类内计算，加密/美股各自取 `WATCH_N`。加密池空时仅回退主流加密币，美股池空时保持空。
+- 观测：引擎保留 `crypto_watchlist` / `stock_watchlist` 两份状态，`GET /watchlist` 和 `POST /scan/daily` 分池返回；兼容 `items` / `candidates` 并集字段。执行扫描遍历两池并集，但仍共用原有单笔、组合总敞口、冷却和止损闸门，没有增加下单权限。
+- 证据：新增离线用例在 `watch_n=2` 时同时保留 2 个加密与 2 个低成交额美股候选，落库后分类不丢失；完整自动发现 49/49 个测试脚本通过，compileall、AI 仓库、代码图、参数、隔离、21 条 fix guard 全绿。OKX 模拟盘公开行情实扫为 64→60→35→30，原子写入加密 12 个 + 美股 1 个（CRCL）。当时 8091 paper 未运行，本批次未启动引擎、未下单、未触碰 live。
