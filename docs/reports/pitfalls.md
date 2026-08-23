@@ -661,3 +661,9 @@
 - 根因：提案编排函数为了写 `signal_samples`，直接 import 了引擎层候选采样函数，把“模型决策”和“交易研究接线”混在同一层。
 - 修复：`decision.agent_proposals` 只负责快照、契约、几何和提案审计；候选落样改由 `engines.signal_sampling.record_agent_proposal_sample` 实现，并通过显式 callback 注入。
 - 预防：decision 层需要上层能力时只能定义数据结果或回调协议；不得为了复用方便反向 import engines/service。新增模块在继续集成前先跑代码图检查。
+
+### 2026-08-23 代码图漏层会把接口绕过误判为全绿
+- 现象：旧代码图报告无分层违规，但 `storage` 实际反向 import `decision`；HTTP 还直接读取引擎私有协作者、散写 SQL，并把 `tools` CLI 当生产依赖。
+- 根因：层级表遗漏 `storage/interfaces`，检查器只判断目录方向，没有检查服务直连数据库、核心反向依赖工具脚本和跨包私有符号。
+- 修复：补齐稳定契约层与持久化层，服务经 `TradingRuntimePort`、`decision.api`、`storage.query_api` 调用；Agent 契约下沉到 `interfaces`，台账/持仓/运行异常改走 repository；代码图新增三类接口绕过守卫。
+- 预防：目录拆文件不等于模块解耦。每次新增跨包 import 都要同时检查依赖方向、公开契约和数据所有权；`code_graph --check` 的层级清单必须覆盖全部核心包。

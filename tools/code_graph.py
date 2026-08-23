@@ -2,7 +2,7 @@
 轻量代码知识图谱 — 三层建模 + 影响面查询（纯标准库，零新依赖）。
 
 三层：
-  1. 模块层：import 依赖 → 层间矩阵 + 分层违规检查（service→engines→…→config 单向向下）
+  1. 模块层：import 依赖 → 分层违规检查（含 storage/interfaces，不再把未知层静默放过）
   2. 符号层：类/函数定义 + 调用边（含类继承、self 方法调用、跨模块解析）
   3. 数据流层：状态文件读写边（open/json.load/json.dump + 常量别名解析）→ 跨层共享状态告警
 
@@ -34,6 +34,8 @@ LAYERS = {
     "engines": "engines 交易引擎",
     "decision": "decision 决策进化",
     "execution": "execution 执行台账",
+    "storage": "storage 持久化适配",
+    "interfaces": "interfaces 稳定契约",
     "exchange": "exchange 交易所访问",
     "factors": "factors 因子研究",
     "tools": "tools 工具脚本",
@@ -48,11 +50,11 @@ LAYERS = {
 # 显式层级序（自上而下）：下层不得 import 上层；data/config 是底座，任何上层可引用
 LAYER_ORDER = [
     "service", "engines", "decision", "execution",
-    "strategy", "risk", "exchange",
-    "data", "config",
+    "strategy", "risk", "storage", "exchange",
+    "data", "interfaces", "config",
 ]
 PERIPHERAL = {"tools", "tests", "factors", "backtest", "legacy"}
-ALLOWED_UPWARD = PERIPHERAL | {"data", "config"}
+ALLOWED_UPWARD = PERIPHERAL | {"data", "interfaces", "config"}
 
 SKIP_DIRS = {".git", "lib", "node_modules", "__pycache__", ".pycache_tmp",
              "cache_okx", "cache_binance", "cache", "cache_fng", "docs"}
@@ -222,12 +224,30 @@ def build_graph():
                     break
         return out
 
+    def raw_imports(rel):
+        try:
+            tree = ast.parse(open(rel).read())
+        except Exception:
+            return []
+        result = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    result.append({"source": rel, "module": alias.name,
+                                   "symbols": [], "line": node.lineno})
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                result.append({"source": rel, "module": node.module,
+                               "symbols": [alias.name for alias in node.names],
+                               "line": node.lineno})
+        return result
+
     # 符号索引：符号名 → [模块]
     symbol_index = defaultdict(list)
     module_symbols = {}
     module_calls = {}
     file_ops = []
     file_constants = {}
+    imports = []
 
     for rel in modules:
         v = parse_file(rel)
@@ -241,6 +261,7 @@ def build_graph():
         file_ops.extend([{"file": f, "mode": m, "where": w} for f, m, w in v.file_ops])
         if v.file_constants:
             file_constants[rel] = v.file_constants
+        imports.extend(raw_imports(rel))
 
     # 解析调用目标：精确 → 唯一模块；短名唯一 → 该模块；多义 → 列出候选；无 → unresolved
     resolved_calls = []
@@ -272,7 +293,7 @@ def build_graph():
         "layer_deps": {k: sorted(v) for k, v in layer_deps.items()},
         "symbols": module_symbols, "calls": resolved_calls,
         "file_ops": file_ops, "file_constants": file_constants,
-        "cycles": cycles,
+        "cycles": cycles, "imports": imports,
     }
 
 
@@ -337,6 +358,25 @@ def run_checks(g):
     # 3. import 环
     for comp in g["cycles"]:
         problems.append(f"import 环: {' ↔ '.join(comp)}")
+
+    # 4. 接口边界：服务层不能绕过 query/runtime API；跨功能包不能
+    # import 对方下划线私有符号。
+    for item in g.get("imports", []):
+        source = item["source"]
+        module = item["module"]
+        source_top = source.split("/", 1)[0]
+        if ((source.startswith("service/") and module == "storage.db")
+                or (source_top not in PERIPHERAL
+                    and module.startswith("tools."))):
+            problems.append(
+                f"接口绕过: {source}:{item['line']} 直接 import {module}")
+        target_top = module.split(".", 1)[0]
+        if source_top not in PERIPHERAL and source_top != target_top:
+            for symbol in item.get("symbols", []):
+                if symbol.startswith("_"):
+                    problems.append(
+                        f"跨模块私有符号: {source}:{item['line']} import "
+                        f"{module}.{symbol}")
     return problems
 
 
@@ -462,15 +502,18 @@ def selftest():
         "file_ops": [{"file": "x.json", "mode": "write", "where": "engines/a.py:1"},
                      {"file": "x.json", "mode": "write", "where": "data/b.py:2"}],
         "cycles": [["a.py", "b.py"]],
+        "imports": [{"source": "service/app.py", "module": "storage.db",
+                     "symbols": [], "line": 1}],
     }
     probs = run_checks(g)
     assert any("反向依赖" in p for p in probs), probs
     assert any("跨层共享状态" in p for p in probs), probs
     assert any("import 环" in p for p in probs), probs
+    assert any("接口绕过" in p for p in probs), probs
     # 正例：全部向下依赖 → 零问题
     g2 = {"layer_deps": {"service 服务端外壳": ["engines 交易引擎"],
                          "engines 交易引擎": ["decision 决策进化", "exchange 交易所访问"]},
-          "file_ops": [], "cycles": []}
+          "file_ops": [], "cycles": [], "imports": []}
     assert run_checks(g2) == []
     print("selftest ✅ 检查器能抓出合成违规，正例零误报")
 

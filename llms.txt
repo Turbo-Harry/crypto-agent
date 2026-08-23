@@ -14,6 +14,7 @@
 
 ## 架构
 
+- [docs/architecture/2026-08-23_interface_first_layering.md](docs/architecture/2026-08-23_interface_first_layering.md): 接口优先与功能分层权威实施稿（运行端口、决策 API、查询/仓储 API、自动边界守卫）
 - [docs/architecture/code_graph.md](docs/architecture/code_graph.md): 代码知识图谱（模块/符号/数据流三层 + --check/--query）
 - [docs/architecture/exchange_layers.md](docs/architecture/exchange_layers.md): 交易所访问四层（transport/adapter/base/models）
 - [docs/architecture/mtf_resonance_design.md](docs/architecture/mtf_resonance_design.md): 1h+4h 多周期共振设计
@@ -54,6 +55,11 @@
 ## 代码
 
 - [service/main.py](service/main.py): 服务端进程入口（FastAPI + 引擎线程）
+- [interfaces/trading.py](interfaces/trading.py): 服务层与交易引擎之间的稳定运行契约
+- [interfaces/agent.py](interfaces/agent.py): Agent 存储与决策共同依赖的中立数据契约
+- [engines/runtime_api.py](engines/runtime_api.py): 方向引擎内部对象图到稳定快照/动作接口的适配器
+- [decision/api.py](decision/api.py): 服务端消费决策能力的统一公开门面
+- [storage/query_api.py](storage/query_api.py): HTTP/运维只读查询边界，隔离 SQL 与表结构
 - [decision/scan_evolve.py](decision/scan_evolve.py): 扫描尺子进化（REJECT_WICK_RATIO 提案→影子→DSR 门→人工批准）
 - [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎核心壳（入口/组装/tick 主循环；功能块 2026-08-20 拆分）
 - [engines/signal_scan.py](engines/signal_scan.py): 信号扫描功能块（SignalScanMixin）

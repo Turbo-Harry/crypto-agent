@@ -854,3 +854,12 @@
 - 实现：流动性、1H 趋势/ATR、4H 共振仍完全共用同一组保守闸门；通过后按显式 `is_stock` 分类，成交额分数在类内计算，加密/美股各自取 `WATCH_N`。加密池空时仅回退主流加密币，美股池空时保持空。
 - 观测：引擎保留 `crypto_watchlist` / `stock_watchlist` 两份状态，`GET /watchlist` 和 `POST /scan/daily` 分池返回；兼容 `items` / `candidates` 并集字段。执行扫描遍历两池并集，但仍共用原有单笔、组合总敞口、冷却和止损闸门，没有增加下单权限。
 - 证据：新增离线用例在 `watch_n=2` 时同时保留 2 个加密与 2 个低成交额美股候选，落库后分类不丢失；完整自动发现 49/49 个测试脚本通过，compileall、AI 仓库、代码图、参数、隔离、21 条 fix guard 全绿。OKX 模拟盘公开行情实扫为 64→60→35→30，原子写入加密 12 个 + 美股 1 个（CRCL）。当时 8091 paper 未运行，本批次未启动引擎、未下单、未触碰 live。
+
+## 2026-08-23 接口优先与功能分层整改
+
+- 审计：发现服务层直达 `DirectionalTrader` 内部协作者并散写 SQL、生产路径依赖 CLI `tools`、存储层反向 import 决策契约、引擎默认协作者未统一使用实例数据库，以及代码图遗漏 `storage/interfaces` 导致假绿。
+- 分层：新增中立 `interfaces` 契约层；服务状态与控制统一走 `TradingRuntimePort`/`DirectionalRuntimeAPI`，决策能力统一走 `decision.api`，HTTP 查询走 `storage.query_api`，台账/持仓/运行错误与异常事件走独立 repository。
+- 装配：`DirectionalTrader` 支持 journal、决策、经验、账本、风控、通知与事件记录器注入；默认实现继续兼容，但统一绑定实例 `db_path`，Fake/Stub 可替换。
+- 守卫：代码图纳入 `storage/interfaces`，新增服务直连 `storage.db`、核心 import `tools.*`、跨包私有符号三类拒绝项；专项接口测试同时验证 Protocol、行为快照和 AST 边界。
+- 行为边界：未修改任何策略参数、风险闸门、下单语义或 HTTP 下单权限；本轮只做离线验证，不启动或重启 paper/live 实例。
+- 实测证据：接口边界 17/17、服务接口 53/53；自动发现 51/51 个独立测试脚本通过、失败 0。compileall、AI 入口/文档、参数集中化、代码图及 selftest、测试隔离、21 条历史修复护栏和 diff 检查全部通过。

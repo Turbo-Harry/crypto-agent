@@ -10,61 +10,11 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 import config
+from decision.signal_identity import config_identity, jsonable as _jsonable
 
 
-_CONFIG_FIELDS = (
-    "SIGNAL_FEATURE_SCHEMA_VERSION",
-    "SIGNAL_SCORE", "DECIDE_MIN_SCORE", "THRESHOLD_INITIAL",
-    "REJECT_WICK_RATIO", "STOP_ATR_MULT", "TP_ATR_MULT",
-    "MTF_ENABLED", "SHADOW_WEIGHTS", "SHADOW_VOL_LOOKBACK",
-    "SHADOW_BOOK_DEPTH", "FLAG_USE_SHADOW_SCORE_GATE",
-    "SIGNAL_SAMPLE_TIMEFRAME", "SIGNAL_CONTEXT_TIMEFRAME",
-    "SIGNAL_REGIME_TIMEFRAME", "MAX_HOLD_HOURS",
-    "SIGNAL_OUTCOME_HORIZON_HOURS",
-    "FEE_RATE_TAKER", "SLIPPAGE", "FUNDING_EXPECTED_INTERVAL_HOURS",
-    "ENTRY_COST_MODEL_VERSION",
-    "FORECAST_BAR", "FORECAST_HORIZON_BARS", "FORECAST_HORIZON_HOURS",
-    "MARKET_REGIME_VERSION", "MARKET_REGIME_TREND_SLOPE_REF",
-    "MARKET_REGIME_TF4H_SPREAD_REF", "MARKET_REGIME_VOL_INSTABILITY_REF",
-    "MARKET_REGIME_SOFTMAX_TEMPERATURE",
-    "MARKET_REGIME_ROUTE_MIN_CONFIDENCE", "MARKET_REGIME_ROUTE_MIN_MARGIN",
-    "MARKET_REGIME_MIN_CORE_INPUTS", "MARKET_REGIME_STRATEGY_MAP",
-    "MARKET_REGIME_IMPLEMENTED_STRATEGIES",
-    "AGENT_PROPOSAL_PROMPT_VERSION", "AGENT_PROPOSAL_SCHEMA_VERSION",
-    "AGENT_PROPOSAL_MAX_SYMBOLS", "AGENT_PROPOSAL_MAX_PROPOSALS",
-    "AGENT_PROPOSAL_MIN_CONFIDENCE", "AGENT_PROPOSAL_MIN_BARS",
-)
 _TIMEFRAME_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000,
                  "1H": 3_600_000, "4H": 14_400_000, "1D": 86_400_000}
-
-
-def _jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in sorted(value.items())}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
-    return str(value)
-
-
-def config_identity(strategy_id: Optional[str] = None) -> Tuple[str, str]:
-    """返回 (strategy_version, config_hash)，只含会影响候选/门控的参数。"""
-    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
-    snapshot = {name: _jsonable(getattr(config, name, None))
-                for name in _CONFIG_FIELDS}
-    if strategy_id == config.BREAKOUT_SIGNAL_STRATEGY_ID:
-        snapshot.update({
-            "BREAKOUT_LOOKBACK": _jsonable(config.BREAKOUT_LOOKBACK),
-            "BREAKOUT_VOL_RATIO": _jsonable(config.BREAKOUT_VOL_RATIO),
-        })
-    snapshot["STRATEGY_ID"] = strategy_id
-    raw = json.dumps(snapshot, sort_keys=True, separators=(",", ":"),
-                     ensure_ascii=True).encode("utf-8")
-    config_hash = hashlib.sha256(raw).hexdigest()
-    version = (f"{config.ENTRY_STRATEGY_VERSION}:{strategy_id}:"
-               f"{config_hash[:12]}")
-    return version, config_hash
 
 
 def _kline_ms(value: Any) -> int:

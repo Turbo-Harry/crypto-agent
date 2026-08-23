@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any
 
-from decision.agent_contracts import (
+from interfaces.agent import (
     AgentInput,
     AgentStep,
     HarnessRun,

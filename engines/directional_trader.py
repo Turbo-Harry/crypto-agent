@@ -159,7 +159,10 @@ class _ExpAdapter:
 
 class DirectionalTrader(SignalScanMixin, PositionMixin,
                         RiskMonitorMixin, ReviewMixin):
-    def __init__(self, exchange: ExchangeAdapter = None, rt=None, db_path=None):
+    def __init__(self, exchange: ExchangeAdapter = None, rt=None, db_path=None, *,
+                 journal=None, decision_engine=None, experience_bank=None,
+                 position_ledger=None, risk_manager=None, notifier=None,
+                 event_logger=None):
         self.exchange = exchange or connect()
         # 审计/事件输出共享同一隔离路径：测试 db_path → <db>.events.jsonl。
         self._db_path = db_path
@@ -214,8 +217,11 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 此前 test_decision_loop 等跑套件时把假开仓单真的发到了用户飞书
         # (与 DEF-8 生产库污染同类的泄漏,这次是通知通道)。
         _external_output = trade_notifications_enabled(_ad_name)
-        self._notify = notify if _external_output else (lambda *a, **k: None)
-        if _external_output:
+        self._notify = (notifier if notifier is not None else
+                        (notify if _external_output else (lambda *a, **k: None)))
+        if event_logger is not None:
+            self._log_event = event_logger
+        elif _external_output:
             from execution.events import log_event as _write_event
             self._log_event = lambda event_type, payload=None: _write_event(
                 event_type, payload, db_path=self._db_path)
@@ -223,11 +229,13 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             self._log_event = lambda *a, **k: False
         # Phase0 T0.4：审计/日志表隔离。db_path=None → 生产共享库（默认）；
         # 测试必须传隔离路径（防 scan_decisions 等污染生产表，见 pitfalls）。
-        self.journal = TradeJournal()
-        self.evolver = SelfEvolvingTrader()
+        self.journal = (journal if journal is not None
+                        else TradeJournal(db_path=self._db_path))
         # 带评分的经验库（历史经验不一定对，用交易结果验证）
         from decision.experience_scoring import ScoredExperience
-        self.exp_bank = ScoredExperience()
+        self.exp_bank = (experience_bank if experience_bank is not None else
+                         ScoredExperience(path=(self._db_path
+                                                or "experience_scored.json")))
         # 2026-08-23 经验共享(用户指示): 启动时把对端实例的教训/归纳镜像进
         # 本库参与决策;镜像行 origin='peer',本实例只读不验证(防双重计数)。
         if getattr(config, "EXPERIENCE_SHARE_ENABLED", False) \
@@ -242,15 +250,20 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                           f"更新 {_u} 条, 归纳 {_r} 条")
             except Exception as e:
                 print(f"[经验共享] 启动同步失败: {e}")
-        # 统一经验库：evolver 的决策也走 ScoredExperience（B6）
-        self.evolver.bank = _ExpAdapter(self.exp_bank)
+        # 统一经验库：evolver 的决策也走 ScoredExperience（B6）。依赖通过
+        # 构造接口注入，决策组件不再自行打开另一份全局 journal/经验库。
+        exp_adapter = _ExpAdapter(self.exp_bank)
+        self.evolver = (decision_engine if decision_engine is not None else
+                        SelfEvolvingTrader(journal=self.journal,
+                                           bank=exp_adapter))
         # 持仓所有权账本（R1-12）：组合总敞口 ≤600 + claim/release
-        from execution.position_ownership import PositionLedger
         from execution.position_ownership import PositionLedger as _PL
         # 2026-08-22 实盘: 总敞口上限用 LIVE_MAX_TOTAL
-        self.ledger = _PL(max_total_notional=(
-            config.LIVE_MAX_TOTAL if self.live_mode
-            else config.MAX_TOTAL_NOTIONAL))
+        self.ledger = (position_ledger if position_ledger is not None else
+                       _PL(path=(self._db_path or "position_ownership.json"),
+                           max_total_notional=(
+                               config.LIVE_MAX_TOTAL if self.live_mode
+                               else config.MAX_TOTAL_NOTIONAL)))
         # 每日候选池（用户要求：每天扫全市场挑适合下单的币；评分用于动态笔数）
         from engines.daily_scan import load_watchlists
         _watch_pools = load_watchlists(db_path=self._db_path)
@@ -311,7 +324,8 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             eq = self.exchange.fetch_balance().total_eq
         except Exception:
             eq = 0
-        self.risk = RiskManager(initial_equity=eq if eq > 0 else 4190)
+        self.risk = (risk_manager if risk_manager is not None else
+                     RiskManager(initial_equity=eq if eq > 0 else 4190))
         self._halt_notified = False
         # 审计 C1/H2:启动对账——交易所持仓 ∪ 未平仓 journal 为唯一事实源,
         # 幽灵 claim 物理释放;无台账的交易所持仓仅告警(不自动下单)。
@@ -329,6 +343,21 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 print("实时价格已接入（止损止盈 tick 级监控）")
             except Exception as e:
                 print(f"WebSocket 启动失败，止损监控退回 REST 轮询: {e}")
+
+    @property
+    def service_api(self):
+        """Return the stable service-facing interface for this runtime.
+
+        HTTP and other inbound adapters must use this boundary instead of
+        reaching into the engine's mutable collaborators.  It is cached so one
+        runtime has one adapter identity for its full lifetime.
+        """
+        api = getattr(self, "_service_api", None)
+        if api is None:
+            from engines.runtime_api import DirectionalRuntimeAPI
+            api = DirectionalRuntimeAPI(self)
+            self._service_api = api
+        return api
 
     def _reconcile_startup(self):
         """启动对账(审计 C1/H2):幽灵 claim 物理释放;无台账持仓告警。"""
@@ -419,7 +448,7 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 # 2026-08-21: 幽灵仓也进统一异常中心(交易所故障期成交回报丢失
                 # 会产生无台账持仓,HBAR 案例)——值守 AI 与人工都能看到。
                 try:
-                    from tools.anomalies import register as _reg
+                    from storage.anomaly_repository import register as _reg
                     _reg("reconcile",
                          f"无台账持仓 {p.inst_id} {p.side} qty={p.base_qty}",
                          "交易所持仓无对应 journal 记录(疑似成交回报丢失),"

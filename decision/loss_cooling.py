@@ -20,6 +20,14 @@ def _enabled():
     return True
 
 
+def paper_guards_disabled():
+    """模拟盘关闭亏损响应(2026-08-23 用户指示'模拟盘不要有冷却'):
+    paper 模式且开关关闭 → 连亏半仓等亏损抑制全部跳过(全仓激进采集)。"""
+    if getattr(config, "CRYPTO_MODE", "live") != "paper":
+        return False
+    return not getattr(config, "LOSS_HALF_PAPER_ENABLED", False)
+
+
 def streak(db_path=None):
     try:
         import storage.db as sdb

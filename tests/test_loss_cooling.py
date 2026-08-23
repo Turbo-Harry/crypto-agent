@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
 
 import config
 from decision.loss_cooling import (streak, is_cooling, release, on_close,
-                                   cooling_remaining_hours)
+                                   cooling_remaining_hours,
+                                   paper_guards_disabled)
 
 _passed = _failed = 0
 
@@ -82,7 +83,14 @@ def main():
         on_close(db, -0.01)
     check("开关关闭 → 不启动冷却", not is_cooling(db))
 
-    # ---- 模式门控: 模拟盘不冷却(2026-08-23 用户指示"模拟盘去掉保持锁定") ----
+    # ---- 模式门控: 模拟盘不要有冷却/半仓(2026-08-23 用户指示) ----
+    _old_paper_half = config.LOSS_HALF_PAPER_ENABLED
+    config.LOSS_HALF_PAPER_ENABLED = False
+    config.CRYPTO_MODE = "paper"
+    check("paper 模式 → 连亏半仓也关闭", paper_guards_disabled() is True)
+    config.CRYPTO_MODE = "live"
+    check("live 模式 → 连亏半仓照常", paper_guards_disabled() is False)
+    config.LOSS_HALF_PAPER_ENABLED = _old_paper_half
     config.LOSS_STREAK_COOL_ENABLED = True
     config.LOSS_STREAK_COOL_PAPER_ENABLED = False
     _old_mode = config.CRYPTO_MODE

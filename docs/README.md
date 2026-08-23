@@ -7,7 +7,7 @@
 
 | 目录 | 内容 | 文档 |
 |---|---|---|
-| [architecture/](architecture/) | 架构设计 | [exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计）、[code_graph.md](architecture/code_graph.md)（代码知识图谱：三层建模+影响面查询）、[ai_friendly_repo.md](architecture/ai_friendly_repo.md)（AI 接手路径/事实优先级/15m 研究链/Agent Harness/机器守卫） |
+| [architecture/](architecture/) | 架构设计 | [接口优先与功能分层](architecture/2026-08-23_interface_first_layering.md)（跨模块契约/运行接口/查询仓储 API）、[exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计）、[code_graph.md](architecture/code_graph.md)（代码知识图谱：三层建模+影响面查询）、[ai_friendly_repo.md](architecture/ai_friendly_repo.md)（AI 接手路径/事实优先级/15m 研究链/Agent Harness/机器守卫） |
 | [plans/](plans/) | 优化/实施计划与简报 | Agent B R1/R2 方案及终审稿、D 批次实施简报、自进化系统设计方案、[交易 Agent Harness 权威实施稿](plans/2026-08-23_agent_harness_improvement_FINAL.md)、[Agent 主动提案 Shadow 权威实施稿](plans/2026-08-23_agent_active_proposal_shadow_FINAL.md)、[开仓准确率/因子/极值预测权威实施稿](plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md) |
 | [reports/](reports/) | 研究报告与收敛报告 | [15m/4h OKX SWAP 历史重放裁决](reports/2026-08-23_15m_research_replay_report.md)、research_report_round2/3、optimization_report、convergence_report、final_report、evolution_loop_report、optimization_notes（实施日志）、backtest_report、**pitfalls（踩坑档案，写代码前必读）** |
 | [ops/](ops/) | 运维与验证手册 | watchdog_launchd（进程守护）、tp_sandbox_verify（止盈沙盘验证清单）、subaccount_test_plan（子账户测试计划）、data_collection_schedule（数据采集调度） |
@@ -17,7 +17,7 @@
 仓库四个入口：根目录 `README.md`（人类总览）、`AGENTS.md`（AI 安全与协作规则）、
 `llms.txt`（机器可读地图），以及 `docs/README.md`（文档索引）。
 
-## 二、按时间线（全部 35 篇，不含本索引）
+## 二、按时间线（全部 36 篇，不含本索引）
 
 | 时间 | 文档 | 一句话 |
 |---|---|---|
@@ -56,6 +56,7 @@
 | 08-23 | [plans/2026-08-23_agent_active_proposal_shadow_FINAL.md](plans/2026-08-23_agent_active_proposal_shadow_FINAL.md) | AI 主动方向候选、确定性 2:1、独立反事实标签与零执行权限（权威实施稿） |
 | 08-23 | [plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md](plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md) | 15m 主周期/4h horizon 的开仓准确率、因子挖掘、极值区间与 Agent 增量验证（权威实施稿） |
 | 08-23 | [reports/2026-08-23_15m_research_replay_report.md](reports/2026-08-23_15m_research_replay_report.md) | 10 个 OKX SWAP 的 15m/4h 历史重放、因子/概率/极值样本外裁决与停止结论 |
+| 08-23 | [architecture/2026-08-23_interface_first_layering.md](architecture/2026-08-23_interface_first_layering.md) | 接口优先与功能分层：服务运行端口、决策 API、查询/仓储 API 与自动边界守卫（权威实施稿） |
 
 ## 三、命名约定
 

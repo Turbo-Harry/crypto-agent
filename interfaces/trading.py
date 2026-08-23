@@ -1,0 +1,46 @@
+"""Public contract exposed by the trading engine to service adapters."""
+
+from __future__ import annotations
+
+from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+
+
+@runtime_checkable
+class TradingRuntimePort(Protocol):
+    """Stable service-facing boundary for a running trading engine.
+
+    The HTTP layer deliberately receives plain snapshots.  It must not inspect
+    the engine's journal, risk manager, exchange adapter, realtime client, or
+    private timing fields directly.
+    """
+
+    @property
+    def adapter_name(self) -> str: ...
+
+    @property
+    def paused(self) -> bool: ...
+
+    @property
+    def db_path(self) -> str | None: ...
+
+    def status_snapshot(self) -> Mapping[str, Any]: ...
+
+    def watchlist_snapshot(self) -> Mapping[str, Any]: ...
+
+    def inspect_signal(self, base: str) -> Mapping[str, Any]: ...
+
+    def journal_snapshot(self, limit: int) -> Mapping[str, Any]: ...
+
+    def realtime_snapshot(self, base: str) -> Mapping[str, Any]: ...
+
+    def refresh_watchlist(self) -> Sequence[Mapping[str, Any]]: ...
+
+    def reconcile_snapshot(self) -> Mapping[str, Any]: ...
+
+    def run_daily_analysis(self) -> Mapping[str, Any]: ...
+
+    def pause(self) -> None: ...
+
+    def resume(self) -> None: ...
+
+    def error_snapshot(self) -> str: ...

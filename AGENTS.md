@@ -66,8 +66,14 @@ execution/         执行与台账层
 
 storage/           数据持久化层（SQLite，全仓数据唯一落点）
   ├─ db.py         表结构/迁移/事务原语；WAL + busy_timeout，短连接线程安全
+  ├─ query_api.py  服务/运维只读查询边界（调用方不掌握 SQL/schema）
+  ├─ *_repository.py  台账/持仓/运行错误等写入接口
   ├─ agent_harness.py  Agent runs/steps/evaluations
   └─ agent_memory.py   证据范围记忆与衰减
+
+interfaces/        中立稳定契约层（不依赖 service/engines/decision/storage）
+  ├─ trading.py    TradingRuntimePort（HTTP 与引擎之间）
+  └─ agent.py      Agent 数据契约（决策与存储共同依赖）
 
 exchange/          交易所访问四层（见 docs/architecture/exchange_layers.md）
   transport.py     OKX 原生 REST：HMAC 签名/限速/错误归一
@@ -191,6 +197,14 @@ CI 自动发现全部 `tests/test_*.py`（当前 45 个），逐脚本使用独�
 
 ## 9. 代码最佳实践（本仓库约定）
 
+- 接口优先：跨功能模块只能依赖公开的 ABC/Protocol、领域模型或模块 `*_api.py`；
+  禁止调用其他模块的 `_private` 符号、读取其对象内部状态或在调用方散写对方表的 SQL。
+- HTTP 层只依赖 `TradingRuntimePort` 和只读 query API；不得直接访问 trader 的
+  `exchange/journal/risk/rt/_db_path/_notify` 等协作者或私有字段。
+- 依赖装配集中在进程组合根；业务模块接受接口注入，不在业务方法里选择具体交易所、
+  数据库或外部通知实现。保留兼容默认工厂时，必须可由 Fake/Stub 完整替换。
+- `interfaces/` 只放无副作用的稳定契约；`storage/` 是底层持久化适配层，不得反向
+  import `service/engines/decision/execution`。跨层新增 import 必须通过 code_graph 守卫。
 - 单写者：同一文件同一时刻只有一个协作者写；并行任务只做只读验证。
 - 写入前按 `docs/AGENT_NOTES.md` 运行 `python3 tools/agent_notes.py status` 并 claim；
   结束时 release，避免多条 agent 线覆盖同一文件。

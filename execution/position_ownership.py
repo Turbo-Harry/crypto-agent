@@ -11,6 +11,8 @@ import json
 import os
 import time
 
+from storage import position_repository
+
 try:
     import fcntl
 except ImportError:
@@ -32,28 +34,14 @@ class PositionLedger:
         self._data = self._load()
 
     def _load(self):
-        import storage.db as sdb
-        sdb.init_db(self.db_path)
-        rows = sdb.q("SELECT * FROM ownership", db_path=self.db_path)
-        out = {}
-        for r in rows:
-            out[r["key"]] = {"qty": r["qty"], "notional": r["notional"],
-                             "strategies": json.loads(r["strategies"] or "{}"),
-                             "updated_at": r["updated_at"]}
-        return out
+        return position_repository.load_ownership(self.db_path)
 
     def _locked(self, fn):
         # SQLite 事务本身即并发安全（WAL + busy_timeout），保留此接口兼容旧调用
         return fn()
 
     def _save(self):
-        import storage.db as sdb
-        for key, rec in self._data.items():
-            sdb.x("INSERT OR REPLACE INTO ownership (key,qty,notional,strategies,updated_at) "
-                  "VALUES (?,?,?,?,?)",
-                  [key, rec.get("qty", 0.0), rec.get("notional", 0.0),
-                   json.dumps(rec.get("strategies", {})), rec.get("updated_at", time.time())],
-                  db_path=self.db_path)
+        position_repository.upsert_ownership(self._data, self.db_path)
 
     # ---------- 组合总敞口 ----------
     def total_notional(self):
@@ -101,8 +89,7 @@ class PositionLedger:
             if rec["qty"] <= 0:
                 # 审计 H2:归零必须物理 DELETE,否则重启后 _load 把幽灵持仓读回
                 self._data.pop(key, None)
-                import storage.db as sdb
-                sdb.x("DELETE FROM ownership WHERE key=?", [key], db_path=self.db_path)
+                position_repository.delete_ownership(key, self.db_path)
             else:
                 rec["updated_at"] = time.time()
             self._save()
@@ -111,8 +98,7 @@ class PositionLedger:
 
     def force_release(self, key):
         """物理删除一条 claim(对账用)。返回被释放的 key 或 None。"""
-        import storage.db as sdb
-        sdb.x("DELETE FROM ownership WHERE key=?", [key], db_path=self.db_path)
+        position_repository.delete_ownership(key, self.db_path)
         if key in self._data:
             self._data.pop(key, None)
             return key

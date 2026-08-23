@@ -17,9 +17,15 @@ from decision.review_engine import deep_review, ExperienceBank
 class SelfEvolvingTrader:
     """自驱动进化交易员：决策时参考经验库，交易后复盘更新经验库。"""
 
-    def __init__(self):
-        self.journal = TradeJournal()
-        self.bank = ExperienceBank()
+    def __init__(self, journal=None, bank=None):
+        """Create the decision component with replaceable collaborators.
+
+        Defaults preserve standalone/demo compatibility.  The production engine
+        injects its instance-scoped journal and scored experience adapter so the
+        decision module never opens an unrelated global store.
+        """
+        self.journal = journal if journal is not None else TradeJournal()
+        self.bank = bank if bank is not None else ExperienceBank()
 
     def decide(self, symbol, signal_score, signal_name, signal_price, entry_price,
                stop_dist, tp_dist, atr_value, journal=None, conditions=None):
@@ -132,7 +138,10 @@ class SelfEvolvingTrader:
         # 刮损不应锁死开仓;该决定的护栏见 tools/fix_guard.py G9)。
         closed = [t for t in journal.trades if t["status"] == "closed"]
         recent_losses = [t for t in closed[-5:] if t["pnl"] is not None and t["pnl"] < 0]
-        if len(recent_losses) == 2:
+        # 2026-08-23 用户指示"模拟盘不要有冷却": paper 全仓激进采集,
+        # 连亏半仓只在实盘生效
+        from decision.loss_cooling import paper_guards_disabled
+        if len(recent_losses) == 2 and not paper_guards_disabled():
             decision["size_factor"] = 0.5
             decision["reason"].append("近期连亏 2 笔，半仓")
 

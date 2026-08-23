@@ -20,7 +20,7 @@ import os
 import secrets
 import time
 
-from storage.db import _TRADE_COLS
+from storage import trade_repository
 
 # 旧记录单位回填用的合约面值表（legacy size 是"张"时换算币数；新代码不再依赖此表）
 LEGACY_CT_VAL = config.LEGACY_CT_VAL
@@ -112,7 +112,6 @@ class TradeJournal:
         self._load()
 
     def _load(self):
-        import storage.db as sdb
         # 兼容：显式路径下若存在旧 JSON 文件（非 SQLite），先当 JSON 读入，
         # 转库后移除原 JSON（迁移语义：JSON 被消费进 DB）。
         legacy_json = None
@@ -129,16 +128,13 @@ class TradeJournal:
             self.trades = legacy_json.get("trades", [])
             self.lessons = legacy_json.get("lessons", [])
             os.remove(self.db_path)          # 清掉 JSON，避免被当成 SQLite 打开
-            sdb.init_db(self.db_path)
+            trade_repository.initialize(self.db_path)
             self._backfill_notional()
             self._save()
             return
-        sdb.init_db(self.db_path)
-        rows = sdb.q("SELECT * FROM trades ORDER BY entry_time", db_path=self.db_path)
+        rows = trade_repository.load_trades(self.db_path)
         self.trades = [self._row_to_trade(r) for r in rows]
-        kv = sdb.q1("SELECT value FROM kv WHERE key='legacy_journal_lessons'",
-                    db_path=self.db_path)
-        self.lessons = json.loads(kv["value"]) if kv else []
+        self.lessons = trade_repository.load_legacy_lessons(self.db_path)
         self._backfill_notional()
 
     @staticmethod
@@ -154,11 +150,6 @@ class TradeJournal:
         return t
 
     @staticmethod
-    def _sql_val(v):
-        """list/dict 落库走 JSON 字符串，其余原样（含 None→NULL）。"""
-        return json.dumps(v) if isinstance(v, (list, dict)) else v
-
-    @staticmethod
     def _new_trade_id():
         """时间戳 + 4 位随机 hex，避免多进程/重启后按内存长度撞号。
         旧数据 txn_001 这类序号 ID 继续共存，本方法不改写历史行。"""
@@ -166,22 +157,11 @@ class TradeJournal:
 
     def _insert_trade(self, t):
         """新开仓：纯 INSERT。主键冲突抛错，绝不覆盖已有行。"""
-        import storage.db as sdb
-        cols = [k for k in t if k in _TRADE_COLS]
-        sdb.x(f"INSERT INTO trades ({','.join(cols)}) "
-              f"VALUES ({','.join('?' * len(cols))})",
-              [self._sql_val(t[k]) for k in cols], db_path=self.db_path)
+        trade_repository.insert_trade(t, self.db_path)
 
     def _update_trade(self, trade_id, fields):
         """按 id 增量 UPDATE 指定列（值仍走 _sql_val 序列化）。"""
-        import storage.db as sdb
-        cols = [k for k in fields if k in _TRADE_COLS]
-        if not cols:
-            return
-        sets = ", ".join(f"{k}=?" for k in cols)
-        sdb.x(f"UPDATE trades SET {sets} WHERE id=?",
-              [self._sql_val(fields[k]) for k in cols] + [trade_id],
-              db_path=self.db_path)
+        trade_repository.update_trade(trade_id, fields, self.db_path)
 
     def _save(self):
         """全量快照写库（INSERT OR REPLACE 逐笔）。
@@ -194,12 +174,7 @@ class TradeJournal:
         兼容：position_mgmt 在 TP 挂失败打标时仍调用（tp_missing 非表列，
         REPLACE 不持久化该标记；本轮调用方零改动，故保留）。
         """
-        import storage.db as sdb
-        for t in self.trades:
-            cols = [k for k in t if k in _TRADE_COLS]
-            sdb.x(f"INSERT OR REPLACE INTO trades ({','.join(cols)}) "
-                  f"VALUES ({','.join('?' * len(cols))})",
-                  [self._sql_val(t[k]) for k in cols], db_path=self.db_path)
+        trade_repository.upsert_trades(self.trades, self.db_path)
 
     def _backfill_notional(self):
         """旧记录缺 size_unit/notional 时回填（只补一次，落盘）。

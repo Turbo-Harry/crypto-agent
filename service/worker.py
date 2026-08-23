@@ -24,6 +24,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from engines.directional_trader import DirectionalTrader, connect as connect_dir
+from storage.anomaly_repository import register as register_anomaly
+from storage.runtime_repository import (
+    record_engine_error,
+    record_engine_error_prefix,
+    save_position_snapshot,
+)
 
 
 def run_intraday_research_cycle(db_path=None):
@@ -73,18 +79,8 @@ def _record_background_failure(trader, source, exc):
     trader.last_error = f"{time.strftime('%H:%M:%S')} {message}\n{tb}"
     print(f"后台任务失败 [{source}]: {exc}")
     try:
-        import storage.db as sdb
         db_path = getattr(trader, "_db_path", None)
-        sdb.init_db(db_path)
-        duplicate = sdb.q1(
-            "SELECT id FROM engine_errors WHERE engine=? AND error=? "
-            "AND ts>? ORDER BY id DESC LIMIT 1",
-            [source, message, time.time() - 300], db_path=db_path)
-        if not duplicate:
-            sdb.x(
-                "INSERT INTO engine_errors (ts,engine,error,traceback) "
-                "VALUES (?,?,?,?)",
-                [time.time(), source, message, tb], db_path=db_path)
+        record_engine_error(source, message, tb, db_path=db_path)
     except Exception:
         pass
 
@@ -174,23 +170,9 @@ class TraderWorker:
     def _save_positions_snapshot(self):
         """本地仓位快照：把交易所持仓（唯一事实源）定期落库（storage 层）。"""
         try:
-            import storage.db as sdb
-            sdb.init_db()
-            with sdb.tx() as conn:
-                positions = self.exchange.fetch_positions()
-                if not positions:
-                    # 2026-08-21: 空仓时写一行哨兵(inst_id='-')——
-                    # 否则一行都不写,H9 拿不到新时间戳误报'快照不新鲜'。
-                    conn.execute(
-                        "INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
-                        "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
-                        [time.time(), "-", "-", 0, 0, 0])
-                for p in positions:
-                    conn.execute(
-                        "INSERT INTO position_snapshots (ts,inst_id,side,contracts,"
-                        "base_qty,avg_px) VALUES (?,?,?,?,?,?)",
-                        [time.time(), p.inst_id, p.side, p.contracts,
-                         round(p.base_qty, 8), p.avg_px])
+            save_position_snapshot(
+                self.exchange.fetch_positions(),
+                db_path=self.trader.service_api.db_path)
         except Exception as e:
             print(f"仓位快照失败: {e}")
 
@@ -233,16 +215,9 @@ class TraderWorker:
                     # 2026-08-19: 监控线程异常不能静默——与主循环同款
                     # 5 分钟同文本节流落库,持续坏掉会通过 H6 突发口径报警。
                     try:
-                        import storage.db as sdb
-                        sdb.init_db()
-                        dup = sdb.q1("SELECT id FROM engine_errors WHERE error LIKE ? "
-                                     "AND ts > ? ORDER BY id DESC LIMIT 1",
-                                     [f"monitor线程: {str(e)[:80]}%",
-                                      time.time() - 300])
-                        if not dup:
-                            sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) "
-                                  "VALUES (?,?,?,?)",
-                                  [time.time(), "monitor", f"monitor线程: {e}", ""])
+                        record_engine_error_prefix(
+                            "monitor", f"monitor线程: {e}",
+                            db_path=t.service_api.db_path)
                     except Exception:
                         pass
                 stop_mon.wait(1)
@@ -436,22 +411,15 @@ class TraderWorker:
                     # 2026-08-17: 同文本错误 5 分钟节流——SSL 抖动时每请求一
                     # 行会灌爆 engine_errors/anomalies(今晚 6 条 blip 触发
                     # H6 假告警)。首条落库+注册,同文本窗口内只打印不落库。
-                    err_key = str(e)[:120]
                     try:
-                        import storage.db as sdb
-                        sdb.init_db()
-                        dup = sdb.q1("SELECT id FROM engine_errors WHERE error LIKE ? "
-                                     "AND ts > ? ORDER BY id DESC LIMIT 1",
-                                     [err_key + "%", time.time() - 300])
-                        if not dup:
-                            sdb.x("INSERT INTO engine_errors (ts, engine, error, traceback) VALUES (?,?,?,?)",
-                                  [time.time(), "directional", str(e), tb])
-                            try:
-                                from tools.anomalies import register as _reg
-                                _reg("engine_error", f"方向性引擎异常: {e}",
-                                     str(e)[:200], severity="error")
-                            except Exception:
-                                pass
+                        inserted = record_engine_error_prefix(
+                            "directional", str(e), tb,
+                            db_path=t.service_api.db_path)
+                        if inserted:
+                            register_anomaly(
+                                "engine_error", f"方向性引擎异常: {e}",
+                                str(e)[:200], severity="error",
+                                db_path=t.service_api.db_path)
                     except Exception:
                         pass
                 time.sleep(1)   # 2026-08-17 提速: 1s 节拍止损监控(持仓快照仍 2s 节流)

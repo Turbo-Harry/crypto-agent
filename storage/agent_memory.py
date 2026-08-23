@@ -7,7 +7,7 @@ import math
 import time
 from typing import Any, Mapping
 
-from decision.agent_contracts import stable_hash
+from interfaces.agent import stable_hash
 from storage import db
 
 
