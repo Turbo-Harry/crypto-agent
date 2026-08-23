@@ -984,3 +984,14 @@
   空仓、未熔断、账本/交易所对账一致、`/error` 为空，OKX 模拟盘六类 pending 条件单合计 0；
   8090 live PID 90574 未变化。当前模型仍为空，A 自然候选 47/300、路径 25、当前完整 Harness
   3/100 且 reject 0/30；v3 尚无自然运行，继续保持禁止下单和预算扩大锁关闭。
+
+## 2026-08-24 B_breakout Harness 独立影子采样
+
+- 先证伪一个预声明本地组合门：A 的 `cost_r≤0.35` → `high_vol` → 训练折 VWAP crossing 中位数
+  三层筛选，五折只有最后一折为正；最深层 75 个样本中 58 个集中于最后一折，前四折负收益或无
+  样本。汇总 +0.313R/TP-first 46.7% 是近期段主导，禁止上线、禁止生成模型。
+- 接线改进：A/B 去重结构候选现在复用同一个 Harness 调用方法。B 仍沿共同 4h 标签链成熟，但
+  lifecycle/Trace/evaluation 以 `B_breakout` 独立计数；调用固定 `allow_veto=False`，即使未来 B 的
+  Agent 版本达统计门也不获得执行或否决权限。
+- 离线行为证据：构造“B 触发、A 不触发”行情，B 候选产生一条当前 prompt 的 `shadow_reject`
+  Trace 和一条 pending evaluation，同时 fake orders=0、journal=0；策略 B 脚本 32/32 通过。

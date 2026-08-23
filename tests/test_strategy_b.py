@@ -16,6 +16,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import engines.directional_trader as dt_mod
+import config
 from engines.strategy_b import breakout_signal, record_shadow
 from tests.test_phase0_review import _make_trader, _silence_notify, \
     _restore_notify
@@ -151,6 +152,10 @@ def test_engine_shadow_no_orders(tmp):
         dt._last_watch_refresh = time.time()
         dt._last_scan = 0
         dt.signal_cool = {}
+        dt.agent_model_call = lambda _prompt: {
+            "verdict": "reject", "risk_probability": .9,
+            "confidence": .8, "reason_codes": ["liquidity_failure"],
+            "evidence_ids": ["market:1"], "reason": "frozen spread risk"}
         dt.scan_signals()
         conn = sqlite3.connect(os.path.join(tmp, "scan.db"))
         n = conn.execute("SELECT COUNT(*) FROM shadow_signals").fetchone()[0]
@@ -158,6 +163,14 @@ def test_engine_shadow_no_orders(tmp):
             "SELECT strategy_id,timeframe,final_decision,reject_reason,features "
             "FROM signal_samples WHERE strategy_id=?",
             ("B_breakout",)).fetchone()
+        harness = conn.execute(
+            "SELECT r.final_action,r.prompt_version,s.strategy_id "
+            "FROM agent_runs r JOIN signal_samples s USING(signal_id) "
+            "WHERE s.strategy_id=?", ("B_breakout",)).fetchone()
+        harness_eval_n = conn.execute(
+            "SELECT COUNT(*) FROM agent_evaluations e JOIN agent_runs r "
+            "USING(run_id) JOIN signal_samples s USING(signal_id) "
+            "WHERE s.strategy_id=?", ("B_breakout",)).fetchone()[0]
         conn.close()
         check("影子信号落库(隔离)", n >= 1, f"实际 {n}")
         check("B 进入共同 15m/4h 候选结算链",
@@ -175,6 +188,11 @@ def test_engine_shadow_no_orders(tmp):
               str(frozen))
         check("零真实下单(fake.orders==0)", len(fake.orders) == 0,
               f"实际 {len(fake.orders)}")
+        check("B 候选进入同一 Harness 且策略身份隔离",
+              harness is not None and harness[0] == "shadow_reject" and
+              harness[1] == config.AGENT_HARNESS_PROMPT_VERSION and
+              harness[2] == config.BREAKOUT_SIGNAL_STRATEGY_ID and
+              harness_eval_n == 1, f"实际 {harness}/{harness_eval_n}")
         check("journal 零新增交易", len(dt.journal.trades) == 0,
               f"实际 {len(dt.journal.trades)}")
     finally:

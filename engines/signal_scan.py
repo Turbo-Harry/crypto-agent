@@ -262,6 +262,51 @@ class SignalScanMixin:
                     "correlation_concentration"),
                 **per_symbol}
 
+    def _run_harness_shadow(self, base, sig, signal_id, *, allow_veto):
+        """Evaluate one frozen strategy candidate without granting authority.
+
+        A and B share the Harness runtime and evidence contract, while their
+        lifecycle versions remain strategy-scoped.  B always supplies
+        ``allow_veto=False`` because it has no execution path.
+        """
+        model_call = getattr(self, "agent_model_call", None)
+        if (not signal_id or not getattr(config, "AGENT_HARNESS_ENABLED", False)
+                or not model_call):
+            return None
+        try:
+            from decision.sentiment import latest_sentiment
+            from decision.agent_judge import harness_judge
+            sentiment = latest_sentiment(
+                db_path=getattr(self, "_db_path", None))
+            return harness_judge(
+                sig=sig, base=base,
+                score=sig.get("shadow_score") or SIGNAL_SCORE,
+                price=sig.get("entry"), sentiment=sentiment,
+                model_call=model_call,
+                db_path=getattr(self, "_db_path", None),
+                signal_id=signal_id,
+                account={
+                    "equity_usdt": getattr(self.risk, "equity", None),
+                    "risk_per_trade": config.RISK_PER_TRADE,
+                    "max_notional_per_trade_usdt":
+                        config.MAX_NOTIONAL_PER_TRADE,
+                    "portfolio_notional_usdt": self.ledger.total_notional(),
+                    "max_total_notional_usdt": config.MAX_TOTAL_NOTIONAL,
+                },
+                health={
+                    "risk_can_trade": self.risk.can_trade(),
+                    "risk_halted": bool(self.risk.halted),
+                    "risk_halt_reason": self.risk.halt_reason,
+                },
+                allow_veto=bool(allow_veto))
+        except Exception as exc:
+            strategy_id = (sig.get("strategy_id") or
+                           config.ENTRY_SIGNAL_STRATEGY_ID)
+            # 影子链故障只留本地证据，不改变量化或执行决策。
+            print(f"Agent Harness candidate shadow failed "
+                  f"{strategy_id}/{base}: {type(exc).__name__}: {exc}")
+            return None
+
     def _scan_strategy_b_shadow(self, base):
         """15m 突破候选进入共同 4h 标签表；仍只 shadow，绝不触达执行链。"""
         if not config.STRATEGY_B_SHADOW_ENABLED:
@@ -338,6 +383,10 @@ class SignalScanMixin:
                     signal_id, db_path=self._db_path,
                     rule_decision="shadow", final_decision="rejected",
                     reject_reason="strategy_shadow:B_breakout")
+                # B 没有执行路径，但独立 4h 标签可以验证 Harness 是否真能
+                # 拦亏。版本与评价按 B_breakout 隔离，固定不授予 veto。
+                self._run_harness_shadow(
+                    base, sig_b, signal_id, allow_veto=False)
             if first_shadow:
                 print(f"  👻 影子信号 B_breakout {base} "
                       f"{sig_b['dir']} @ {sig_b['entry']:.4f} "
@@ -874,43 +923,11 @@ class SignalScanMixin:
                 # active 概率模型被拒，4h 路径仍能成熟为 Agent 反事实样本。
                 # 只有同一完整 Harness 版本通过验证门并进入 active-veto 后，结果
                 # 才会在全部量化硬门通过后作为额外否决消费；永远不能放行。
-                _harness_call = getattr(self, "agent_model_call", None)
-                _harness_result = None
-                if (signal_id and getattr(config, "AGENT_HARNESS_ENABLED", False)
-                        and _harness_call):
-                    try:
-                        from decision.sentiment import latest_sentiment
-                        from decision.agent_judge import harness_judge
-                        _harness_sentiment = latest_sentiment(
-                            db_path=getattr(self, "_db_path", None))
-                        _harness_result = harness_judge(
-                            sig=sig, base=base,
-                            score=sig.get("shadow_score") or SIGNAL_SCORE,
-                            price=sig.get("entry"), sentiment=_harness_sentiment,
-                            model_call=_harness_call,
-                            db_path=getattr(self, "_db_path", None),
-                            signal_id=signal_id,
-                            account={
-                                "equity_usdt": getattr(self.risk, "equity", None),
-                                "risk_per_trade": config.RISK_PER_TRADE,
-                                "max_notional_per_trade_usdt":
-                                    config.MAX_NOTIONAL_PER_TRADE,
-                                "portfolio_notional_usdt":
-                                    self.ledger.total_notional(),
-                                "max_total_notional_usdt":
-                                    config.MAX_TOTAL_NOTIONAL,
-                            },
-                            health={
-                                "risk_can_trade": self.risk.can_trade(),
-                                "risk_halted": bool(self.risk.halted),
-                                "risk_halt_reason": self.risk.halt_reason,
-                            },
-                            # 仓库授权边界：Harness veto 只允许 OKX 模拟盘；
-                            # live 即使加载相同配置与版本也固定保持 shadow。
-                            allow_veto=not getattr(self, "live_mode", False))
-                    except Exception as e:
-                        # 影子链故障只记本地告警，不改变任何量化/执行决策。
-                        print(f"Agent Harness candidate shadow failed {base}: {e}")
+                _harness_result = self._run_harness_shadow(
+                    base, sig, signal_id,
+                    # 仓库授权边界：Harness veto 只允许 OKX 模拟盘；
+                    # live 即使加载相同配置与版本也固定保持 shadow。
+                    allow_veto=not getattr(self, "live_mode", False))
 
                 def _sample_decision(**kwargs):
                     if not signal_id:
