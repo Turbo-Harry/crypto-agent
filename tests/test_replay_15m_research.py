@@ -16,7 +16,8 @@ from tools.replay_15m_research import (BAR_MS, MarketReader,
                                       backfill_swap_market, inventory,
                                       replay_market)
 from tools.evaluate_15m_research import (
-    _calibration_summary, _outcome_summary, evaluate_research,
+    _calibration_summary, _outcome_summary, _passive_entry_summary,
+    evaluate_research,
 )
 
 
@@ -444,6 +445,50 @@ class Replay15mResearchTest(unittest.TestCase):
         ])
         self.assertEqual(calibration["n"], 2)
         self.assertGreater(calibration["brier_skill"]["multiclass"], 0)
+
+    def test_passive_entry_replay_is_conservative_and_counts_unfilled(self):
+        conn = _init_market(self.market)
+        inst = "BTC-USDT-SWAP"
+        start = 1_700_000_000_000
+        bars = []
+        for idx in range(600):
+            ts = start + idx * BAR_MS["1m"]
+            if idx == 0:
+                row = [inst, "1m", ts, 100.2, 100.3, 99.7, 100.1, 1, 100]
+            elif idx == 1:
+                row = [inst, "1m", ts, 100.1, 102.1, 100.0, 102.0, 1, 102]
+            else:
+                row = [inst, "1m", ts, 101.0, 101.2, 100.5, 101.0, 1, 101]
+            bars.append(row)
+        conn.executemany("INSERT INTO klines VALUES (?,?,?,?,?,?,?,?,?)", bars)
+        conn.commit()
+        conn.close()
+        rows = [
+            {"signal_id": "fill", "event_ts": start / 1000,
+             "symbol": "BTC", "direction": "long", "entry": 100,
+             "stop": 99, "tp": 102, "horizon_hours": 4,
+             "features": "{}", "pnl_r": 2},
+            {"signal_id": "unfilled", "event_ts": (start + 5 * 3_600_000) / 1000,
+             "symbol": "BTC", "direction": "long", "entry": 100,
+             "stop": 99, "tp": 102, "horizon_hours": 4,
+             "features": "{}", "pnl_r": -1},
+        ]
+        result = _passive_entry_summary(rows, self.market)
+        self.assertEqual(result["candidates"], 2)
+        self.assertEqual(result["fills"], 1)
+        self.assertEqual(result["complete"], 1)
+        self.assertEqual(result["unfilled"], 1)
+        self.assertEqual(result["tp_first"], 1)
+        self.assertAlmostEqual(result["net_ev_r_per_fill"], 1.85)
+        self.assertAlmostEqual(result["net_ev_r_per_candidate"], .925)
+        self.assertEqual(result["status"], "stop_no_promotion")
+        recovery = _passive_entry_summary(rows, self.market, .002)
+        self.assertEqual(recovery["fills"], 1)
+        self.assertEqual(recovery["tp_first"], 1)
+        self.assertEqual(
+            recovery["policy"],
+            "roundtrip_cost_recovery_limit_one_15m_bar")
+        self.assertGreater(recovery["net_ev_r_per_fill"], 1.84)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
+import math
 import sqlite3
 import sys
 import time
@@ -24,6 +26,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import config
 
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
+_MINUTE_MS = 60_000
 
 
 def _research_metadata(db_path: str) -> dict[str, Any]:
@@ -168,6 +171,246 @@ def _strategy_segments(rows: list[dict[str, Any]],
             "route_alignment": summarize(match_groups)}
 
 
+def _passive_entry_summary(rows: list[dict[str, Any]],
+                           market_db: str | None,
+                           entry_offset_pct: float = 0.0) -> dict[str, Any]:
+    """Conservatively replay one-bar passive entry without granting authority.
+
+    A limit rests at the frozen signal entry for one 15m signal bar.  Entry
+    slippage is removed, but entry still pays the configured taker fee; the
+    exit keeps taker fee plus slippage.  This intentionally understates a
+    maker advantage.  A favorable TP inside the fill minute is ignored because
+    OHLC cannot prove that it happened after the fill; a same-minute stop is
+    counted because price must cross a long/short limit before reaching the
+    adverse barrier (gaps are also conservatively stopped).
+    """
+    result: dict[str, Any] = {
+        "policy": ("roundtrip_cost_recovery_limit_one_15m_bar"
+                   if entry_offset_pct > 0 else
+                   "signal_entry_limit_one_15m_bar"),
+        "entry_offset_pct": float(entry_offset_pct),
+        "cost_assumption": "entry_taker_fee_no_slippage_exit_taker_plus_slippage",
+        "candidates": len(rows), "fills": 0, "complete": 0,
+        "unfilled": 0, "missing_path": 0, "fill_rate": None,
+        "tp_first": 0, "sl_first": 0, "timeout": 0,
+        "gross_ev_r": None, "net_ev_r_per_fill": None,
+        "net_ev_r_per_candidate": None, "net_ev_lower_95": None,
+        "clustered_event_net_ev_r": None, "symbol_concentration": None,
+        "positive_folds": 0, "folds": [], "months": {}, "symbols": {},
+        "status": "unavailable",
+        "budget_expansion_allowed": False,
+    }
+    if not rows or not market_db:
+        result["reason"] = "missing_replay_market_db"
+        return result
+    timeframe = str(config.SIGNAL_SAMPLE_TIMEFRAME)
+    if not timeframe.endswith("m") or not timeframe[:-1].isdigit():
+        result["reason"] = "unsupported_signal_timeframe"
+        return result
+    ttl_ms = int(timeframe[:-1]) * _MINUTE_MS
+    path = Path(market_db).expanduser().resolve()
+    if path.name in RUNTIME_DB_NAMES or not path.is_file():
+        result["reason"] = "invalid_replay_market_db"
+        return result
+
+    by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_symbol[str(row["symbol"])].append(row)
+    series: dict[str, tuple[list[int], list[tuple[Any, ...]]]] = {}
+    conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+    try:
+        for symbol, material in by_symbol.items():
+            lo = int(min(float(row["event_ts"]) for row in material) * 1000)
+            hi = int(max(float(row["event_ts"]) +
+                         float(row.get("horizon_hours") or
+                               config.SIGNAL_OUTCOME_HORIZON_HOURS) * 3600 +
+                         ttl_ms / 1000 for row in material) * 1000)
+            bars = conn.execute(
+                "SELECT open_time,open,high,low,close FROM klines "
+                "WHERE inst_id=? AND bar='1m' AND open_time>=? "
+                "AND open_time<? ORDER BY open_time",
+                [f"{symbol}-USDT-SWAP", lo, hi]).fetchall()
+            series[symbol] = ([int(bar[0]) for bar in bars], bars)
+    except sqlite3.Error:
+        result["reason"] = "market_db_missing_klines"
+        return result
+    finally:
+        conn.close()
+
+    completed: list[dict[str, Any]] = []
+    for row in sorted(rows, key=lambda item: (
+            float(item["event_ts"]), str(item.get("signal_id") or ""))):
+        times, bars = series.get(str(row["symbol"]), ([], []))
+        event_ms = int(float(row["event_ts"]) * 1000)
+        fill_end = event_ms + ttl_ms
+        fill_lo = bisect.bisect_left(times, event_ms)
+        fill_hi = bisect.bisect_left(times, fill_end)
+        fill_window = bars[fill_lo:fill_hi]
+        if (len(fill_window) < ttl_ms // _MINUTE_MS - 1 or
+                (fill_window and int(fill_window[0][0]) > event_ms + _MINUTE_MS) or
+                any(int(right[0]) - int(left[0]) > _MINUTE_MS
+                    for left, right in zip(fill_window, fill_window[1:]))):
+            result["missing_path"] += 1
+            continue
+        direction = str(row["direction"])
+        original_entry = float(row["entry"])
+        original_stop = float(row["stop"])
+        risk = (original_entry - original_stop if direction == "long" else
+                original_stop - original_entry)
+        if direction not in ("long", "short") or risk <= 0 or original_entry <= 0:
+            result["missing_path"] += 1
+            continue
+        entry = original_entry * (
+            1 - entry_offset_pct if direction == "long" else
+            1 + entry_offset_pct)
+        stop = entry - risk if direction == "long" else entry + risk
+        tp = entry + 2 * risk if direction == "long" else entry - 2 * risk
+        fill_bar = next((bar for bar in fill_window
+                         if (float(bar[3]) <= entry if direction == "long"
+                             else float(bar[2]) >= entry)), None)
+        if fill_bar is None:
+            result["unfilled"] += 1
+            continue
+        result["fills"] += 1
+        fill_ts = int(fill_bar[0])
+        horizon_hours = int(row.get("horizon_hours") or
+                            config.SIGNAL_OUTCOME_HORIZON_HOURS)
+        end_ms = fill_ts + horizon_hours * 3_600_000
+        path_lo = bisect.bisect_left(times, fill_ts)
+        path_hi = bisect.bisect_left(times, end_ms)
+        path_bars = bars[path_lo:path_hi]
+        expected = horizon_hours * 60
+        if (len(path_bars) < expected - 2 or not path_bars or
+                int(path_bars[-1][0]) + _MINUTE_MS < end_ms or
+                any(int(right[0]) - int(left[0]) > _MINUTE_MS
+                    for left, right in zip(path_bars, path_bars[1:]))):
+            result["missing_path"] += 1
+            continue
+        sl_first = tp_first = 0
+        fill_stop = (float(fill_bar[3]) <= stop if direction == "long"
+                     else float(fill_bar[2]) >= stop)
+        if fill_stop:
+            sl_first = 1
+            exit_price = stop
+        else:
+            exit_price = None
+            # Skip favorable same-fill-minute highs/lows: their order relative
+            # to the limit fill is not observable from OHLC.
+            for bar in path_bars[1:]:
+                tp_hit = (float(bar[2]) >= tp if direction == "long"
+                          else float(bar[3]) <= tp)
+                sl_hit = (float(bar[3]) <= stop if direction == "long"
+                          else float(bar[2]) >= stop)
+                if sl_hit:
+                    sl_first, exit_price = 1, stop
+                    break
+                if tp_hit:
+                    tp_first, exit_price = 1, tp
+                    break
+        timeout = int(exit_price is None)
+        if exit_price is None:
+            exit_price = float(path_bars[-1][4])
+        gross = ((exit_price - entry) / risk if direction == "long"
+                 else (entry - exit_price) / risk)
+        risk_pct = risk / entry
+        immediate_trading = 2 * (config.FEE_RATE_TAKER + config.SLIPPAGE)
+        immediate_cost = _cost_r(row)
+        original_risk_pct = risk / original_entry
+        funding_r = max(
+            0.0, immediate_cost - immediate_trading / original_risk_pct)
+        funding_r *= entry / original_entry
+        passive_trading = (2 * config.FEE_RATE_TAKER + config.SLIPPAGE)
+        cost_r = passive_trading / risk_pct + funding_r
+        completed.append({
+            "event_ts": float(row["event_ts"]), "symbol": row["symbol"],
+            "direction": direction, "tp_first": tp_first,
+            "sl_first": sl_first, "timeout": timeout,
+            "gross_r": gross, "net_r": gross - cost_r,
+        })
+
+    result["complete"] = len(completed)
+    result["fill_rate"] = (round(result["fills"] / len(rows), 6)
+                           if rows else None)
+    if not completed:
+        result["reason"] = "no_complete_fills"
+        return result
+    result["tp_first"] = sum(row["tp_first"] for row in completed)
+    result["sl_first"] = sum(row["sl_first"] for row in completed)
+    result["timeout"] = sum(row["timeout"] for row in completed)
+    gross = [row["gross_r"] for row in completed]
+    net = [row["net_r"] for row in completed]
+    mean_net = sum(net) / len(net)
+    result["gross_ev_r"] = round(sum(gross) / len(gross), 6)
+    result["net_ev_r_per_fill"] = round(mean_net, 6)
+    result["net_ev_r_per_candidate"] = round(sum(net) / len(rows), 6)
+
+    event_groups: list[list[dict[str, Any]]] = []
+    for row in completed:
+        if not event_groups or event_groups[-1][0]["event_ts"] != row["event_ts"]:
+            event_groups.append([])
+        event_groups[-1].append(row)
+    # Cross-symbol candidates from one 15m close are a correlated market
+    # event, not independent observations.  Use event-cluster means for the
+    # uncertainty bound so a broad market move cannot manufacture confidence.
+    cluster_net = [sum(item["net_r"] for item in group) / len(group)
+                   for group in event_groups]
+    cluster_mean = sum(cluster_net) / len(cluster_net)
+    cluster_variance = (
+        sum((value - cluster_mean) ** 2 for value in cluster_net) /
+        (len(cluster_net) - 1) if len(cluster_net) > 1 else 0.0)
+    lower = cluster_mean - config.ENTRY_MODEL_EV_Z * math.sqrt(
+        cluster_variance / len(cluster_net))
+    result["clustered_event_net_ev_r"] = round(cluster_mean, 6)
+    result["net_ev_lower_95"] = round(lower, 6)
+
+    symbol_net: dict[str, float] = defaultdict(float)
+    month_rows: dict[str, list[float]] = defaultdict(list)
+    for item in completed:
+        symbol_net[str(item["symbol"])] += item["net_r"]
+        month_rows[time.strftime(
+            "%Y-%m", time.gmtime(item["event_ts"]))].append(item["net_r"])
+    positive_symbol_net = [value for value in symbol_net.values() if value > 0]
+    concentration = (max(positive_symbol_net) / sum(positive_symbol_net)
+                     if positive_symbol_net else 1.0)
+    result["symbol_concentration"] = round(concentration, 6)
+    result["symbols"] = {
+        symbol: {
+            "n": sum(item["symbol"] == symbol for item in completed),
+            "net_ev_r": round(
+                sum(item["net_r"] for item in completed
+                    if item["symbol"] == symbol) /
+                sum(item["symbol"] == symbol for item in completed), 6),
+        }
+        for symbol in sorted(symbol_net)}
+    result["months"] = {
+        month: {"n": len(values),
+                "net_ev_r": round(sum(values) / len(values), 6)}
+        for month, values in sorted(month_rows.items())}
+
+    fold_n = max(1, int(config.FACTOR_WALK_FORWARD_FOLDS))
+    block = max(1, len(event_groups) // fold_n)
+    folds = []
+    for fold in range(fold_n):
+        lo = fold * block
+        hi = (fold + 1) * block if fold < fold_n - 1 else len(event_groups)
+        material = [item for group in event_groups[lo:hi] for item in group]
+        if not material:
+            continue
+        value = sum(item["net_r"] for item in material) / len(material)
+        folds.append({"fold": fold, "n": len(material),
+                      "net_ev_r": round(value, 6)})
+    result["folds"] = folds
+    result["positive_folds"] = sum(fold["net_ev_r"] > 0 for fold in folds)
+    eligible = (
+        len(completed) >= config.MODEL_MIN_SELECTED_EVALUATIONS and
+        len(folds) >= config.FACTOR_WALK_FORWARD_FOLDS and
+        result["positive_folds"] >= config.FACTOR_MIN_CONSISTENT_FOLDS and
+        concentration <= config.FACTOR_MAX_SYMBOL_CONCENTRATION and lower > 0)
+    result["status"] = ("eligible_for_separate_paper_shadow_review"
+                        if eligible else "stop_no_promotion")
+    return result
+
+
 def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str, Any]:
     """执行因子挖掘与官方模型门，并输出不会授权预算扩大的研究裁决。"""
     replay = _research_metadata(db_path)
@@ -181,8 +424,8 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
     scope = [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
              config.SIGNAL_OUTCOME_HORIZON_HOURS]
     rows = sdb.q(
-        "SELECT s.signal_id,s.event_ts,s.symbol,s.direction,s.entry,s.stop,"
-        "s.features,o.pnl_r,o.tp_first,o.sl_first,o.timeout "
+        "SELECT s.signal_id,s.event_ts,s.symbol,s.direction,s.entry,s.stop,s.tp,"
+        "s.horizon_hours,s.features,o.pnl_r,o.tp_first,o.sl_first,o.timeout "
         "FROM signal_samples_canonical s "
         "JOIN signal_outcomes o ON o.signal_id=s.signal_id "
         "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? "
@@ -219,6 +462,13 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
                for direction in ("long", "short")}
     outcomes = _outcome_summary(rows)
     segments = _strategy_segments(rows, strategy_id)
+    market_db = replay.get("market_db")
+    passive_entry = {
+        "at_signal": _passive_entry_summary(rows, market_db),
+        "cost_recovery": _passive_entry_summary(
+            rows, market_db,
+            entry_offset_pct=2 * (config.FEE_RATE_TAKER + config.SLIPPAGE)),
+    }
     calibration = _calibration_summary(calibration_rows)
     validated = [result["name"] for result in factor_results
                  if result["status"] == "validated"]
@@ -242,6 +492,7 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
                      "regimes": dict(sorted(regimes.items()))},
         "outcomes": outcomes,
         "segments": segments,
+        "passive_entry": passive_entry,
         "factors": {"tested": len(factor_results),
                     "status_counts": dict(sorted(factor_status.items())),
                     "validated": validated},
