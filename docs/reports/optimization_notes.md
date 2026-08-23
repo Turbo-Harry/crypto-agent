@@ -846,4 +846,4 @@
 - 数据：schema v32 新增 `agent_proposal_runs/agent_proposals`；几何有效提案进入共同 4h/1m 路径结算，因子/概率/极值研究按 C 策略独立运行，不污染 A/B。
 - 观测：新增只读 `GET /agent/proposals`，显示运行健康、2:1、概率门、signal_id 与成熟 TP/SL/timeout 结果。
 - 工程修复：初版出现 `decision → engines` 反向依赖，改为引擎层显式注入 sample recorder 后代码图恢复单向。
-- 最终证据：专项 7/7、服务接口 52/52、完整自动发现 49/49 个测试脚本、compileall、AI 文档/链接、参数集中化、代码图、隔离、21 条 fix guard 与 diff 检查全部通过，失败 0。本批次未重启任何交易服务。
+- 最终证据：专项 7/7、服务接口 52/52、完整自动发现 49/49 个测试脚本、compileall、AI 文档/链接、参数集中化、代码图、隔离、21 条 fix guard 与 diff 检查全部通过，失败 0。部署前 OKX 模拟盘完成迷你开仓→SL/TP→取消→平仓冒烟，全部 `sCode=0`；仅重启 8091 paper，PID 63433 → 75913，schema=32，健康、空仓、账本/交易所对账一致、`/error` 为空，六类 pending 条件单合计 0。`/agent/proposals` 返回 `shadow_only=true`、`execution_authority=false`，启动日志确认 paper shadow provider ready；8090 live PID 89187 始终未变化。
