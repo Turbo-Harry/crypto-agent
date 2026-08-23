@@ -755,7 +755,8 @@ class SignalScanMixin:
                                   config.SIGNAL_CONTEXT_TIMEFRAME,
                                   config.SIGNAL_REGIME_TIMEFRAME):
                     rows = self._fetch_klines_any(
-                        base, timeframe, config.AGENT_PROPOSAL_MIN_BARS)
+                        base, timeframe,
+                        config.AGENT_PROPOSAL_MIN_BARS + 2)
                     close_before = (
                         now_ms - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS * 1000 -
                         config.SIGNAL_TIMEFRAME_SECONDS[timeframe] * 1000)

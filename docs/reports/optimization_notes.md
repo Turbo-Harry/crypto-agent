@@ -1124,3 +1124,14 @@
   `/health` 为 ok、心跳年龄 8.6s，空仓、`/reconcile balanced=true`、`/error` 为空。本地加载身份
   为 `tool-policy-v2-structural-repair`；`/agent/status` 在尚无新自然候选时仍展示旧库中最新版本，
   不人工制造调用或迁移旧证据。8090 `com.crypto.agent` 继续保持原 PID 90574，未触碰。
+
+## 2026-08-24 Agent 主动候选零运行修复
+
+- 现象：配置 `AGENT_PROPOSAL_SHADOW_ENABLED=true`、paper provider ready，且扫描尾部已调用
+  `_run_agent_proposal_shadow`，但 `/agent/proposals` 长期 `run_count=0/proposal_count=0`；不是
+  模型返回空 proposals，因为 `agent_proposal_runs` 连一次调用记录都没有。
+- 根因：每周期恰好请求 `AGENT_PROPOSAL_MIN_BARS=60` 根，随后因果过滤当前未收线 K，通常只剩
+  59 根；`build_market_snapshot` 要求 15m 至少 60 根，于是所有标的都在调用模型前被跳过。
+- 修复：三周期统一预取 `MIN_BARS+2`，过滤逻辑和 60 根有效门完全不变；回归测试显式断言三次
+  请求均为 62 根、proposal run 可落库、2:1 几何仍由代码生成、fake orders/algos 均为空。
+  修复只恢复 paper-only shadow 反事实采样，不给 C_agent_proposal 执行、veto 或预算权限。

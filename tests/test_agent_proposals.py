@@ -152,9 +152,20 @@ class AgentProposalTest(unittest.TestCase):
         holder.watch_scores = {"BTC": 1.0}
         holder._db_path = self.db_path
         holder.exchange = fake
-        holder._fetch_klines_any = lambda _base, tf, _limit: snap_rows[tf]
+        requested_limits = []
+
+        def fetch(_base, tf, limit):
+            requested_limits.append(limit)
+            return snap_rows[tf]
+
+        holder._fetch_klines_any = fetch
         result = SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"])
         self.assertIsNotNone(result)
+        self.assertEqual(requested_limits, [
+            config.AGENT_PROPOSAL_MIN_BARS + 2,
+            config.AGENT_PROPOSAL_MIN_BARS + 2,
+            config.AGENT_PROPOSAL_MIN_BARS + 2,
+        ])
         self.assertEqual(fake.orders, [])
         self.assertEqual(fake.algos, [])
         view = list_proposals(db_path=self.db_path)
