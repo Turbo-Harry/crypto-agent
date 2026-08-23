@@ -26,6 +26,73 @@ import config
 from engines.directional_trader import DirectionalTrader, connect as connect_dir
 
 
+def run_intraday_research_cycle(db_path=None):
+    """按策略独立执行因子→概率/极值模型→生命周期；不授予策略执行权。"""
+    from factors.intraday_factor_mining import run_mining
+    from factors.entry_model_training import train_entry_model
+    from factors.extrema_model_training import train_extrema_model
+    from decision.model_lifecycle import advance
+
+    strategy_ids = [config.ENTRY_SIGNAL_STRATEGY_ID]
+    if (config.STRATEGY_B_SHADOW_ENABLED and
+            config.BREAKOUT_SIGNAL_STRATEGY_ID not in strategy_ids):
+        strategy_ids.append(config.BREAKOUT_SIGNAL_STRATEGY_ID)
+    results = []
+    errors = []
+    for strategy_id in strategy_ids:
+        try:
+            trials = run_mining(db_path=db_path, strategy_id=strategy_id)
+            models = [train_entry_model(
+                direction, db_path=db_path, strategy_id=strategy_id)
+                for direction in ("long", "short")]
+            extrema = [train_extrema_model(
+                direction, db_path=db_path, strategy_id=strategy_id)
+                for direction in ("long", "short")]
+            results.append({"strategy_id": strategy_id,
+                            "trials": len(trials), "models": models,
+                            "extrema": extrema})
+        except Exception as exc:
+            errors.append({"strategy_id": strategy_id,
+                           "error": f"{type(exc).__name__}: {exc}"})
+    try:
+        lifecycle = advance(db_path=db_path)
+    except Exception as exc:
+        lifecycle = []
+        errors.append({"strategy_id": "lifecycle",
+                       "error": f"{type(exc).__name__}: {exc}"})
+    return {"strategies": results, "lifecycle": lifecycle, "errors": errors}
+
+
+def _record_background_failure(trader, source, exc):
+    """把后台子任务失败同时暴露到 /error 与隔离库，避免静默失活。"""
+    tb = traceback.format_exc(limit=4)
+    message = f"{source}: {type(exc).__name__}: {exc}"
+    trader.last_error = f"{time.strftime('%H:%M:%S')} {message}\n{tb}"
+    print(f"后台任务失败 [{source}]: {exc}")
+    try:
+        import storage.db as sdb
+        db_path = getattr(trader, "_db_path", None)
+        sdb.init_db(db_path)
+        duplicate = sdb.q1(
+            "SELECT id FROM engine_errors WHERE engine=? AND error=? "
+            "AND ts>? ORDER BY id DESC LIMIT 1",
+            [source, message, time.time() - 300], db_path=db_path)
+        if not duplicate:
+            sdb.x(
+                "INSERT INTO engine_errors (ts,engine,error,traceback) "
+                "VALUES (?,?,?,?)",
+                [time.time(), source, message, tb], db_path=db_path)
+    except Exception:
+        pass
+
+
+def _intraday_research_retry_marker(now=None):
+    """返回失败后的 last-run 标记，使下一次恰在配置退避后到期。"""
+    current = time.time() if now is None else float(now)
+    interval = config.FACTOR_MINING_INTERVAL_HOURS * 3600
+    return current - interval + config.FACTOR_MINING_RETRY_SECONDS
+
+
 class ServiceTrader(DirectionalTrader):
     """方向性引擎 + 暂停开关。暂停时跳过 scan_signals，监控照常。"""
 
@@ -283,8 +350,10 @@ class TraderWorker:
                                 notify(f"⚖️ 权重进化·{_st}\n{_msg}")
                         except Exception:
                             pass
-                    # 2026-08-23 AI 记忆: 给满24h的被否决判断回填结果
-                    if getattr(config, "AGENT_JUDGE_MEMORY_ENABLED", False) \
+                    # 2026-08-23 AI 记忆: 路径结果回填后，按独立年龄门把
+                    # legacy/Harness 成熟证据转入可检索记忆。
+                    if (getattr(config, "AGENT_JUDGE_MEMORY_ENABLED", False) or
+                            getattr(config, "AGENT_HARNESS_ENABLED", False)) \
                             and time.time() - getattr(self, "_last_ai_sweep", 0) \
                             >= 3600:
                         self._last_ai_sweep = time.time()
@@ -292,10 +361,55 @@ class TraderWorker:
                             from decision.agent_judge import sweep_outcomes
                             _n = sweep_outcomes(self.exchange,
                                                 db_path=t._db_path)
+                            from storage.agent_harness import \
+                                mature_pending_evaluations
+                            _h = mature_pending_evaluations(
+                                db_path=t._db_path)
+                            from decision.agent_memory import refresh
+                            _m = refresh(
+                                db_path=t._db_path,
+                                min_age_hours=config.AGENT_JUDGE_MEMORY_MIN_HOURS)
+                            from decision.agent_evaluation import \
+                                sync_harness_lifecycle
+                            _agent_state = sync_harness_lifecycle(
+                                db_path=t._db_path)
                             if _n:
                                 print(f"[AI记忆] 回填 {_n} 条被否决判断的结果")
+                            if _h or _m:
+                                print(f"[Agent闭环] 成熟评价 {_h} 条，记忆 {_m} 条，"
+                                      f"版本 {_agent_state['status']}")
                         except Exception:
                             pass
+                    # T2: 所有结构候选（含规则/额度/AI 拒绝）到期后用完整
+                    # 4h 1m 路径结算。行情不足保持 pending，不以当前价代替。
+                    if time.time() - getattr(self, "_last_signal_outcomes", 0) \
+                            >= config.SIGNAL_OUTCOME_SWEEP_SECONDS:
+                        self._last_signal_outcomes = time.time()
+                        try:
+                            from decision.signal_outcomes import settle_pending
+                            _settle = settle_pending(self.exchange,
+                                                     db_path=t._db_path)
+                            if _settle["settled"] or _settle["missing"]:
+                                print(f"[候选结算] {_settle}")
+                        except Exception:
+                            pass
+                    # T4-T6: 离线研究链每日自动消费已结算候选。所有结果先
+                    # candidate/validated/shadow，样本不足或不过 OOS 门绝不生效。
+                    if time.time() - getattr(self, "_last_factor_mining", 0) >= \
+                            config.FACTOR_MINING_INTERVAL_HOURS * 3600:
+                        self._last_factor_mining = time.time()
+                        try:
+                            _research = run_intraday_research_cycle(t._db_path)
+                            print(f"[日内研究] {_research}")
+                            if _research["errors"]:
+                                raise RuntimeError(json.dumps(
+                                    _research["errors"], ensure_ascii=False))
+                        except Exception as e:
+                            # 成功周期仍为 24h；失败只退避 15min。试验键和模型
+                            # 制品均幂等，重试不会制造重复证据或重置生命周期。
+                            self._last_factor_mining = \
+                                _intraday_research_retry_marker()
+                            _record_background_failure(t, "intraday_research", e)
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
                     # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。
                     if time.time() - getattr(self, "_last_reconcile_sweep", 0) >= 3600:
@@ -309,7 +423,7 @@ class TraderWorker:
                         self._last_analysis = time.time()
                         try:
                             from decision.analyst import run_daily
-                            run_daily()
+                            run_daily(db_path=t._db_path, notifier=t._notify)
                         except Exception as e:
                             print(f"每日分析失败: {e}")
                 except Exception as e:

@@ -195,6 +195,8 @@ def run_harness(agent_input: AgentInput, *, baseline_passed: bool,
         model_verdict=decision.verdict if decision else None,
         input_hash=agent_input.input_hash, response_hash=response_hash,
         latency_ms=round((time.monotonic() - started) * 1000),
+        risk_probability=decision.risk_probability if decision else None,
+        reason_codes=decision.reason_codes if decision else (),
         error_type=None if runtime in (RuntimeStatus.COMPLETED, RuntimeStatus.DISABLED, RuntimeStatus.NO_KEY)
         else runtime.value)
     try:

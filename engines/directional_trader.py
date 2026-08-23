@@ -180,6 +180,30 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             if not _os.path.exists(_os.path.expanduser(_c.LIVE_CRED_FILE)):
                 print("❌ LIVE_MODE=True 但无实盘凭证文件,退回模拟盘")
                 self.live_mode = False
+        # AI provider 只允许真实 OKX 适配器使用，FakeAdapter/离线测试永不访问
+        # 外部模型。新 Harness 仅在 paper 注入，并固定 shadow；live 仍保持既有
+        # legacy AI 把关，不因研究接线扩大模型权限。
+        _real_okx = _ad_name in ("okx", "okx-ccxt")
+        self.ai_judge_enabled = bool(_c.AGENT_JUDGE_ENABLED and _real_okx)
+        # 用户明确要求“固定 2:1，先预测再开仓”。先在真实 OKX 模拟盘
+        # fail-closed 落地；FakeAdapter 单测与未重启的实盘实例均不受影响。
+        self.require_2to1_prediction = bool(
+            _real_okx and not self.live_mode and
+            _c.PAPER_REQUIRE_VALIDATED_2TO1_PREDICTION)
+        self.agent_model_call = None
+        if (_real_okx and not self.live_mode
+                and getattr(_c, "AGENT_HARNESS_ENABLED", False)):
+            try:
+                from decision.agent_judge import (
+                    harness_model_available, production_harness_model_call,
+                )
+                if harness_model_available():
+                    self.agent_model_call = production_harness_model_call
+                    print("Agent Harness: paper shadow provider ready")
+                else:
+                    print("Agent Harness: no provider key, shadow fallback only")
+            except Exception as e:
+                print(f"Agent Harness: provider unavailable, shadow fallback only: {e}")
         # 2026-08-16 结构性修复: 测试/fake 适配器必须静音飞书通知——
         # 此前 test_decision_loop 等跑套件时把假开仓单真的发到了用户飞书
         # (与 DEF-8 生产库污染同类的泄漏,这次是通知通道)。

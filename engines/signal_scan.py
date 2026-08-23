@@ -1,15 +1,22 @@
 """
 信号扫描层（SignalScanMixin）— 2026-08-20 从 directional_trader 按功能拆分。
 
-职责：回踩确认信号（1h + 4h MTF 共振）、候选池扫描主循环、动态笔数额度、
+职责：回踩确认信号（15m 主周期 + 1H/4H 环境）、候选池扫描主循环、动态笔数额度、
 信号冷却、扫描决策落库、长扫描逐币插拍（心跳/监控/快照）。
 方法体与拆分前逐行一致（行为零变化）；宿主为 DirectionalTrader（MRO 组装）。
 依赖宿主属性：exchange/journal/evolver/rt/watchlist/watch_scores/
 threshold_learner/signal_cool/_db_path/_notify 等。
 """
+import math
 import time
 
 import config
+from decision.feature_transforms import (cross_sectional_snapshot,
+                                         materialize_derived_features,
+                                         technical_regime_features,
+                                         volatility_5m_features)
+from decision.market_regime import classify_market_regime
+from decision.strategy_router import route_strategy
 MTF_ENABLED = config.MTF_ENABLED
 SIGNAL_COOLDOWN_MINUTES = config.SIGNAL_COOLDOWN_MINUTES
 SYMBOLS = config.SYMBOLS
@@ -43,7 +50,7 @@ def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
     权重按文献证据强度排序的先验(config.SHADOW_WEIGHTS,权重进化再按 IC 校正):
       1. wick    拒绝K线强度(影线/实体,封顶3x)   — 15% (形态本体,弱证据)
       2. depth   回踩深度适中(贴EMA20/ATR)      — 16% (业界共识)
-      3. trend   1h 趋势离散度(EMA20-50 带宽)   — 20% (动量,强证据)
+      3. trend   15m 趋势离散度(EMA20-50 带宽)  — 20% (动量,强证据)
       4. volume  量能确认(近N根均量比,封顶2x)   — 12% (量价,效应弱但真实)
       5. funding 资金费顺风(多单负费率/空单正)  — 15% (拥挤度,中证据)
       6. book    盘口失衡(前10档,方向对齐)      — 22% (微观结构,最强证据)
@@ -97,6 +104,32 @@ def compute_targets(entry, atr, direction, swing_level=None):
             "t3": round(t3, 6) if t3 else None}
 
 
+def detect_pullback_setup(last, ema20_val, ema50_val, wick_ratio,
+                          tf1h_trend=0, tf4h_trend=0, mtf_enabled=False):
+    """纯函数回踩形态门，供活体扫描与历史重放共享同一判定。
+
+    只判断已收线 K 的趋势、EMA20 回踩、拒绝影线和可选 MTF；不读取时钟、
+    行情或数据库。返回 direction/wick/touch，未命中返回 None。
+    """
+    body = abs(float(last["close"]) - float(last["open"]))
+    lower_wick = min(float(last["open"]), float(last["close"])) - float(last["low"])
+    upper_wick = float(last["high"]) - max(float(last["open"]), float(last["close"]))
+    ratio = float(wick_ratio)
+    if (ema20_val > ema50_val and float(last["low"]) <= ema20_val and
+            float(last["close"]) > ema20_val and lower_wick >= body * ratio):
+        if mtf_enabled and (tf1h_trend != 1 or tf4h_trend != 1):
+            return None
+        return {"direction": "long", "wick": lower_wick,
+                "touch": float(last["low"]), "body": body}
+    if (ema20_val < ema50_val and float(last["high"]) >= ema20_val and
+            float(last["close"]) < ema20_val and upper_wick >= body * ratio):
+        if mtf_enabled and (tf1h_trend != -1 or tf4h_trend != -1):
+            return None
+        return {"direction": "short", "wick": upper_wick,
+                "touch": float(last["high"]), "body": body}
+    return None
+
+
 def _book_imbalance(book, depth=10):
     """盘口失衡(2026-08-23): (买深度−卖深度)/(买+卖),[-1,1];正=买盘厚。"""
     if not book:
@@ -110,6 +143,72 @@ def _book_imbalance(book, depth=10):
     if b + a <= 0:
         return None
     return (b - a) / (b + a)
+
+
+def _microstructure_features(book, depth=10):
+    """从信号时点盘口提取价差/微观价格/多档深度；无数据返回 None。"""
+    if not book or not book.get("bids") or not book.get("asks"):
+        return {"spread_bps": None, "microprice_bps": None,
+                "depth_imbalance": None, "depth_slope": None,
+                "expected_slippage_bps": None}
+    try:
+        bids = [(float(row[0]), float(row[1])) for row in book["bids"][:depth]]
+        asks = [(float(row[0]), float(row[1])) for row in book["asks"][:depth]]
+        bid, bid_qty = bids[0]
+        ask, ask_qty = asks[0]
+        mid = (bid + ask) / 2
+        micro = (ask * bid_qty + bid * ask_qty) / max(bid_qty + ask_qty, 1e-12)
+        bid_depth, ask_depth = sum(row[1] for row in bids), sum(row[1] for row in asks)
+        top_depth = sum(row[1] for row in bids[:3]) + sum(row[1] for row in asks[:3])
+        full_depth = bid_depth + ask_depth
+        visible_notional = sum(price * qty for price, qty in bids + asks)
+        impact_bps = (config.MAX_NOTIONAL_PER_TRADE / visible_notional * 10_000
+                      if visible_notional > 0 else None)
+        return {
+            "spread_bps": (ask - bid) / mid * 10_000 if mid else None,
+            "microprice_bps": (micro - mid) / mid * 10_000 if mid else None,
+            "depth_imbalance": ((bid_depth - ask_depth) / full_depth
+                                if full_depth else None),
+            "depth_slope": top_depth / full_depth if full_depth else None,
+            "expected_slippage_bps": ((ask - bid) / mid * 5_000 + impact_bps
+                                      if mid and impact_bps is not None else None),
+        }
+    except Exception:
+        return {"spread_bps": None, "microprice_bps": None,
+                "depth_imbalance": None, "depth_slope": None,
+                "expected_slippage_bps": None}
+
+
+def _dynamic_ofi(book, previous):
+    """Cont 式最佳档净订单流变化，以相邻信号快照深度归一。"""
+    try:
+        bid, bq = float(book["bids"][0][0]), float(book["bids"][0][1])
+        ask, aq = float(book["asks"][0][0]), float(book["asks"][0][1])
+        current = (bid, bq, ask, aq)
+        if not previous:
+            return None, current
+        pbid, pbq, pask, paq = previous
+        bid_flow = bq if bid > pbid else (bq - pbq if bid == pbid else -pbq)
+        ask_flow = aq if ask < pask else (aq - paq if ask == pask else -paq)
+        scale = max(bq + aq + pbq + paq, 1e-12) / 2
+        return (bid_flow - ask_flow) / scale, current
+    except Exception:
+        return None, previous
+
+
+def _cancellation_imbalance(current, previous):
+    """同价最佳档撤单失衡：(卖撤-买撤)/(卖撤+买撤)，无可比快照则缺失。"""
+    try:
+        bid, bq, ask, aq = current
+        pbid, pbq, pask, paq = previous
+        if bid != pbid or ask != pask:
+            return None
+        bid_cancel = max(0.0, pbq - bq)
+        ask_cancel = max(0.0, paq - aq)
+        total = bid_cancel + ask_cancel
+        return (ask_cancel - bid_cancel) / total if total else 0.0
+    except Exception:
+        return None
 
 # 参数别名（统一维护于 config.py,本模块不私藏数值）
 
@@ -127,14 +226,140 @@ def _build_trade_conditions(sig):
 class SignalScanMixin:
     """信号扫描功能块。"""
 
-    # ---------- 信号：回踩确认（1 小时线 · 真日内短线） ----------
+    def _cross_sectional_factors(self, base, current_kl):
+        """同一已收线 15m 截止点的跨币状态；每根 K 最多全池拉取一次。"""
+        if not current_kl:
+            return {}
+        cutoff_open = int(current_kl[-1][0])
+        cache = getattr(self, "_factor_cross_section_cache", {})
+        snapshot = cache.get("snapshot") if cache.get("kline_ts") == cutoff_open else None
+        if snapshot is None:
+            universe = list(dict.fromkeys(
+                list(getattr(self, "watchlist", []) or []) + list(SYMBOLS)))
+            closes_by_symbol = {}
+            for symbol in universe:
+                try:
+                    rows = (current_kl if symbol == base else
+                            self._fetch_klines_any(
+                                symbol, config.SIGNAL_SAMPLE_TIMEFRAME,
+                                config.FACTOR_CROSS_SECTION_LOOKBACK_BARS + 2))
+                    rows = [row for row in (rows or [])
+                            if int(row[0]) <= cutoff_open]
+                    closes = [float(row[4]) for row in
+                              rows[-config.FACTOR_CROSS_SECTION_LOOKBACK_BARS:]
+                              if float(row[4]) > 0]
+                    if closes:
+                        closes_by_symbol[symbol] = closes
+                except Exception:
+                    continue
+            snapshot = cross_sectional_snapshot(closes_by_symbol)
+            if snapshot.get("market_breadth") is not None:
+                self._factor_cross_section_cache = {
+                    "kline_ts": cutoff_open, "snapshot": snapshot}
+        per_symbol = (snapshot.get("by_symbol") or {}).get(base, {})
+        return {"market_breadth": snapshot.get("market_breadth"),
+                "correlation_concentration": snapshot.get(
+                    "correlation_concentration"),
+                **per_symbol}
+
+    def _scan_strategy_b_shadow(self, base):
+        """15m 突破候选进入共同 4h 标签表；仍只 shadow，绝不触达执行链。"""
+        if not config.STRATEGY_B_SHADOW_ENABLED:
+            return None
+        try:
+            from engines.strategy_b import (breakout_signal,
+                                             enrich_shadow_signal,
+                                             record_shadow)
+            signal_tf = config.SIGNAL_SAMPLE_TIMEFRAME
+            kl_b = self._fetch_klines_any(
+                base, signal_tf, config.SIGNAL_LOOKBACK_BARS)
+            close_before = (
+                (time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) * 1000 -
+                config.SIGNAL_TIMEFRAME_SECONDS[signal_tf] * 1000)
+            kl_b = [row for row in (kl_b or []) if int(row[0]) <= close_before]
+            if not kl_b:
+                return None
+            raw = breakout_signal(kl_b)
+            if not raw:
+                return kl_b
+            cross = self._cross_sectional_factors(base, kl_b)
+            event_ts = (int(kl_b[-1][0]) +
+                        config.SIGNAL_TIMEFRAME_SECONDS[signal_tf] * 1000) / 1000
+            closes_4h = None
+            try:
+                kl4 = self._fetch_klines_any(
+                    base, config.SIGNAL_REGIME_TIMEFRAME, 60)
+                closes_4h = [float(row[4]) for row in (kl4 or [])]
+            except Exception:
+                closes_4h = None
+            funding = funding_change = funding_percentile = None
+            try:
+                funding = self.exchange.fetch_funding_rate(self._inst_id(base))
+                funding_state = getattr(self, "_factor_funding_state", {})
+                prior = funding_state.get(base)
+                funding_change = (float(funding) - float(prior)
+                                  if prior is not None else None)
+                values = list(funding_state.values()) + [float(funding)]
+                if len(values) >= 3:
+                    funding_percentile = (
+                        sum(value <= float(funding) for value in values) /
+                        len(values))
+            except Exception:
+                funding = funding_change = funding_percentile = None
+            vol5 = None
+            try:
+                k5 = self._fetch_klines_any(
+                    base, "5m", config.FACTOR_5M_LOOKBACK_BARS + 2)
+                last_closed_5m_open = (
+                    event_ts * 1000 -
+                    config.SIGNAL_TIMEFRAME_SECONDS["5m"] * 1000)
+                k5 = [row for row in (k5 or [])
+                      if int(row[0]) <= last_closed_5m_open]
+                vol5 = volatility_5m_features(
+                    [row[4] for row in
+                     k5[-config.FACTOR_5M_LOOKBACK_BARS - 1:]])
+            except Exception:
+                vol5 = None
+            sig_b = enrich_shadow_signal(
+                raw, kl_b, cross=cross, closes_4h=closes_4h,
+                funding_rate=funding, funding_change=funding_change,
+                funding_percentile=funding_percentile, vol5=vol5,
+                event_ts=event_ts)
+            first_shadow = record_shadow(
+                base, config.BREAKOUT_SIGNAL_STRATEGY_ID, sig_b,
+                db_path=self._db_path, klines_1h=kl_b)
+            from engines.signal_sampling import (record_signal_sample,
+                                                 update_signal_decision)
+            signal_id, created = record_signal_sample(
+                base, sig_b, self.exchange.venue_for(base) or "",
+                db_path=self._db_path)
+            if created:
+                update_signal_decision(
+                    signal_id, db_path=self._db_path,
+                    rule_decision="shadow", final_decision="rejected",
+                    reject_reason="strategy_shadow:B_breakout")
+            if first_shadow:
+                print(f"  👻 影子信号 B_breakout {base} "
+                      f"{sig_b['dir']} @ {sig_b['entry']:.4f} "
+                      f"(score {sig_b['shadow_score']})")
+            return kl_b
+        except Exception as exc:
+            print(f"{base}: B_breakout 影子留样失败: {type(exc).__name__}")
+            return None
+
+    # ---------- 信号：15m 回踩确认，1H/4H 只做环境 ----------
     def scan_signal(self, base, wick_ratio=None):
-        """检查某币的回踩确认信号（1 小时 K 线，日内短线）。
-        多周期共振过滤（MTF）：1h 信号方向必须与 4h 趋势同向——顺大势做小势，
+        """检查某币的 15m 回踩确认信号。
+        多周期共振过滤（MTF）：15m 信号方向必须与 1H/4H 趋势同向，
         只抓高概率时点，不频繁交易。返回信号 dict 或 None。
         wick_ratio: 覆盖影线门槛（扫描影子用候选值）；默认读批准后的活体值。"""
         try:
-            kl = self._fetch_klines_any(base, "1H", 100)
+            signal_tf = config.SIGNAL_SAMPLE_TIMEFRAME
+            kl = self._fetch_klines_any(base, signal_tf,
+                                         config.SIGNAL_LOOKBACK_BARS)
+            close_before = ((time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) *
+                            1000 - config.SIGNAL_TIMEFRAME_SECONDS[signal_tf] * 1000)
+            kl = [row for row in (kl or []) if int(row[0]) <= close_before]
             if not kl:
                 return None
             klines = [{"open": k[1], "high": k[2], "low": k[3], "close": k[4],
@@ -143,10 +368,31 @@ class SignalScanMixin:
             return None
         if len(klines) < 60:
             return None
-        # MTF 共振：4h 趋势方向（做多要求 4h 多头，做空要求 4h 空头）
+        # 1H/4H 只是上下文；开启 MTF 时才作硬过滤。
+        tf1h_trend = 0
         tf4h_trend = 0   # 1=多, -1=空, 0=未知（数据不足时视为无共振，放弃信号）
+        c1 = []
+        c4 = []
         try:
-            kl4 = self._fetch_klines_any(base, "4H", 60)
+            context_tf = config.SIGNAL_CONTEXT_TIMEFRAME
+            kl1 = self._fetch_klines_any(base, context_tf, 60)
+            close_before_1h = (
+                (time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) * 1000 -
+                config.SIGNAL_TIMEFRAME_SECONDS[context_tf] * 1000)
+            kl1 = [row for row in (kl1 or []) if int(row[0]) <= close_before_1h]
+            if kl1:
+                c1 = [row[4] for row in kl1]
+                if len(c1) >= 50:
+                    e20_1h, e50_1h = ema(c1, 20), ema(c1, 50)
+                    tf1h_trend = 1 if e20_1h[-1] > e50_1h[-1] else -1
+        except Exception:
+            tf1h_trend = 0
+        try:
+            regime_tf = config.SIGNAL_REGIME_TIMEFRAME
+            kl4 = self._fetch_klines_any(base, regime_tf, 60)
+            close_before_4h = ((time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) *
+                               1000 - config.SIGNAL_TIMEFRAME_SECONDS[regime_tf] * 1000)
+            kl4 = [row for row in (kl4 or []) if int(row[0]) <= close_before_4h]
             if kl4:
                 c4 = [k[4] for k in kl4]
                 if len(c4) >= 50:
@@ -163,8 +409,7 @@ class SignalScanMixin:
         body = abs(last["close"] - last["open"])
         lower_wick = min(last["open"], last["close"]) - last["low"]
         upper_wick = last["high"] - max(last["open"], last["close"])
-        # 日内入场参考价用实时 tick 价（市价单实际成交价），
-        # 趋势/ATR 仍来自 1 小时线——避免"信号收盘价 vs 市价成交"错位（RES-11）
+        # 日内入场参考价用实时 tick 价，趋势/ATR 来自已收线 15m K。
         entry_ref = self._ticker_last(base)
         if entry_ref is None:
             entry_ref = last["close"]
@@ -180,6 +425,8 @@ class SignalScanMixin:
                 vol_avg = sum(vols) / len(vols) if vols else 0
                 funding = None
                 book_imb = None
+                _book = None
+                oi = basis = None
                 try:
                     funding = self.exchange.fetch_funding_rate(
                         self._inst_id(base))
@@ -191,6 +438,14 @@ class SignalScanMixin:
                     book_imb = _book_imbalance(_book, config.SHADOW_BOOK_DEPTH)
                 except Exception:
                     pass
+                try:
+                    oi = self.exchange.fetch_open_interest(self._inst_id(base))
+                except Exception:
+                    pass
+                try:
+                    basis = self.exchange.fetch_basis(self._inst_id(base))
+                except Exception:
+                    pass
                 from decision.weight_evolve import effective_weights
                 score, dims = compute_shadow_score(
                     wick, body, price_near_ema, ema20[-1], ema50[-1], atr_val,
@@ -199,12 +454,147 @@ class SignalScanMixin:
                 reg = None
                 try:
                     from engines.feature_collector import compute_regime
-                    reg = compute_regime(klines, locals().get("c4"))
+                    reg = compute_regime(klines, c4)
                 except Exception:
                     reg = None
-                return score, dims, reg
+                closes_recent = [k["close"] for k in klines[-25:]]
+                returns = [math.log(closes_recent[i] / closes_recent[i - 1])
+                           for i in range(1, len(closes_recent))
+                           if closes_recent[i] > 0 and closes_recent[i - 1] > 0]
+                returns_1h = returns[-4:]
+                rv = (math.sqrt(sum(value * value for value in returns_1h))
+                      if len(returns_1h) == 4 else None)
+                down = (math.sqrt(sum(value * value for value in returns_1h
+                                      if value < 0))
+                        if len(returns_1h) == 4 else None)
+                micro = _microstructure_features(_book, config.SHADOW_BOOK_DEPTH)
+                event_flow = {}
+                try:
+                    get_orderflow = getattr(self.rt, "get_orderflow", None)
+                    if get_orderflow:
+                        event_flow = get_orderflow(base) or {}
+                except Exception:
+                    event_flow = {}
+                book_state = getattr(self, "_factor_book_state", {})
+                previous_book = book_state.get(base)
+                ofi, current_book = _dynamic_ofi(_book, previous_book)
+                cancel_imbalance = _cancellation_imbalance(
+                    current_book, previous_book) if current_book else None
+                if current_book:
+                    book_state[base] = current_book
+                    self._factor_book_state = book_state
+                oi_state = getattr(self, "_factor_oi_state", {})
+                previous_oi = oi_state.get(base)
+                oi_change = ((oi - previous_oi) / previous_oi
+                             if oi is not None and previous_oi else None)
+                if oi is not None:
+                    oi_state[base] = oi
+                    self._factor_oi_state = oi_state
+
+                vol5 = {"realized_vol_5m": None, "vol_of_vol": None,
+                        "har_rv": None}
+                try:
+                    k5 = self._fetch_klines_any(
+                        base, "5m", config.FACTOR_5M_LOOKBACK_BARS + 2)
+                    event_ms = (int(kl[-1][0]) +
+                                config.SIGNAL_TIMEFRAME_SECONDS[
+                                    config.SIGNAL_SAMPLE_TIMEFRAME] * 1000)
+                    last_closed_5m_open = (
+                        event_ms - config.SIGNAL_TIMEFRAME_SECONDS["5m"] * 1000)
+                    k5 = [row for row in (k5 or [])
+                          if int(row[0]) <= last_closed_5m_open]
+                    vol5 = volatility_5m_features(
+                        [row[4] for row in
+                         k5[-config.FACTOR_5M_LOOKBACK_BARS - 1:]])
+                except Exception:
+                    pass
+
+                cross = {}
+                try:
+                    cross = self._cross_sectional_factors(base, kl)
+                except Exception:
+                    pass
+                funding_state = getattr(self, "_factor_funding_state", {})
+                prior_funding = funding_state.get(base)
+                funding_change = (float(funding) - float(prior_funding)
+                                  if funding is not None and
+                                  prior_funding is not None else None)
+                if funding is not None:
+                    funding_state[base] = float(funding)
+                    self._factor_funding_state = funding_state
+                funding_values = sorted(funding_state.values())
+                funding_percentile = (
+                    sum(value <= float(funding) for value in funding_values) /
+                    len(funding_values) if funding is not None and
+                    len(funding_values) >= 3 else None)
+                k_ts = int(kl[-1][0]) / 1000 if kl else time.time()
+                tm = time.gmtime(k_ts)
+                momentum_1h = sum(returns[-4:]) if len(returns) >= 4 else None
+                momentum_4h = sum(returns[-16:]) if len(returns) >= 16 else None
+                factor_features = {
+                    "wick_ratio": wick / body if body > 0 else None,
+                    "pullback_depth_atr": (abs(price_near_ema - ema20[-1]) / atr_val
+                                           if atr_val else None),
+                    "trend_band_atr": ((ema20[-1] - ema50[-1]) / atr_val
+                                       if atr_val else None),
+                    "volume_ratio": vol_last / vol_avg if vol_avg else None,
+                    "funding_rate": funding, "book_imbalance": book_imb,
+                    "realized_vol_1h": rv,
+                    "realized_vol_5m": vol5.get("realized_vol_5m"),
+                    "downside_semivol_1h": down,
+                    "vol_of_vol": vol5.get("vol_of_vol"),
+                    "har_rv": vol5.get("har_rv"),
+                    "atr_pct": atr_val / entry_ref if entry_ref else None,
+                    "hour_sin": math.sin(2 * math.pi * tm.tm_hour / 24),
+                    "hour_cos": math.cos(2 * math.pi * tm.tm_hour / 24),
+                    "weekend": 1.0 if tm.tm_wday >= 5 else 0.0,
+                    "ofi_dynamic": ofi, "cancel_imbalance": cancel_imbalance,
+                    "ofi_event_multilevel": event_flow.get(
+                        "ofi_event_multilevel"),
+                    "ofi_event_cancel_imbalance": event_flow.get(
+                        "ofi_event_cancel_imbalance"),
+                    "ofi_event_count": event_flow.get("ofi_event_count", 0),
+                    "ofi_event_age_ms": event_flow.get("ofi_event_age_ms"),
+                    "open_interest_change": oi_change,
+                    "oi_price_interaction": (oi_change * momentum_1h
+                                             if oi_change is not None and
+                                             momentum_1h is not None else None),
+                    "basis": basis,
+                    "btc_residual_momentum": cross.get(
+                        "btc_residual_momentum"),
+                    "btc_beta": cross.get("btc_beta"),
+                    "momentum_1h": momentum_1h,
+                    "momentum_4h": momentum_4h,
+                    "cross_sectional_rank": cross.get(
+                        "cross_sectional_rank"),
+                    "funding_change": funding_change,
+                    "funding_percentile": funding_percentile,
+                    "market_breadth": cross.get("market_breadth"),
+                    "correlation_concentration": cross.get(
+                        "correlation_concentration"),
+                    "source_latency_ms": max(
+                        0.0, time.time() * 1000 - (
+                            int(kl[-1][0]) +
+                            config.SIGNAL_TIMEFRAME_SECONDS[
+                                config.SIGNAL_SAMPLE_TIMEFRAME] * 1000)),
+                    **micro,
+                }
+                factor_features.update(technical_regime_features(klines))
+                factor_features = materialize_derived_features(
+                    factor_features, dims)
+                factor_features["feature_missing_rate"] = (
+                    sum(value is None for value in factor_features.values()) /
+                    len(factor_features))
+                market_regime = classify_market_regime(reg, factor_features)
+                strategy_route = route_strategy(
+                    market_regime,
+                    available=config.MARKET_REGIME_IMPLEMENTED_STRATEGIES)
+                reg = dict(reg or {})
+                reg["market_state"] = market_regime
+                reg["strategy_route"] = strategy_route
+                return score, dims, reg, factor_features
             except Exception:
-                return None, None, None
+                return None, None, None, {}
 
         from decision.scan_evolve import effective_wick_ratio
         ratio = (wick_ratio if wick_ratio is not None
@@ -218,18 +608,21 @@ class SignalScanMixin:
                           else min(k["low"] for k in klines[-21:-1]))
         except Exception:
             _swing = None
-        _targets = compute_targets(entry_ref, atr_val,
-                                   "long" if ema20[-1] > ema50[-1] else "short",
+        _direction = "long" if ema20[-1] > ema50[-1] else "short"
+        _targets = compute_targets(entry_ref, atr_val, _direction,
                                    swing_level=_swing)
         # 2026-08-23 预测机制(用户要求"最好能有预测机制"): bootstrap 价格分布
         # + 触达概率,复用本函数已取的 klines,零额外网络成本
         _forecast = None
         try:
             from decision.forecast import forecast_for_trade
-            _fc_sig = {"dir": ("long" if ema20[-1] > ema50[-1] else "short"),
-                       "entry": entry_ref, "atr": atr_val,
-                       "stop": entry_ref - config.STOP_ATR_MULT * atr_val,
-                       "tp": entry_ref + config.TP_ATR_MULT * atr_val}
+            _fc_sig = {"dir": _direction, "entry": entry_ref, "atr": atr_val,
+                       "stop": (entry_ref - config.STOP_ATR_MULT * atr_val
+                                if _direction == "long" else
+                                entry_ref + config.STOP_ATR_MULT * atr_val),
+                       "tp": (entry_ref + config.TP_ATR_MULT * atr_val
+                              if _direction == "long" else
+                              entry_ref - config.TP_ATR_MULT * atr_val)}
             _forecast = forecast_for_trade(
                 _fc_sig, base, klines, db_path=getattr(self, "_db_path", None))
         except Exception:
@@ -239,35 +632,30 @@ class SignalScanMixin:
         if kline_ts is None and kl:
             kline_ts = kl[-1][0]
 
-        # 做多信号：多头趋势 + 回踩 EMA20 不破 + 拒绝K线（下影线）
-        if ema20[-1] > ema50[-1] and last["low"] <= ema20[-1] and last["close"] > ema20[-1]:
-            if lower_wick >= body * ratio:  # 拒绝K线（下影线）
-                # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
-                if MTF_ENABLED and tf4h_trend != 1:
-                    return None
-                score, dims, regime = _shadow(last["low"], lower_wick, "long")
-                return {"dir": "long", "entry": entry_ref,
-                        "stop": entry_ref - config.STOP_ATR_MULT * atr_val,
-                        "tp": entry_ref + config.TP_ATR_MULT * atr_val,
-                        "atr": atr_val,
-                        "shadow_score": score, "shadow_dims": dims,
-                        "targets": _targets, "forecast": _forecast,
-                        "regime": regime, "kline_ts": kline_ts}
-        # 做空信号：空头趋势 + 反弹 EMA20 不破 + 拒绝K线（上影线）
-        if ema20[-1] < ema50[-1] and last["high"] >= ema20[-1] and last["close"] < ema20[-1]:
-            if upper_wick >= body * ratio:
-                # MTF 共振：4h 必须同向（未知/反向则放弃——抓最佳时机）
-                if MTF_ENABLED and tf4h_trend != -1:
-                    return None
-                score, dims, regime = _shadow(last["high"], upper_wick, "short")
-                return {"dir": "short", "entry": entry_ref,
-                        "stop": entry_ref + config.STOP_ATR_MULT * atr_val,
-                        "tp": entry_ref - config.TP_ATR_MULT * atr_val,
-                        "atr": atr_val,
-                        "shadow_score": score, "shadow_dims": dims,
-                        "targets": _targets, "forecast": _forecast,
-                        "regime": regime, "kline_ts": kline_ts}
-        return None
+        setup = detect_pullback_setup(
+            last, ema20[-1], ema50[-1], ratio, tf1h_trend, tf4h_trend,
+            MTF_ENABLED)
+        if not setup:
+            return None
+        direction = setup["direction"]
+        score, dims, regime, factors = _shadow(
+            setup["touch"], setup["wick"], direction)
+        return {"dir": direction, "entry": entry_ref,
+                "stop": (entry_ref - config.STOP_ATR_MULT * atr_val
+                         if direction == "long" else
+                         entry_ref + config.STOP_ATR_MULT * atr_val),
+                "tp": (entry_ref + config.TP_ATR_MULT * atr_val
+                       if direction == "long" else
+                       entry_ref - config.TP_ATR_MULT * atr_val),
+                "atr": atr_val,
+                "shadow_score": score, "shadow_dims": dims,
+                "factor_features": factors,
+                "targets": _targets, "forecast": _forecast,
+                "regime": regime,
+                "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+                "market_regime": (regime or {}).get("market_state"),
+                "strategy_route": (regime or {}).get("strategy_route"),
+                "kline_ts": kline_ts}
 
     # ---------- 主循环 ----------
     def _trade_budget(self, base):
@@ -337,22 +725,132 @@ class SignalScanMixin:
             # 期间 tick() 无法执行 → 止损监控失明。逐币插拍(监控+心跳+tick+
             # 60s 仓位快照): 盲窗≤单币网络超时,慢速但有进展的扫描不算卡死。
             self._long_scan_progress()
-            # 0. 动态笔数：该币今天已开几笔？按当日评分给额度（看币动态调整）
-            opened_base = [t for t in self.journal.trades
-                           if t.get("symbol") == base and t.get("entry_time")
-                           and time.strftime("%Y-%m-%d", time.localtime(t["entry_time"])) == today]
-            budget = self._trade_budget(base)
-            if len(opened_base) >= budget:
-                print(f"⏸️ {base}: 今日已开 {len(opened_base)} 笔 ≥ 额度 {budget}（评分给额），跳过")
-                self._log_scan_decision(base, False, "", "budget",
-                                        f"今日已开 {len(opened_base)} 笔 ≥ 额度 {budget}")
-                continue
-            # 1. 同币信号冷却（3 小时，1h 线 3 根K线）
-            if time.time() - self.signal_cool.get(base, 0) < SIGNAL_COOLDOWN_MINUTES * 60:
-                self._log_scan_decision(base, False, "", "cooldown", "信号冷却中")
-                continue
+            # A/B 必须在任何 A 的额度、冷却、模型或 AI continue 之前各自留样；
+            # 否则“先判断行情再选策略”的比较集仍会带选择偏差。
+            kl_b = self._scan_strategy_b_shadow(base)
+            # 先形成结构候选，再做任何额度/冷却/规则/AI 门控。此前先检查
+            # 额度与冷却会让被拒候选永久缺失，反事实样本带选择偏差。
             sig = self.scan_signal(base)
             if sig:
+                signal_id = None
+                try:
+                    from engines.signal_sampling import record_signal_sample
+                    signal_id, created = record_signal_sample(
+                        base, sig, self.exchange.venue_for(base) or "",
+                        db_path=self._db_path)
+                    if not created:
+                        # 同币/方向/已收线 15m K/策略版本只允许一次机会；
+                        # 5 分钟轮询不得把同一根 K 重复计数或重复开仓。
+                        self._log_scan_decision(
+                            base, True, sig["dir"], "duplicate_signal",
+                            f"同K候选已处理: {signal_id}")
+                        continue
+                except Exception as e:
+                    # 留样能力故障不改变现役规则/风控行为；明确记录异常，待
+                    # 运维修复，不能因为研究链故障扩大或缩小交易权限。
+                    print(f"{base}: 候选留样失败，沿用现役规则: {e}")
+
+                entry_prediction = None
+                rr_prediction = None
+                extrema_prediction = None
+                if signal_id:
+                    try:
+                        from decision.entry_probability import predict_signal
+                        from engines.signal_sampling import merge_sample_features
+                        entry_prediction = predict_signal(
+                            sig, db_path=self._db_path, allow_shadow=True)
+                        if entry_prediction:
+                            merge_sample_features(
+                                signal_id, {"entry_probability": entry_prediction},
+                                db_path=self._db_path)
+                    except Exception:
+                        entry_prediction = None
+                    try:
+                        from decision.extrema_forecast import predict_signal as \
+                            predict_extrema
+                        from engines.signal_sampling import merge_sample_features
+                        extrema_prediction = predict_extrema(
+                            sig, db_path=self._db_path, allow_shadow=True)
+                        if extrema_prediction:
+                            merge_sample_features(
+                                signal_id, {"extrema_prediction": extrema_prediction},
+                                db_path=self._db_path)
+                            # 通知复用同一概率区间；没有 bootstrap forecast 时不造
+                            # 半截 forecast，完整影子输出仍保存在候选快照中。
+                            if sig.get("forecast"):
+                                sig["forecast"]["extrema"] = extrema_prediction
+                    except Exception:
+                        extrema_prediction = None
+
+                # 固定 1R:2R 的开仓前预测审计。严格放行只在真实 OKX 模拟盘
+                # 由 self.require_2to1_prediction 开启；所有候选（含拒绝）仍会
+                # 留样并在 4h 后结算，供模型继续训练、校准与晋升。
+                try:
+                    from decision.entry_probability import preopen_2to1_decision
+                    rr_prediction = preopen_2to1_decision(
+                        sig, prediction=None, db_path=self._db_path)
+                    if signal_id:
+                        from engines.signal_sampling import merge_sample_features
+                        merge_sample_features(
+                            signal_id, {"preopen_2to1": rr_prediction},
+                            db_path=self._db_path)
+                except Exception as e:
+                    rr_prediction = {"passed": False,
+                                     "reason": f"prediction_error:{type(e).__name__}"}
+
+                # Harness 是独立增量研究，不得被现役 2:1 模型门卡死。对每个
+                # 去重结构候选先留 shadow Trace；即使随后因额度、分数或无
+                # active 概率模型被拒，4h 路径仍能成熟为 Agent 反事实样本。
+                # 该调用没有任何放行/否决权限，legacy AI 仍只在真实下单链运行。
+                _harness_call = getattr(self, "agent_model_call", None)
+                if (signal_id and getattr(config, "AGENT_HARNESS_ENABLED", False)
+                        and _harness_call):
+                    try:
+                        from decision.sentiment import latest_sentiment
+                        from decision.agent_judge import harness_judge
+                        _harness_sentiment = latest_sentiment(
+                            db_path=getattr(self, "_db_path", None))
+                        harness_judge(
+                            sig=sig, base=base,
+                            score=sig.get("shadow_score") or SIGNAL_SCORE,
+                            price=sig.get("entry"), sentiment=_harness_sentiment,
+                            model_call=_harness_call,
+                            db_path=getattr(self, "_db_path", None),
+                            signal_id=signal_id)
+                    except Exception as e:
+                        # 影子链故障只记本地告警，不改变任何量化/执行决策。
+                        print(f"Agent Harness candidate shadow failed {base}: {e}")
+
+                def _sample_decision(**kwargs):
+                    if not signal_id:
+                        return
+                    try:
+                        from engines.signal_sampling import update_signal_decision
+                        update_signal_decision(signal_id, db_path=self._db_path,
+                                               **kwargs)
+                    except Exception:
+                        pass
+
+                # 额度/冷却命中仍保留候选，后续按 4h 路径结算反事实结果。
+                opened_base = [t for t in self.journal.trades
+                               if t.get("symbol") == base and t.get("entry_time")
+                               and time.strftime("%Y-%m-%d", time.localtime(t["entry_time"])) == today]
+                budget = self._trade_budget(base)
+                if len(opened_base) >= budget:
+                    _reason = f"今日已开 {len(opened_base)} 笔 ≥ 额度 {budget}"
+                    print(f"⏸️ {base}: {_reason}（评分给额），跳过")
+                    self._log_scan_decision(base, True, sig["dir"], "budget", _reason)
+                    _sample_decision(rule_decision="reject",
+                                     final_decision="rejected",
+                                     reject_reason="budget: " + _reason)
+                    continue
+                if time.time() - self.signal_cool.get(base, 0) < SIGNAL_COOLDOWN_MINUTES * 60:
+                    self._log_scan_decision(base, True, sig["dir"],
+                                            "cooldown", "信号冷却中")
+                    _sample_decision(rule_decision="reject",
+                                     final_decision="rejected",
+                                     reject_reason="cooldown")
+                    continue
                 self.signal_cool[base] = time.time()
                 # 阈值决策（审计 CR-6 + Phase3 T3.1）：默认用常量 SIGNAL_SCORE 卡门槛
                 # （影子分未过假设 A3 检验前不得影响决策——防过拟合红线）；
@@ -372,44 +870,55 @@ class SignalScanMixin:
                     print(f"{base}: 信号分 {gate_score} < 决策阈值 {_thr}，观望")
                     self._log_scan_decision(base, True, sig["dir"], "reject",
                                             f"信号分 {gate_score} < 阈值 {_thr}")
+                    _sample_decision(rule_decision="reject",
+                                     final_decision="rejected",
+                                     reject_reason=f"score_gate:{gate_score}<{_thr}")
+                    continue
+                if (getattr(self, "require_2to1_prediction", False) and
+                        not (rr_prediction or {}).get("passed")):
+                    _reason = "2to1_prediction:" + (
+                        (rr_prediction or {}).get("reason") or "missing")
+                    self._log_scan_decision(base, True, sig["dir"],
+                                            "model_reject", _reason)
+                    _sample_decision(rule_decision="reject",
+                                     final_decision="rejected",
+                                     reject_reason=_reason)
                     continue
                 # 决策（经验库，统一 ScoredExperience — B6）
                 dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0,
                                           journal=self.journal,
                                           conditions=_build_trade_conditions(sig))
                 if dec["trade"]:
+                    # 只有 active/observing/kept 模型可作为 meta-label 否决；
+                    # candidate/validated/shadow 只留预测，不改变现役开仓行为。
+                    if (entry_prediction and entry_prediction.get("decision_effective")
+                            and entry_prediction.get("ev_r_lower", 0) <= 0):
+                        _reason = (f"entry_model EV下界 "
+                                   f"{entry_prediction['ev_r_lower']:.3f}R ≤ 0")
+                        self._log_scan_decision(base, True, sig["dir"],
+                                                "model_reject", _reason)
+                        _sample_decision(rule_decision="reject",
+                                         final_decision="rejected",
+                                         reject_reason=_reason)
+                        continue
                     # 2026-08-23 AI 把关(用户问"agent也会加入判断吗"): 下单前
                     # DeepSeek 二判。只否决不放行——reject 才拦,其余一律继续。
                     verdict = "approve"
                     ai_reason = ""
                     ai_jid = None
-                    if getattr(config, "AGENT_JUDGE_ENABLED", False):
+                    if getattr(self, "ai_judge_enabled",
+                               getattr(config, "AGENT_JUDGE_ENABLED", False)):
                         try:
                             from decision.sentiment import latest_sentiment
                             _sent = latest_sentiment(
                                 db_path=getattr(self, "_db_path", None))
-                            # Harness is opt-in at the call boundary: callers
-                            # must inject a model callback explicitly. This
-                            # prevents a new structured-context egress while
-                            # retaining the legacy provider for existing runs.
-                            _harness_call = getattr(self, "agent_model_call", None)
-                            if getattr(config, "AGENT_HARNESS_ENABLED", False) and _harness_call:
-                                from decision.agent_judge import harness_judge
-                                _hr = harness_judge(
-                                    sig=sig, base=base,
-                                    score=sig.get("shadow_score") or SIGNAL_SCORE,
-                                    price=sig.get("entry"), sentiment=_sent,
-                                    model_call=_harness_call,
-                                    db_path=getattr(self, "_db_path", None))
-                                ai_reason = _hr.policy.reason
-                                verdict = "reject" if _hr.policy.veto else "approve"
-                            else:
-                                from decision.agent_judge import judge
-                                verdict, ai_reason, ai_jid = judge(
-                                    sig=sig, base=base,
-                                    score=sig.get("shadow_score") or SIGNAL_SCORE,
-                                    price=sig.get("entry"), sentiment=_sent,
-                                    db_path=getattr(self, "_db_path", None))
+                            from decision.agent_judge import judge
+                            verdict, ai_reason, ai_jid = judge(
+                                sig=sig, base=base,
+                                score=sig.get("shadow_score") or SIGNAL_SCORE,
+                                price=sig.get("entry"), sentiment=_sent,
+                                db_path=getattr(self, "_db_path", None),
+                                signal_id=signal_id)
                         except Exception:
                             verdict = "approve"   # AI 异常 → 放行
                     if verdict == "reject":
@@ -421,7 +930,11 @@ class SignalScanMixin:
                                          f"{self._dir_cn(sig['dir'])}: {ai_reason}")
                         except Exception:
                             pass
+                        _sample_decision(rule_decision="pass", ai_verdict="reject",
+                                         final_decision="rejected",
+                                         reject_reason="ai_reject: " + ai_reason)
                         continue
+                    _sample_decision(rule_decision="pass", ai_verdict=verdict)
                     # 2026-08-20: 先下单,成交入账后才记 open。此前先记 open 再
                     # 调 open_position,下单失败(51001 等)会虚增"开仓"——看账
                     # 开仓 159 vs 台账 24 笔(ALLO 当天即复现)。
@@ -441,42 +954,32 @@ class SignalScanMixin:
                             pass
                         self._log_scan_decision(base, True, sig["dir"], "open",
                                                 reason)
+                        _sample_decision(final_decision="opened", trade_id=tid)
+                    else:
+                        _sample_decision(final_decision="open_failed",
+                                         reject_reason="execution_failed")
                     # 未成交: open_position 已记 reject_* / open_failed,此处不补 open
                 else:
                     print(f"{base}: 有信号但拒绝 - {'; '.join(dec['reason'])}")
                     self._log_scan_decision(base, True, sig["dir"], "reject",
                                             "; ".join(dec["reason"]))
+                    _sample_decision(rule_decision="reject",
+                                     final_decision="rejected",
+                                     reject_reason="evolver: " + "; ".join(dec["reason"]))
             else:
                 print(f"{base}: 无回踩确认信号")
                 self._log_scan_decision(base, False, "", "no_signal", "")
                 self._maybe_wick_shadow(base)
-            # Phase 4 T3.3 策略 B 影子（突破/动量确认）: 只记录假设性交易、
-            # 绝不下单/不发飞书/不占额度——与策略 A 真实样本分表对照。
-            if config.STRATEGY_B_SHADOW_ENABLED:
-                try:
-                    from engines.strategy_b import breakout_signal, record_shadow
-                    kl_b = self._fetch_klines_any(base, "1H", 130)
-                    if kl_b:
-                        sig_b = breakout_signal(kl_b)
-                        if sig_b:
-                            if record_shadow(base, "B_breakout", sig_b,
-                                             db_path=self._db_path,
-                                             klines_1h=kl_b):
-                                print(f"  👻 影子信号 B_breakout {base} "
-                                      f"{sig_b['dir']} @ {sig_b['entry']:.4f} "
-                                      f"(score {sig_b['shadow_score']})")
-                        # 2026-08-17 用户建议: 未触发信号也要复盘"为什么没触发"。
-                        # 复用本轮已取的 kl_b 算四环节画像(趋势/触线/影线/量能),
-                        # 零额外 API 调用;瓶颈与近失证据进 signal_profiles。
-                        if sig is None:
-                            from engines.strategy_b import profile_from_klines, \
-                                record_profile
-                            prof = profile_from_klines(kl_b, db_path=self._db_path)
-                            if prof:
-                                record_profile(base, prof,
-                                               db_path=self._db_path)
-                except Exception:
-                    pass
+                # 未触发 A 时复盘 B 的瓶颈；复用本轮已收线 15m 数据，不再拉 1H。
+                if kl_b:
+                    try:
+                        from engines.strategy_b import (profile_from_klines,
+                                                         record_profile)
+                        prof = profile_from_klines(kl_b, db_path=self._db_path)
+                        if prof:
+                            record_profile(base, prof, db_path=self._db_path)
+                    except Exception:
+                        pass
 
     def _maybe_wick_shadow(self, base):
         """现役没信号时用候选影线比再扫一次；命中只记影子，绝不下单/不占冷却。"""

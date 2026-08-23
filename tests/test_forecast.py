@@ -8,9 +8,7 @@
   6. 校准: Brier 分数与分桶命中率计算正确
 运行: PYTHONPATH=lib python3 tests/test_forecast.py
 """
-import json
 import os
-import sqlite3
 import sys
 import tempfile
 
@@ -51,6 +49,9 @@ def main():
     check("seed 确定性: 两次结果一致", f1 == f2)
     check("分位单调: q05 ≤ 中位 ≤ q95",
           f1["q05"] <= f1["median"] <= f1["q95"], str(f1))
+    check("默认预测窗口为 16 根 15m = 240min",
+          f1["horizon_bars"] == 16 and f1["bar_minutes"] == 15 and
+          f1["horizon_minutes"] == 240, str(f1))
 
     # ---- 高波动 vs 零波动: 触达概率应显著更高 ----
     wild = [0.03, -0.03, 0.02, -0.02] * 40
@@ -78,14 +79,34 @@ def main():
                                     stop=99, tp=102,
                                     hourly_returns=rets) is None)
 
-    # ---- 校准落表 + Brier ----
+    # ---- 真实路径标签校准 + Brier ----
     tmp = tempfile.mkdtemp(prefix="fc_")
     db = os.path.join(tmp, "a.db")
     import storage.db as sdb
+    from decision.signal_outcomes import persist_outcome
+    from engines.signal_sampling import record_signal_sample
     sdb.init_db(db)
     for i in range(10):
-        record_outcome(f"t{i}", json.dumps({"p_hit_tp": 0.5, "p_hit_sl": 0.4}),
-                       {"pnl": 0.03 if i % 2 == 0 else -0.02}, db_path=db)
+        sig = {"dir": "long", "entry": 100.0, "stop": 99.0, "tp": 102.0,
+               "atr": 1.0, "kline_ts": 1_700_000_000_000 + i * 3_600_000,
+               "forecast": {"p_hit_tp": 0.5, "p_hit_sl": 0.4,
+                            "p_timeout": 0.1},
+               "shadow_dims": {name: 0.5 for name in __import__("config").SHADOW_DIMS}}
+        sid, _ = record_signal_sample("BTC", sig, "swap", db_path=db,
+                                      event_ts=1_700_003_600 + i * 3600)
+        is_tp = 1 if i % 2 == 0 else 0
+        persist_outcome({"signal_id": sid, "horizon_hours": 4,
+                         "tp_first": is_tp, "sl_first": 1 - is_tp,
+                         "timeout": 0, "ambiguous": 0,
+                         "pnl_r": 2.0 if is_tp else -1.0,
+                         "mfe_r": 2.0 if is_tp else 0.2, "mae_r": 0.2,
+                         "high_ret_h": 0.02, "low_ret_h": -0.01,
+                         "time_to_tp_sec": 60 if is_tp else None,
+                         "time_to_sl_sec": None if is_tp else 60,
+                         "time_to_high_sec": 60, "time_to_low_sec": 120,
+                         "settled_at": 1_700_100_000 + i,
+                         "bar_resolution": "1m", "label_version": "test-v1"},
+                        db_path=db)
     cal = calibration(db, min_n=5)
     check("校准样本数=10", cal["n"] == 10, str(cal))
     check("Brier tp = 0.25(全预测0.5,命中一半)",
@@ -94,6 +115,8 @@ def main():
     # Brier_sl = (5×(0.4-1)^2 + 5×(0.4-0)^2)/10 = 0.26
     check("Brier sl = 0.26(5 命中/5 未命中)",
           abs(cal["brier_sl"] - 0.26) < 0.001, f"b={cal['brier_sl']}")
+    check("固定 PnL 不再能伪造校准标签",
+          record_outcome("missing", "{}", {"pnl": 1.0}, db_path=db) is False)
 
     print(f"\n结果: {_passed} 通过, {_failed} 失败")
     return 0 if _failed == 0 else 1

@@ -31,23 +31,27 @@ STOP_BREACH_RATIO = config.STOP_BREACH_RATIO
 WIN_RATE_FLOOR = config.WIN_RATE_FLOOR
 
 
-def _collect():
+def _collect(db_path=None):
     """汇总近 7 天全量数据（SQLite）。"""
     import storage.db as sdb
-    sdb.init_db()
+    sdb.init_db(db_path)
     since = time.time() - WINDOW_DAYS * 86400
-    trades = sdb.q("SELECT * FROM trades WHERE entry_time >= ? ORDER BY entry_time", [since])
-    scans = sdb.q("SELECT * FROM scan_decisions WHERE ts >= ?", [since])
-    risks = sdb.q("SELECT * FROM risk_events WHERE ts >= ?", [since])
-    errors = sdb.q("SELECT * FROM engine_errors WHERE ts >= ?", [since])
-    lessons = sdb.q("SELECT * FROM lessons")
+    trades = sdb.q("SELECT * FROM trades WHERE entry_time >= ? ORDER BY entry_time",
+                   [since], db_path=db_path)
+    scans = sdb.q("SELECT * FROM scan_decisions WHERE ts >= ?", [since],
+                  db_path=db_path)
+    risks = sdb.q("SELECT * FROM risk_events WHERE ts >= ?", [since],
+                  db_path=db_path)
+    errors = sdb.q("SELECT * FROM engine_errors WHERE ts >= ?", [since],
+                   db_path=db_path)
+    lessons = sdb.q("SELECT * FROM lessons", db_path=db_path)
     return {"trades": trades, "scans": scans, "risks": risks,
             "errors": errors, "lessons": lessons}
 
 
-def analyze():
+def analyze(db_path=None):
     """跑一轮分析，返回 (report, issues)。"""
-    d = _collect()
+    d = _collect(db_path)
     trades, scans, risks, errors = d["trades"], d["scans"], d["risks"], d["errors"]
 
     closed = [t for t in trades if t["status"] == "closed"]
@@ -123,14 +127,14 @@ def analyze():
     return report, issues
 
 
-def run_daily():
+def run_daily(db_path=None, notifier=None):
     """每日分析：报告+问题落库、教训进经验库、飞书反馈。"""
-    report, issues = analyze()
+    report, issues = analyze(db_path)
     import storage.db as sdb
-    sdb.init_db()
+    sdb.init_db(db_path)
     sdb.x("INSERT INTO analyses (ts, kind, report, issues) VALUES (?,?,?,?)",
           [time.time(), "daily", json.dumps(report, ensure_ascii=False),
-           json.dumps(issues, ensure_ascii=False)])
+           json.dumps(issues, ensure_ascii=False)], db_path=db_path)
     # 结构化教训 → lessons 表（unverified，走既有验证闸门）
     # 去重：同类别同内容已存在则跳过（避免每次看账重复堆积同一条教训）
     lesson_ids = []
@@ -138,7 +142,7 @@ def run_daily():
         if not it.get("lesson"):
             continue
         dup = sdb.q1("SELECT id FROM lessons WHERE category=? AND content=?",
-                     [it["category"], it["lesson"]])
+                     [it["category"], it["lesson"]], db_path=db_path)
         if dup:
             lesson_ids.append(dup["id"])
             continue
@@ -146,13 +150,14 @@ def run_daily():
                     "adoptions, status, source_trade, ts, last_update) "
                     "VALUES (?,?,?,?,?,?,?,?,?)",
                     ["*", it["category"], it["lesson"], 50, 0, "unverified",
-                     f"analyst:{time.strftime('%Y-%m-%d')}", time.time(), time.time()])
+                     f"analyst:{time.strftime('%Y-%m-%d')}", time.time(), time.time()],
+                    db_path=db_path)
         lesson_ids.append(lid)
     # 场景归纳(2026-08-17 用户要求'多维度经验总结'): 同 symbol+类别+场景
     # 条件的 trusted 教训 ≥ROLLUP_MIN_MEMBERS 时沉淀归纳结论(只读汇总)。
     try:
         from decision.experience_scoring import rollup_lessons
-        report["lesson_rollups"] = rollup_lessons()
+        report["lesson_rollups"] = rollup_lessons(db_path=db_path)
     except Exception:
         report["lesson_rollups"] = []
     # 飞书反馈
@@ -173,8 +178,10 @@ def run_daily():
     else:
         lines.append("✅ 无异常")
     try:
-        from decision.notify import notify
-        notify("\n".join(lines))
+        if notifier is None:
+            from decision.notify import notify
+            notifier = notify
+        notifier("\n".join(lines))
     except Exception:
         pass
     return {"report": report, "issues": issues, "lesson_ids": lesson_ids}

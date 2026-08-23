@@ -112,7 +112,13 @@ class PositionMixin:
                     return None
             except Exception:
                 pass   # 查询失败退回 journal 幂等
-        # 经验决策的止损修正真正生效（B6：v1 的 stop_adj/size_factor 是死代码）
+        # 严格 2:1 paper 的预测标签固定为 1×ATR 止损/2×ATR 止盈；若执行时
+        # 再放宽 stop，模型预测的就不是实际订单。保留 legacy/Fake 调用的
+        # stop_adj 能力，但真实 OKX paper 明确忽略它，使预测、标签、订单同口径。
+        if getattr(self, "require_2to1_prediction", False) and stop_adj:
+            print(f"  {base}: 固定 2:1 预测门启用，忽略历史 stop_adj")
+            stop_adj = 0.0
+        # 兼容路径的经验止损修正（B6：v1 的 stop_adj/size_factor 是死代码）
         if stop_adj:
             if sig["dir"] == "long":
                 sig = dict(sig, stop=sig["entry"] - (1 + stop_adj) * sig["atr"])
@@ -187,6 +193,8 @@ class PositionMixin:
                                    ensure_ascii=False),
                 strategy_timeframe=config.SIGNAL_SAMPLE_TIMEFRAME,
                 max_hold_hours=config.MAX_HOLD_HOURS,
+                strategy_id=(sig.get("strategy_id") or
+                             config.ENTRY_SIGNAL_STRATEGY_ID),
                 venue=("live" if getattr(self, "live_mode", False) else "spot"))
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:
@@ -334,7 +342,8 @@ class PositionMixin:
                 # 2026-08-18 止损/止盈锚定真实成交价: 此前锚定信号参考价,滑点
                 # 把实际 R:R 从名义 2:1 压到 1.4~0.9(用户发现'感觉是 1:1'——
                 # BNB 空单 fill 偏离 0.7 后实际 R:R 仅 0.90)。重锚后无论滑点
-                # 多少,止损永远 = 成交价 ∓ (1+stop_adj)×ATR、止盈 = ∓ 2×ATR。
+                # 多少,止损/止盈都重新锚定成交价；严格 paper 已在上游把
+                # stop_adj 归零，因此最终订单仍精确为 1×ATR / 2×ATR。
                 stop_off = (1 + stop_adj) * config.STOP_ATR_MULT * sig["atr"]
                 tp_off = config.TP_ATR_MULT * sig["atr"]
                 if sig["dir"] == "long":
@@ -376,6 +385,8 @@ class PositionMixin:
                                     ensure_ascii=False) if sig.get("forecast") else None,
                 strategy_timeframe=config.SIGNAL_SAMPLE_TIMEFRAME,
                 max_hold_hours=config.MAX_HOLD_HOURS,
+                strategy_id=(sig.get("strategy_id") or
+                             config.ENTRY_SIGNAL_STRATEGY_ID),
                 venue=("live" if getattr(self, "live_mode", False) else "swap"))  # 合约腿；实盘标 live(2026-08-23 重新计盈亏)
             # Phase 1: 入场特征落库（影子模式,采集失败不影响交易）
             try:

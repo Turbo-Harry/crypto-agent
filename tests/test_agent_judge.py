@@ -90,9 +90,15 @@ def main():
     import storage.db as sdb
     sdb.init_db(db)
     v, r, jid = judge(SIG, "LINK", 60, 10.0, SENT,
-                      analyzer=lambda u: '{"verdict": "approve", "reason": "ok"}',
+                      analyzer=lambda u: ('{"verdict":"approve","risk_probability":0.2,'
+                                          '"reason_code":"none","reason":"ok"}'),
                       db_path=db)
     check("判断落表(有 judgment_id)", jid is not None, f"jid={jid}")
+    detail = sdb.q1("SELECT call_status,risk_probability,reason_code "
+                    "FROM ai_judgments WHERE id=?", [jid], db_path=db)
+    check("有效判断结构化状态", detail["call_status"] == "valid" and
+          abs(detail["risk_probability"] - 0.2) < 1e-9 and
+          detail["reason_code"] == "none", str(detail))
     bind_trade(jid, "txn_x", db_path=db)
     record_trade_outcome("txn_x", 0.012, db_path=db)
     row = sdb.q1("SELECT outcome_pnl FROM ai_judgments WHERE id=?", [jid], db_path=db)
@@ -102,18 +108,43 @@ def main():
     config.AGENT_JUDGE_MEMORY_MIN_HOURS = 0   # 测试: 立即视为"历史"
     mem = _memory_block(db, "LINK", "long")
     config.AGENT_JUDGE_MEMORY_MIN_HOURS = _old_h
-    check("RAG 记忆含带结果旧案例", "判断案例" in mem and "approve" in mem, mem[:100])
+    check("RAG 记忆含带结果旧案例且旧 PnL 保留百分比单位",
+          "判断案例" in mem and "approve" in mem and "+1.2%" in mem,
+          mem[:160])
 
-    class FakeEx:
-        def fetch_ticker_last(self, inst_id):
-            return 10.5
-    n = sweep_outcomes(FakeEx(), db_path=db, horizon_hours=0)
-    check("否决判断扫尾回填(现价10.5→+5%)", n >= 0)
-    row2 = sdb.q1("SELECT outcome_pnl FROM ai_judgments WHERE trade_id IS NULL "
-                  "AND outcome_pnl IS NOT NULL LIMIT 1", db_path=db)
-    if row2:
-        check("扫尾结果 ≈ +0.05", abs(row2["outcome_pnl"] - 0.05) < 0.01,
-              str(row2))
+    from engines.signal_sampling import record_signal_sample
+    from decision.signal_outcomes import persist_outcome
+    linked_sig = dict(SIG, entry=10.0, atr=0.5, kline_ts=1_700_000_000_000,
+                      shadow_dims={name: 0.5 for name in config.SHADOW_DIMS})
+    sid, _ = record_signal_sample("LINK", linked_sig, "swap", db_path=db,
+                                  event_ts=1_700_003_600)
+    _, _, reject_jid = judge(
+        linked_sig, "LINK", 60, 10.0, SENT,
+        analyzer=lambda u: ('{"verdict":"reject","risk_probability":0.9,'
+                            '"reason_code":"news_conflict","reason":"bad"}'),
+        db_path=db, signal_id=sid)
+    persist_outcome({"signal_id": sid,
+                     "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
+                     "tp_first": 0, "sl_first": 1, "timeout": 0,
+                     "ambiguous": 0, "pnl_r": -1.0, "mfe_r": 0.2,
+                     "mae_r": 1.0, "high_ret_h": 0.001, "low_ret_h": -0.05,
+                     "time_to_tp_sec": None, "time_to_sl_sec": 60,
+                     "time_to_high_sec": 0, "time_to_low_sec": 60,
+                     "settled_at": 1_700_100_000, "bar_resolution": "1m",
+                     "label_version": "test-v1"}, db_path=db)
+    # persist_outcome 已同步回填；再次 sweep 必须幂等为 0。
+    n = sweep_outcomes(db_path=db)
+    check("否决判断按完整路径自动扫尾且重复 sweep 幂等", n == 0, str(n))
+    row2 = sdb.q1("SELECT outcome_r,sl_first FROM ai_judgments WHERE id=?",
+                  [reject_jid], db_path=db)
+    check("扫尾结果 = -1R 且 SL first",
+          row2 and row2["outcome_r"] == -1.0 and row2["sl_first"] == 1,
+          str(row2))
+    config.AGENT_JUDGE_MEMORY_MIN_HOURS = 0
+    path_mem = _memory_block(db, "LINK", "long")
+    config.AGENT_JUDGE_MEMORY_MIN_HOURS = _old_h
+    check("路径结果在 RAG 中保留 R 单位", "-1.00R" in path_mem,
+          path_mem[:240])
 
     print(f"\n结果: {_passed} 通过, {_failed} 失败")
     return 0 if _failed == 0 else 1

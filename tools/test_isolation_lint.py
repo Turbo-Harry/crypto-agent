@@ -8,6 +8,7 @@ DEF-8 曾两次以"冷不丁"方式暴露（test_decision_loop 阈值85 行 / te
   1. DirectionalTrader(...) / ServiceTrader(...) 调用必须显式含 db_path=；
   2. TradeJournal(...) / ScoredExperience(...) / PositionLedger(...) /
      ThresholdLearner(...) 调用必须显式含 path= 或 db_path=（隔离存储）。
+  3. CI 全量脚本必须同时隔离 DB、事件 JSONL 与 PID/心跳/tick 运行目录。
 
 运行：cd crypto-agent && python3 tools/test_isolation_lint.py
 退出码：0=全部隔离完整；1=存在未隔离调用（列出文件与行号）。
@@ -64,6 +65,19 @@ for fn in sorted(os.listdir(TESTS)):
 
 if problems:
     print(f"\n发现 {problems} 处未隔离调用 —— 任何新测试漏隔离都会在此被拦截")
+    sys.exit(1)
+workflow = os.path.join(ROOT, ".github", "workflows", "ci.yml")
+try:
+    ci_source = open(workflow, encoding="utf-8").read()
+except OSError:
+    ci_source = ""
+for env_name in ("CRYPTO_AGENT_DB", "CRYPTO_AGENT_EVENTS_FILE",
+                 "CRYPTO_AGENT_RUNTIME_DIR"):
+    if env_name not in ci_source:
+        problems += 1
+        print(f"❌ CI 全量测试缺少 {env_name} 隔离")
+if problems:
+    print(f"\n发现 {problems} 处未隔离调用/通道")
     sys.exit(1)
 print("✅ 全部测试构造调用均已显式隔离")
 sys.exit(0)

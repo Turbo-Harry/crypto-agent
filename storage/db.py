@@ -30,6 +30,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS trades (
     id TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,
+    strategy_id TEXT NOT NULL DEFAULT 'A_pullback',
     signal TEXT, reason TEXT,
     entry_price REAL, stop_loss REAL, take_profit REAL,
     size REAL, size_unit TEXT DEFAULT 'base',
@@ -43,6 +44,8 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl REAL, status TEXT DEFAULT 'open',
     fees_usdt REAL DEFAULT 0,          -- 2026-08-23 手续费(平仓复盘按账单写入)
     funding_usdt REAL DEFAULT 0,       -- 2026-08-23 资金费(持仓期间结算,同)
+    strategy_timeframe TEXT,           -- 新交易才携带；旧持仓 NULL 不触发时间退出
+    max_hold_hours REAL,
     shadow_dims TEXT,                  -- 2026-08-23 开仓时 6 维子分 JSON(权重进化证据)
     targets TEXT,                      -- 2026-08-23 目标价位带 T1/T2/T3 JSON
     forecast TEXT,                     -- 2026-08-23 开仓时预测 JSON(分布+触达概率)
@@ -51,6 +54,8 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
 CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time);
+CREATE INDEX IF NOT EXISTS idx_trades_strategy_status
+    ON trades(strategy_id, status, entry_time);
 
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,15 +182,62 @@ CREATE TABLE IF NOT EXISTS kv (
 
 CREATE TABLE IF NOT EXISTS factor_trials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts REAL, name TEXT, rationale TEXT,     -- 经济逻辑必填(GP 产物标 hypothesis_only)
+    ts REAL, name TEXT,
+    strategy_id TEXT NOT NULL DEFAULT 'A_pullback',
+    rationale TEXT,                         -- 经济逻辑必填(GP 产物标 hypothesis_only)
     n_samples INTEGER, n_folds INTEGER,
     mean_ic REAL, icir REAL, ic_tstat REAL, -- IC/ICIR/t 值(多重检验校正门槛 t>3.0)
     gross_spread REAL, turnover REAL, net_spread REAL,  -- 毛价差/换手/扣费净价差
-    status TEXT,                            -- promote / watch / reject / redundant /
+    status TEXT,                            -- validated / watch / reject / redundant /
                                             -- hypothesis_only / reject_on_cost
-    expression TEXT
+    expression TEXT,
+    dsr REAL, pbo REAL, missing_rate REAL, fold_consistency INTEGER,
+    symbol_concentration REAL, redundant_with TEXT, details TEXT,
+    timeframe TEXT, horizon_hours INTEGER,
+    trial_key TEXT, data_hash TEXT, evaluation_version TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_factor_trials_ts ON factor_trials(ts);
+CREATE INDEX IF NOT EXISTS idx_factor_trials_scope
+    ON factor_trials(strategy_id,timeframe,horizon_hours,name,id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_factor_trials_key
+    ON factor_trials(trial_key) WHERE trial_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS model_artifacts (
+    model_id TEXT PRIMARY KEY,
+    model_type TEXT NOT NULL,
+    strategy_id TEXT NOT NULL DEFAULT 'A_pullback',
+    direction TEXT, version TEXT NOT NULL,
+    state TEXT NOT NULL,                   -- candidate/validated/shadow/accepted/
+                                           -- active/observing/kept/rolled_back/rejected
+    created_at REAL NOT NULL, training_cutoff REAL, data_hash TEXT,
+    feature_names TEXT NOT NULL DEFAULT '[]', artifact TEXT NOT NULL,
+    metrics TEXT NOT NULL DEFAULT '{}', parent_id TEXT,
+    activated_at REAL, retired_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_model_type_state
+    ON model_artifacts(model_type, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_model_strategy_state
+    ON model_artifacts(strategy_id, model_type, state, created_at);
+
+CREATE TABLE IF NOT EXISTS model_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id TEXT NOT NULL, fold INTEGER, ts REAL NOT NULL, n_samples INTEGER,
+    brier REAL, baseline_brier REAL, log_loss REAL,
+    net_ev REAL, baseline_ev REAL, coverage REAL, pinball_loss REAL,
+    details TEXT,
+    FOREIGN KEY(model_id) REFERENCES model_artifacts(model_id)
+);
+CREATE INDEX IF NOT EXISTS idx_model_eval_id ON model_evaluations(model_id, fold);
+
+CREATE TABLE IF NOT EXISTS model_state_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id TEXT NOT NULL, ts REAL NOT NULL,
+    from_state TEXT, to_state TEXT NOT NULL, reason TEXT,
+    metrics TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY(model_id) REFERENCES model_artifacts(model_id)
+);
+CREATE INDEX IF NOT EXISTS idx_model_state_events
+    ON model_state_events(model_id, ts);
 
 -- Phase 1 结构化特征采集（每笔交易一行，开仓写入入场特征、平仓更新离场特征）
 -- 字段定义与来源见 docs/architecture/trade_features_schema.md
@@ -211,8 +263,11 @@ CREATE TABLE IF NOT EXISTS ai_judgments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, base TEXT, direction TEXT, score REAL, entry_price REAL,
     verdict TEXT, reason TEXT, trade_id TEXT,
-    outcome_pnl REAL, outcome_ts REAL
+    outcome_pnl REAL, outcome_ts REAL,
+    signal_id TEXT, call_status TEXT, risk_probability REAL, reason_code TEXT,
+    outcome_r REAL, tp_first INTEGER, sl_first INTEGER, timeout INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_ai_signal ON ai_judgments(signal_id);
 
 -- Agent Harness trace ledger.  These tables are append-oriented and contain
 -- no order/exchange mutation capability; the policy kernel remains separate.
@@ -239,7 +294,9 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     input_tokens INTEGER,
     output_tokens INTEGER,
     estimated_cost REAL,
-    error_type TEXT
+    error_type TEXT,
+    risk_probability REAL,
+    reason_codes TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_runs_signal ON agent_runs(signal_id, created_ts);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(runtime_status, created_ts);
@@ -288,7 +345,7 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     direction TEXT, timeframe TEXT, regime TEXT,
     status TEXT NOT NULL,
     created_ts REAL NOT NULL, mature_ts REAL,
-    outcome_pnl REAL, evidence_strength REAL DEFAULT 0,
+    outcome_pnl REAL, outcome_r REAL, evidence_strength REAL DEFAULT 0,
     content TEXT NOT NULL, metadata_json TEXT DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_agent_memories_filter
@@ -296,6 +353,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_memories_filter
 
 CREATE TABLE IF NOT EXISTS agent_versions (
     version TEXT PRIMARY KEY,
+    strategy_id TEXT NOT NULL DEFAULT 'A_pullback',
     role TEXT NOT NULL,                    -- champion / challenger
     status TEXT NOT NULL,                  -- candidate / shadow / validated / active-veto / observing / kept / rolled-back
     parent_version TEXT,
@@ -306,12 +364,74 @@ CREATE TABLE IF NOT EXISTS agent_versions (
     reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_versions_status ON agent_versions(status, created_ts);
+CREATE INDEX IF NOT EXISTS idx_agent_versions_strategy_status
+    ON agent_versions(strategy_id, status, created_ts);
 
 CREATE TABLE IF NOT EXISTS forecast_calibration (
     trade_id TEXT PRIMARY KEY,
     ts REAL, p_hit_tp REAL, p_hit_sl REAL,
-    hit_tp INTEGER, hit_sl INTEGER, pnl REAL
+    hit_tp INTEGER, hit_sl INTEGER, pnl REAL,
+    signal_id TEXT, p_timeout REAL, timeout INTEGER, label_version TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_forecast_cal_signal
+    ON forecast_calibration(signal_id);
+
+-- 所有结构候选（不是只有成交单）都先进入该表。唯一键防同一根 1H K 被
+-- 5 分钟扫描重复计数；config_hash 拼入 strategy_version 后参数变化会新建版本。
+CREATE TABLE IF NOT EXISTS signal_samples (
+    signal_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL, direction TEXT NOT NULL,
+    event_ts REAL NOT NULL, kline_ts INTEGER NOT NULL,
+    timeframe TEXT NOT NULL, venue TEXT,
+    strategy_id TEXT NOT NULL DEFAULT 'A_pullback',
+    strategy_version TEXT NOT NULL, config_hash TEXT NOT NULL,
+    feature_schema_version TEXT NOT NULL,
+    entry REAL NOT NULL, stop REAL NOT NULL, tp REAL NOT NULL,
+    atr REAL NOT NULL, horizon_hours INTEGER NOT NULL,
+    wick REAL, depth REAL, trend REAL, volume REAL, funding REAL, book REAL,
+    features TEXT NOT NULL DEFAULT '{}',
+    rule_decision TEXT NOT NULL DEFAULT 'pending',
+    ai_verdict TEXT, final_decision TEXT NOT NULL DEFAULT 'pending',
+    reject_reason TEXT, trade_id TEXT,
+    missing_features TEXT NOT NULL DEFAULT '[]', source_latency_ms REAL,
+    created_at REAL NOT NULL, updated_at REAL NOT NULL,
+    UNIQUE(symbol, direction, timeframe, kline_ts, strategy_version)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_samples_event ON signal_samples(event_ts);
+CREATE INDEX IF NOT EXISTS idx_signal_samples_final ON signal_samples(final_decision, event_ts);
+
+-- 统计/研究只消费每个自然市场机会的一条快照。配置版本变化仍保留原始
+-- signal_samples 作审计，但同币/方向/15m K 的多版本快照不能冒充独立样本。
+CREATE VIEW IF NOT EXISTS signal_samples_canonical AS
+SELECT s.* FROM signal_samples s
+WHERE NOT EXISTS (
+    SELECT 1 FROM signal_samples newer
+    WHERE newer.strategy_id=s.strategy_id
+      AND newer.symbol=s.symbol
+      AND newer.direction=s.direction
+      AND newer.timeframe=s.timeframe
+      AND newer.kline_ts=s.kline_ts
+      AND (newer.event_ts>s.event_ts OR
+           (newer.event_ts=s.event_ts AND newer.signal_id>s.signal_id))
+);
+
+-- 到期候选的 24H 1m 路径反事实；一候选一结果，重复 sweep 幂等。
+CREATE TABLE IF NOT EXISTS signal_outcomes (
+    signal_id TEXT PRIMARY KEY,
+    horizon_hours INTEGER NOT NULL,
+    tp_first INTEGER NOT NULL DEFAULT 0,
+    sl_first INTEGER NOT NULL DEFAULT 0,
+    timeout INTEGER NOT NULL DEFAULT 0,
+    ambiguous INTEGER NOT NULL DEFAULT 0,
+    pnl_r REAL, mfe_r REAL, mae_r REAL,
+    high_ret_h REAL, low_ret_h REAL,
+    time_to_tp_sec REAL, time_to_sl_sec REAL,
+    time_to_high_sec REAL, time_to_low_sec REAL,
+    settled_at REAL NOT NULL, bar_resolution TEXT NOT NULL,
+    label_version TEXT NOT NULL,
+    FOREIGN KEY(signal_id) REFERENCES signal_samples(signal_id)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_outcomes_settled ON signal_outcomes(settled_at);
 
 CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -545,8 +665,8 @@ def _migrate_v11_ai_memory(conn):
                  "outcome_pnl REAL, outcome_ts REAL)")
 
 
-def _migrate_v12_agent_harness(conn):
-    """v12: durable Agent Harness runs, steps and mature evaluations."""
+def _migrate_v20_agent_harness(conn):
+    """v20: durable Agent Harness runs, steps and mature evaluations."""
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS agent_runs (
         run_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL,
@@ -579,8 +699,8 @@ def _migrate_v12_agent_harness(conn):
     """)
 
 
-def _migrate_v13_agent_memories(conn):
-    """v13: evidence-scoped episodic/semantic/procedural memory."""
+def _migrate_v21_agent_memories(conn):
+    """v21: evidence-scoped episodic/semantic/procedural memory."""
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS agent_memories (
         evidence_id TEXT PRIMARY KEY, memory_type TEXT NOT NULL,
@@ -595,8 +715,8 @@ def _migrate_v13_agent_memories(conn):
     """)
 
 
-def _migrate_v14_agent_versions(conn):
-    """v14: champion/challenger lifecycle and rollback evidence."""
+def _migrate_v22_agent_versions(conn):
+    """v22: champion/challenger lifecycle and rollback evidence."""
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS agent_versions (
         version TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL,
@@ -605,6 +725,239 @@ def _migrate_v14_agent_versions(conn):
     );
     CREATE INDEX IF NOT EXISTS idx_agent_versions_status ON agent_versions(status, created_ts);
     """)
+
+
+def _migrate_v24_agent_memory_outcome_r(conn):
+    """v24: Agent 记忆区分旧 PnL 与 15m/4h 路径标准化 R 结果。"""
+    _add_column_if_missing(conn, "agent_memories", "outcome_r", "REAL")
+
+
+def _migrate_v25_factor_trial_identity(conn):
+    """v25: 同一数据集/同一评估算法的因子试验只记一次。"""
+    for name in ("trial_key", "data_hash", "evaluation_version"):
+        _add_column_if_missing(conn, "factor_trials", name, "TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_factor_trials_key "
+                 "ON factor_trials(trial_key) WHERE trial_key IS NOT NULL")
+
+
+def _migrate_v26_agent_decision_evidence(conn):
+    """v26: Harness 持久化风险概率与标准 reason codes，支持真实 Brier/分段评价。"""
+    _add_column_if_missing(conn, "agent_runs", "risk_probability", "REAL")
+    _add_column_if_missing(conn, "agent_runs", "reason_codes", "TEXT")
+
+
+def _migrate_v27_signal_strategy_id(conn):
+    """v27: 多策略候选共表结算，但训练/校准/readiness 必须按策略隔离。"""
+    _add_column_if_missing(
+        conn, "signal_samples", "strategy_id",
+        "TEXT NOT NULL DEFAULT 'A_pullback'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_signal_samples_strategy "
+                 "ON signal_samples(strategy_id,timeframe,event_ts)")
+
+
+def _migrate_v28_factor_strategy_id(conn):
+    """v28: 多策略因子试验按策略隔离，禁止 B 的最新试验覆盖 A。"""
+    _add_column_if_missing(
+        conn, "factor_trials", "strategy_id",
+        "TEXT NOT NULL DEFAULT 'A_pullback'")
+    conn.execute("DROP INDEX IF EXISTS idx_factor_trials_scope")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_factor_trials_scope "
+                 "ON factor_trials(strategy_id,timeframe,horizon_hours,name,id)")
+
+
+def _migrate_v29_model_strategy_id(conn):
+    """v29: 模型制品与生命周期按策略隔离，禁止 B 阻塞/替代 A 模型。"""
+    _add_column_if_missing(
+        conn, "model_artifacts", "strategy_id",
+        "TEXT NOT NULL DEFAULT 'A_pullback'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_model_strategy_state "
+                 "ON model_artifacts(strategy_id,model_type,state,created_at)")
+
+
+def _migrate_v30_trade_agent_strategy_id(conn):
+    """v30: 自然平仓与 Agent 版本按策略隔离，完成度不得跨 A/B 借样本。"""
+    _add_column_if_missing(
+        conn, "trades", "strategy_id",
+        "TEXT NOT NULL DEFAULT 'A_pullback'")
+    _add_column_if_missing(
+        conn, "agent_versions", "strategy_id",
+        "TEXT NOT NULL DEFAULT 'A_pullback'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_strategy_status "
+                 "ON trades(strategy_id,status,entry_time)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_versions_strategy_status "
+                 "ON agent_versions(strategy_id,status,created_ts)")
+
+
+def _migrate_v31_canonical_signal_view(conn):
+    """v31: 多配置快照保留审计，但统计训练按自然市场机会去伪重复。"""
+    conn.execute("DROP VIEW IF EXISTS signal_samples_canonical")
+    conn.execute("""
+        CREATE VIEW signal_samples_canonical AS
+        SELECT s.* FROM signal_samples s
+        WHERE NOT EXISTS (
+            SELECT 1 FROM signal_samples newer
+            WHERE newer.strategy_id=s.strategy_id
+              AND newer.symbol=s.symbol
+              AND newer.direction=s.direction
+              AND newer.timeframe=s.timeframe
+              AND newer.kline_ts=s.kline_ts
+              AND (newer.event_ts>s.event_ts OR
+                   (newer.event_ts=s.event_ts AND newer.signal_id>s.signal_id))
+        )
+    """)
+
+
+def _migrate_v12_signal_supervision(conn):
+    """v12: 所有结构候选留样 + 固定 horizon 首触/极值反事实标签。"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS signal_samples (
+            signal_id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL, direction TEXT NOT NULL,
+            event_ts REAL NOT NULL, kline_ts INTEGER NOT NULL,
+            timeframe TEXT NOT NULL, venue TEXT,
+            strategy_version TEXT NOT NULL, config_hash TEXT NOT NULL,
+            feature_schema_version TEXT NOT NULL,
+            entry REAL NOT NULL, stop REAL NOT NULL, tp REAL NOT NULL,
+            atr REAL NOT NULL, horizon_hours INTEGER NOT NULL,
+            wick REAL, depth REAL, trend REAL, volume REAL, funding REAL, book REAL,
+            features TEXT NOT NULL DEFAULT '{}',
+            rule_decision TEXT NOT NULL DEFAULT 'pending',
+            ai_verdict TEXT, final_decision TEXT NOT NULL DEFAULT 'pending',
+            reject_reason TEXT, trade_id TEXT,
+            missing_features TEXT NOT NULL DEFAULT '[]', source_latency_ms REAL,
+            created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            UNIQUE(symbol, direction, timeframe, kline_ts, strategy_version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_signal_samples_event
+            ON signal_samples(event_ts);
+        CREATE INDEX IF NOT EXISTS idx_signal_samples_final
+            ON signal_samples(final_decision, event_ts);
+        CREATE TABLE IF NOT EXISTS signal_outcomes (
+            signal_id TEXT PRIMARY KEY,
+            horizon_hours INTEGER NOT NULL,
+            tp_first INTEGER NOT NULL DEFAULT 0,
+            sl_first INTEGER NOT NULL DEFAULT 0,
+            timeout INTEGER NOT NULL DEFAULT 0,
+            ambiguous INTEGER NOT NULL DEFAULT 0,
+            pnl_r REAL, mfe_r REAL, mae_r REAL,
+            high_ret_h REAL, low_ret_h REAL,
+            time_to_tp_sec REAL, time_to_sl_sec REAL,
+            time_to_high_sec REAL, time_to_low_sec REAL,
+            settled_at REAL NOT NULL, bar_resolution TEXT NOT NULL,
+            label_version TEXT NOT NULL,
+            FOREIGN KEY(signal_id) REFERENCES signal_samples(signal_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_signal_outcomes_settled
+            ON signal_outcomes(settled_at);
+    """)
+
+
+def _migrate_v13_forecast_path_labels(conn):
+    """v13: 预测校准改用真实候选路径标签，不再按固定盈亏百分比近似。"""
+    _add_column_if_missing(conn, "forecast_calibration", "signal_id", "TEXT")
+    _add_column_if_missing(conn, "forecast_calibration", "p_timeout", "REAL")
+    _add_column_if_missing(conn, "forecast_calibration", "timeout", "INTEGER")
+    _add_column_if_missing(conn, "forecast_calibration", "label_version", "TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_forecast_cal_signal "
+                 "ON forecast_calibration(signal_id)")
+
+
+def _migrate_v14_intraday_factor_evidence(conn):
+    """v14: 因子样本外证据（DSR/PBO/缺失/稳定性/冗余）完整落表。"""
+    for name, decl in (
+            ("dsr", "REAL"), ("pbo", "REAL"), ("missing_rate", "REAL"),
+            ("fold_consistency", "INTEGER"),
+            ("symbol_concentration", "REAL"), ("redundant_with", "TEXT"),
+            ("details", "TEXT")):
+        _add_column_if_missing(conn, "factor_trials", name, decl)
+
+
+def _migrate_v15_model_registry(conn):
+    """v15: 可审计模型制品、逐折评估与生命周期状态。"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS model_artifacts (
+            model_id TEXT PRIMARY KEY,
+            model_type TEXT NOT NULL, direction TEXT, version TEXT NOT NULL,
+            state TEXT NOT NULL, created_at REAL NOT NULL,
+            training_cutoff REAL, data_hash TEXT,
+            feature_names TEXT NOT NULL DEFAULT '[]', artifact TEXT NOT NULL,
+            metrics TEXT NOT NULL DEFAULT '{}', parent_id TEXT,
+            activated_at REAL, retired_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_type_state
+            ON model_artifacts(model_type, state, created_at);
+        CREATE TABLE IF NOT EXISTS model_evaluations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id TEXT NOT NULL, fold INTEGER, ts REAL NOT NULL,
+            n_samples INTEGER, brier REAL, baseline_brier REAL, log_loss REAL,
+            net_ev REAL, baseline_ev REAL, coverage REAL, pinball_loss REAL,
+            details TEXT,
+            FOREIGN KEY(model_id) REFERENCES model_artifacts(model_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_eval_id
+            ON model_evaluations(model_id, fold);
+    """)
+
+
+def _migrate_v16_agent_counterfactual(conn):
+    """v16: AI 有效/失败状态拆分，并关联候选路径反事实。"""
+    for name, decl in (
+            ("signal_id", "TEXT"), ("call_status", "TEXT"),
+            ("risk_probability", "REAL"), ("reason_code", "TEXT"),
+            ("outcome_r", "REAL"), ("tp_first", "INTEGER"),
+            ("sl_first", "INTEGER"), ("timeout", "INTEGER")):
+        _add_column_if_missing(conn, "ai_judgments", name, decl)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_signal "
+                 "ON ai_judgments(signal_id)")
+
+
+def _migrate_v17_model_state_events(conn):
+    """v17: 持久化模型每次状态跃迁，避免只有当前 state 无法审计闭环。"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS model_state_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id TEXT NOT NULL, ts REAL NOT NULL,
+            from_state TEXT, to_state TEXT NOT NULL, reason TEXT,
+            metrics TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(model_id) REFERENCES model_artifacts(model_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_state_events
+            ON model_state_events(model_id, ts);
+    """)
+
+
+def _migrate_v18_factor_trial_scope(conn):
+    """v18: 因子证据绑定主周期/标签窗口，禁止 1H/24H 混入 15m/4h。"""
+    _add_column_if_missing(conn, "factor_trials", "timeframe", "TEXT")
+    _add_column_if_missing(conn, "factor_trials", "horizon_hours", "INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_factor_trials_scope "
+                 "ON factor_trials(timeframe,horizon_hours,name,id)")
+
+
+def _migrate_v19_trade_horizon(conn):
+    """v19: 时间退出只绑定新 15m 交易，不追溯平旧持仓。"""
+    _add_column_if_missing(conn, "trades", "strategy_timeframe", "TEXT")
+    _add_column_if_missing(conn, "trades", "max_hold_hours", "REAL")
+
+
+def _migrate_v23_merged_lineages(conn):
+    """v23: 修复曾分别使用 v12-v14 的 Harness/研究分支迁移编号冲突。
+
+    所有子迁移均幂等；无论旧库来自哪条分支，最终都补齐两套 schema。
+    """
+    for migrate in (
+            _migrate_v12_signal_supervision,
+            _migrate_v13_forecast_path_labels,
+            _migrate_v14_intraday_factor_evidence,
+            _migrate_v15_model_registry,
+            _migrate_v16_agent_counterfactual,
+            _migrate_v17_model_state_events,
+            _migrate_v18_factor_trial_scope,
+            _migrate_v19_trade_horizon,
+            _migrate_v20_agent_harness,
+            _migrate_v21_agent_memories,
+            _migrate_v22_agent_versions):
+        migrate(conn)
 
 
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
@@ -620,9 +973,26 @@ MIGRATIONS = (
     (9, _migrate_v9_trade_targets),
     (10, _migrate_v10_forecast),
     (11, _migrate_v11_ai_memory),
-    (12, _migrate_v12_agent_harness),
-    (13, _migrate_v13_agent_memories),
-    (14, _migrate_v14_agent_versions),
+    (12, _migrate_v12_signal_supervision),
+    (13, _migrate_v13_forecast_path_labels),
+    (14, _migrate_v14_intraday_factor_evidence),
+    (15, _migrate_v15_model_registry),
+    (16, _migrate_v16_agent_counterfactual),
+    (17, _migrate_v17_model_state_events),
+    (18, _migrate_v18_factor_trial_scope),
+    (19, _migrate_v19_trade_horizon),
+    (20, _migrate_v20_agent_harness),
+    (21, _migrate_v21_agent_memories),
+    (22, _migrate_v22_agent_versions),
+    (23, _migrate_v23_merged_lineages),
+    (24, _migrate_v24_agent_memory_outcome_r),
+    (25, _migrate_v25_factor_trial_identity),
+    (26, _migrate_v26_agent_decision_evidence),
+    (27, _migrate_v27_signal_strategy_id),
+    (28, _migrate_v28_factor_strategy_id),
+    (29, _migrate_v29_model_strategy_id),
+    (30, _migrate_v30_trade_agent_strategy_id),
+    (31, _migrate_v31_canonical_signal_view),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -762,12 +1132,13 @@ def migrate_from_json(db_path=None):
         conn.close()
 
 
-_TRADE_COLS = ("id", "symbol", "signal", "reason", "entry_price", "stop_loss",
+_TRADE_COLS = ("id", "symbol", "strategy_id", "signal", "reason", "entry_price", "stop_loss",
                "take_profit", "size", "size_unit", "direction", "venue", "score",
                "adopted_lesson_ids", "atr_value", "signal_price", "notional_usdt",
                "risk_usdt", "entry_time", "exit_price", "exit_time", "exit_reason",
                "pnl", "status", "fees_usdt", "funding_usdt", "shadow_dims",
-               "targets", "forecast", "review", "review_ts")
+               "strategy_timeframe", "max_hold_hours", "targets", "forecast",
+               "review", "review_ts")
 
 
 def q(sql, params=(), db_path=None):

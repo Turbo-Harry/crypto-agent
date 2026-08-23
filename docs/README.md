@@ -7,9 +7,9 @@
 
 | 目录 | 内容 | 文档 |
 |---|---|---|
-| [architecture/](architecture/) | 架构设计 | [exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计）、[code_graph.md](architecture/code_graph.md)（代码知识图谱：三层建模+影响面查询）、[ai_friendly_repo.md](architecture/ai_friendly_repo.md)（AI 接手路径/事实优先级/机器守卫） |
-| [plans/](plans/) | 优化/实施计划与简报 | Agent B R1/R2 方案及终审稿、D 批次实施简报、自进化系统设计方案、[交易 Agent Harness 权威实施稿](plans/2026-08-23_agent_harness_improvement_FINAL.md) |
-| [reports/](reports/) | 研究报告与收敛报告 | research_report_round2/3、optimization_report、convergence_report、final_report、evolution_loop_report、optimization_notes（实施日志）、backtest_report、**pitfalls（踩坑档案，写代码前必读）** |
+| [architecture/](architecture/) | 架构设计 | [exchange_layers.md](architecture/exchange_layers.md)（交易所访问四层）、[mtf_resonance_design.md](architecture/mtf_resonance_design.md)（多周期共振设计）、[code_graph.md](architecture/code_graph.md)（代码知识图谱：三层建模+影响面查询）、[ai_friendly_repo.md](architecture/ai_friendly_repo.md)（AI 接手路径/事实优先级/15m 研究链/Agent Harness/机器守卫） |
+| [plans/](plans/) | 优化/实施计划与简报 | Agent B R1/R2 方案及终审稿、D 批次实施简报、自进化系统设计方案、[交易 Agent Harness 权威实施稿](plans/2026-08-23_agent_harness_improvement_FINAL.md)、[开仓准确率/因子/极值预测权威实施稿](plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md) |
+| [reports/](reports/) | 研究报告与收敛报告 | [15m/4h OKX SWAP 历史重放裁决](reports/2026-08-23_15m_research_replay_report.md)、research_report_round2/3、optimization_report、convergence_report、final_report、evolution_loop_report、optimization_notes（实施日志）、backtest_report、**pitfalls（踩坑档案，写代码前必读）** |
 | [ops/](ops/) | 运维与验证手册 | watchdog_launchd（进程守护）、tp_sandbox_verify（止盈沙盘验证清单）、subaccount_test_plan（子账户测试计划）、data_collection_schedule（数据采集调度） |
 | [prompts/](prompts/) | AI 提示词 | evolution_loop_prompt（进化循环提示词）、factor_mining_goal_prompt（因子挖掘完善，验证门标准） |
 | [AGENT_NOTES.md](AGENT_NOTES.md) | Agent 协作 | 多 Agent 文件占用协议与当前 claim（机器维护） |
@@ -17,7 +17,7 @@
 仓库四个入口：根目录 `README.md`（人类总览）、`AGENTS.md`（AI 安全与协作规则）、
 `llms.txt`（机器可读地图），以及 `docs/README.md`（文档索引）。
 
-## 二、按时间线（全部 32 篇，不含本索引）
+## 二、按时间线（全部 34 篇，不含本索引）
 
 | 时间 | 文档 | 一句话 |
 |---|---|---|
@@ -46,13 +46,15 @@
 | 08-16 16:03 | [architecture/exchange_layers.md](architecture/exchange_layers.md) | 交易所访问分层架构 |
 | 08-16 16:48 | [reports/pitfalls.md](reports/pitfalls.md) | 踩坑档案（API/数量/工程类，写代码前必读） |
 | 08-16 17:00 | [architecture/code_graph.md](architecture/code_graph.md) | 代码知识图谱（模块/符号/数据流三层 + --check/--query） |
-| 08-16 17:05 | [architecture/ai_friendly_repo.md](architecture/ai_friendly_repo.md) | AI 友好仓库调研与落地对照 |
+| 08-16 17:05 | [architecture/ai_friendly_repo.md](architecture/ai_friendly_repo.md) | AI 协作契约：接手路径、事实优先级、15m 研究链、Agent Harness 与机器守卫 |
 | 08-16 19:10 | [plans/2026-08-16_self_evolution_design.md](plans/2026-08-16_self_evolution_design.md) | 自进化系统设计方案 v0.2（现状/DEF 缺陷/业界标准验收/Phase 路线图/质疑轮） |
 | 08-16 19:40 | [reports/2026-08-16_strategy_research.md](reports/2026-08-16_strategy_research.md) | 业界策略调研：订单流/聪明钱/分场景选策略（Agent A 格式，附来源） |
 | 08-16 21:20 | [prompts/2026-08-16_factor_mining_goal_prompt.md](prompts/2026-08-16_factor_mining_goal_prompt.md) | 因子挖掘完善目标 prompt（验证门/试验日志/影子政策） |
 | 08-16 22:10 | [architecture/trade_features_schema.md](architecture/trade_features_schema.md) | Phase 1 特征采集 schema（MFE/MAE/R 倍数/regime/订单流/影子分） |
 | 08-21 | [AGENT_NOTES.md](AGENT_NOTES.md) | 多 Agent 单写者占用协议（活文档） |
 | 08-23 | [plans/2026-08-23_agent_harness_improvement_FINAL.md](plans/2026-08-23_agent_harness_improvement_FINAL.md) | 交易 Agent Harness：上下文、记忆、只读工具、策略核、Trace、Eval 与回滚（权威实施稿） |
+| 08-23 | [plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md](plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md) | 15m 主周期/4h horizon 的开仓准确率、因子挖掘、极值区间与 Agent 增量验证（权威实施稿） |
+| 08-23 | [reports/2026-08-23_15m_research_replay_report.md](reports/2026-08-23_15m_research_replay_report.md) | 10 个 OKX SWAP 的 15m/4h 历史重放、因子/概率/极值样本外裁决与停止结论 |
 
 ## 三、命名约定
 

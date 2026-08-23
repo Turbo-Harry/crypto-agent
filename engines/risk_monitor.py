@@ -8,6 +8,8 @@
 """
 import time
 
+import config
+
 
 class RiskMonitorMixin:
     """止损监控/熔断强平功能块。"""
@@ -43,15 +45,25 @@ class RiskMonitorMixin:
                 price = self._ticker_last(base, prefer_swap=(venue == "swap"))
                 if price is None:
                     continue
-            # 检查止损/止盈（按方向：空头 stop 在入场上方、tp 在下方）
-            hit_exit = False
+            # 价格障碍优先；未触发时，15m 策略最多持有 4h，
+            # 与监督标签/forecast horizon 保持同一统计问题。
+            price_exit = False
             direction = t.get("direction") or "long"
             if direction == "short":
-                hit_exit = (t["stop_loss"] and price >= t["stop_loss"]) or \
-                           (t["take_profit"] and price <= t["take_profit"])
+                price_exit = (t["stop_loss"] and price >= t["stop_loss"]) or \
+                             (t["take_profit"] and price <= t["take_profit"])
             else:
-                hit_exit = (t["stop_loss"] and price <= t["stop_loss"]) or \
-                           (t["take_profit"] and price >= t["take_profit"])
+                price_exit = (t["stop_loss"] and price <= t["stop_loss"]) or \
+                             (t["take_profit"] and price >= t["take_profit"])
+            entry_time = float(t.get("entry_time") or now)
+            # 只对开仓时已持久化 horizon 的新策略交易生效；
+            # 旧持仓该列为 NULL，部署/重启不会突然追溯平仓。
+            hold_hours = float(t.get("max_hold_hours") or 0)
+            time_expired = (hold_hours > 0 and
+                            now - entry_time >= hold_hours * 3600)
+            hit_exit = price_exit or time_expired
+            exit_reason = ("止损/止盈" if price_exit else
+                           f"{hold_hours:g}h时间退出")
             if hit_exit:
                 # ===== 现货路径（美股代币）：按余额持有量卖出现货平仓 =====
                 if venue == "spot":
@@ -81,7 +93,7 @@ class RiskMonitorMixin:
                         self._log_order_failure(base, inst_id, "sell",
                                                 abs(float(t["size"])), "close", e)
                         continue
-                    closed = self.journal.log_exit(t["id"], price, "止损/止盈")
+                    closed = self.journal.log_exit(t["id"], price, exit_reason)
                     if closed:
                         self._post_close_review(closed, t)
                     continue
@@ -120,7 +132,7 @@ class RiskMonitorMixin:
                                 continue
                         else:
                             # R1-1：平仓成功后取消交易所侧条件停损单（防幽灵单残留）
-                            self._cancel_stop_orders(base, "止损/止盈平仓")
+                            self._cancel_stop_orders(base, f"{exit_reason}平仓")
                     except Exception as e:
                         if "51169" in str(e):
                             if self._pos_gone(inst_id, (t.get("direction") or "long")):
@@ -143,7 +155,7 @@ class RiskMonitorMixin:
                                         float(t["size"]) * float(t.get("entry_price") or 0))
                 except Exception:
                     pass
-                closed = self.journal.log_exit(t["id"], price, "止损/止盈")
+                closed = self.journal.log_exit(t["id"], price, exit_reason)
                 if closed:
                     self._post_close_review(closed, t)
 

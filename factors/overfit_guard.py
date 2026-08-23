@@ -3,7 +3,8 @@
 
 依据（López de Prado）:
   - Deflated Sharpe Ratio (DSR): 考虑非正态(偏度/峰度)与多重试验次数 N 后的
-    Sharpe 显著性; DSR ≥ 1 才可接受。公式见 Bailey & López de Prado (2014),
+    Sharpe 为正的概率；返回值 ∈[0,1]，本仓统一以 DSR ≥0.95 接受。
+    公式见 Bailey & López de Prado (2014),
     "The Deflated Sharpe Ratio" (https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551)。
   - Probability of Backtest Overfitting (PBO): CSCV(组合对称交叉验证)估计
     "样本内最优配置在样本外跑输中位数"的概率; PBO < 0.3 才可接受。
@@ -58,7 +59,7 @@ def _inv_norm_cdf(p):
 
 
 def deflated_sharpe(returns, n_trials=1):
-    """DSR(≥1 才可接受)。returns: 周期收益序列(list/np)。n_trials: 多重试验次数。"""
+    """DSR 概率。returns: 周期收益序列；n_trials: 多重试验次数。"""
     r = np.asarray(returns, dtype=float) if np is not None else None
     if r is None or len(r) < 3:
         return None

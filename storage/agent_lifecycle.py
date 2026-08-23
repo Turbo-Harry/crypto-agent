@@ -6,6 +6,7 @@ import json
 import time
 from typing import Any, Mapping
 
+import config
 from storage import db
 
 
@@ -21,24 +22,34 @@ TRANSITIONS = {
 
 
 def register(version: str, *, role: str = "challenger", parent_version: str | None = None,
+             strategy_id: str | None = None,
              db_path: str | None = None) -> dict[str, Any]:
     if not version or role not in {"champion", "challenger"}:
         raise ValueError("invalid agent version")
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
     db.init_db(db_path)
-    db.x("INSERT OR IGNORE INTO agent_versions (version,role,status,parent_version,created_ts) "
-         "VALUES (?,?,?,?,?)", [version, role, "candidate", parent_version, time.time()], db_path=db_path)
-    return get(version, db_path=db_path) or {}
+    db.x("INSERT OR IGNORE INTO agent_versions "
+         "(version,strategy_id,role,status,parent_version,created_ts) "
+         "VALUES (?,?,?,?,?,?)",
+         [version, strategy_id, role, "candidate", parent_version, time.time()],
+         db_path=db_path)
+    return get(version, strategy_id=strategy_id, db_path=db_path) or {}
 
 
-def get(version: str, *, db_path: str | None = None) -> dict[str, Any] | None:
+def get(version: str, *, strategy_id: str | None = None,
+        db_path: str | None = None) -> dict[str, Any] | None:
     db.init_db(db_path)
-    return db.q1("SELECT * FROM agent_versions WHERE version=?", [version], db_path=db_path)
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    return db.q1("SELECT * FROM agent_versions WHERE version=? AND strategy_id=?",
+                 [version, strategy_id], db_path=db_path)
 
 
 def transition(version: str, target: str, *, reason: str = "",
                metrics: Mapping[str, Any] | None = None,
+               strategy_id: str | None = None,
                db_path: str | None = None) -> dict[str, Any]:
-    row = get(version, db_path=db_path)
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    row = get(version, strategy_id=strategy_id, db_path=db_path)
     if not row:
         raise ValueError("unknown agent version")
     if target not in TRANSITIONS.get(row["status"], set()):
@@ -46,14 +57,20 @@ def transition(version: str, target: str, *, reason: str = "",
     now = time.time()
     activated = now if target in {"active-veto", "observing", "kept"} else row.get("activated_ts")
     rolled = now if target == "rolled-back" else row.get("rollback_ts")
+    # 激活/观察等纯状态迁移没有新指标时必须保留验证证据；清空 metrics_json
+    # 会让后续审计无法证明这个版本为何获准进入 active-veto。
+    metrics_json = (row.get("metrics_json") if metrics is None else
+                    json.dumps(dict(metrics), sort_keys=True))
     db.x("UPDATE agent_versions SET status=?, activated_ts=?, rollback_ts=?, metrics_json=?, reason=? "
-         "WHERE version=?", [target, activated, rolled,
-                               json.dumps(dict(metrics or {}), sort_keys=True), reason, version], db_path=db_path)
-    return get(version, db_path=db_path) or {}
+         "WHERE version=? AND strategy_id=?",
+         [target, activated, rolled, metrics_json, reason, version, strategy_id],
+         db_path=db_path)
+    return get(version, strategy_id=strategy_id, db_path=db_path) or {}
 
 
 def promotion_ready(metrics: Mapping[str, Any]) -> tuple[bool, str]:
-    required = (("n", 100), ("reject_n", 30))
+    required = (("n", config.AGENT_EVAL_MIN_VALID),
+                ("reject_n", config.AGENT_EVAL_MIN_REJECT))
     for key, minimum in required:
         if int(metrics.get(key, 0)) < minimum:
             return False, f"{key}<{minimum}"
@@ -72,4 +89,3 @@ def rollback_needed(metrics: Mapping[str, Any]) -> tuple[bool, str]:
     if float(metrics.get("max_segment_share", 0)) > 0.8:
         return True, "segment_concentration"
     return False, "within_guardrails"
-

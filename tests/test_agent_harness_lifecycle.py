@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 
+import config
 from decision import agent_lifecycle
 from storage import db
 
@@ -25,7 +26,9 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
                    "max_segment_share": .5}
         agent_lifecycle.validate("h2", metrics, db_path=self.path)
         agent_lifecycle.activate("h2", db_path=self.path)
-        self.assertEqual(agent_lifecycle.get("h2", db_path=self.path)["status"], "active-veto")
+        active = agent_lifecycle.get("h2", db_path=self.path)
+        self.assertEqual(active["status"], "active-veto")
+        self.assertEqual(__import__("json").loads(active["metrics_json"]), metrics)
         agent_lifecycle.observe("h2", {"incremental_ev": -1}, db_path=self.path)
         self.assertEqual(agent_lifecycle.get("h2", db_path=self.path)["status"], "rolled-back")
 
@@ -37,6 +40,17 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         agent_lifecycle.register("h3", db_path=self.path)
         with self.assertRaises(ValueError):
             agent_lifecycle.activate("h3", db_path=self.path)
+
+    def test_versions_are_strategy_scoped(self):
+        agent_lifecycle.register(
+            "b-harness", strategy_id=config.BREAKOUT_SIGNAL_STRATEGY_ID,
+            db_path=self.path)
+        self.assertIsNone(agent_lifecycle.get("b-harness", db_path=self.path))
+        breakout = agent_lifecycle.get(
+            "b-harness", strategy_id=config.BREAKOUT_SIGNAL_STRATEGY_ID,
+            db_path=self.path)
+        self.assertEqual(breakout["strategy_id"],
+                         config.BREAKOUT_SIGNAL_STRATEGY_ID)
 
 
 if __name__ == "__main__":

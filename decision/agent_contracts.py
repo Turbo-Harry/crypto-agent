@@ -200,6 +200,8 @@ class HarnessRun:
     input_tokens: int | None = None
     output_tokens: int | None = None
     estimated_cost: float | None = None
+    risk_probability: float | None = None
+    reason_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.runtime_status is RuntimeStatus.COMPLETED and self.model_verdict is None:

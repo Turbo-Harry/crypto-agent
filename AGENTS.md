@@ -40,6 +40,7 @@ engines/           交易引擎层（2026-08-20 按功能拆分,方法逐行搬�
   ├─ directional_trader.py  方向性引擎核心壳（入口/__init__ 组装/启动对账/
   │                         行情辅助/tick/run 主循环,Mixin 组装宿主）
   ├─ signal_scan.py         SignalScanMixin   信号扫描/候选池/额度/冷却
+  ├─ signal_sampling.py     15m 候选冻结/同 K 幂等/决策轨迹（不下单）
   ├─ position_mgmt.py       PositionMixin     开仓全链路/条件单/失败落库
   ├─ risk_monitor.py        RiskMonitorMixin  止损监控/熔断强平/51169 判定
   ├─ review_pipeline.py     ReviewMixin       平仓复盘链/阈值进化门接线
@@ -51,7 +52,12 @@ decision/          决策与进化层
   ├─ threshold_learning.py    阈值自适应
   ├─ review_engine.py         复盘引擎
   ├─ evolution_gate.py        进化验证门
-  └─ scan_evolve.py           扫描尺子进化（影线比：影子→验证门→人工批准）
+  ├─ scan_evolve.py           扫描尺子进化（影线比：影子→验证门→人工批准）
+  ├─ signal_outcomes.py       4h/1m 首触、MFE/MAE 与极值路径标签
+  ├─ entry_probability.py     开仓概率/EV 消费端（模型故障 fail-safe）
+  ├─ extrema_forecast.py      最高/最低条件分位与 conformal 区间
+  ├─ model_lifecycle.py       模型影子/晋升/观察/回滚
+  └─ agent_*.py               Agent Harness 上下文/策略核/记忆/Trace/Eval
 
 execution/         执行与台账层
   ├─ quantity.py              名义→数量换算（lotSz 对齐）
@@ -59,7 +65,9 @@ execution/         执行与台账层
   └─ position_ownership.py    持仓所有权账本（总敞口≤600）
 
 storage/           数据持久化层（SQLite，全仓数据唯一落点）
-  └─ db.py         表结构/迁移/事务原语；WAL + busy_timeout，短连接线程安全
+  ├─ db.py         表结构/迁移/事务原语；WAL + busy_timeout，短连接线程安全
+  ├─ agent_harness.py  Agent runs/steps/evaluations
+  └─ agent_memory.py   证据范围记忆与衰减
 
 exchange/          交易所访问四层（见 docs/architecture/exchange_layers.md）
   transport.py     OKX 原生 REST：HMAC 签名/限速/错误归一
@@ -69,7 +77,7 @@ exchange/          交易所访问四层（见 docs/architecture/exchange_layers
   models.py        领域模型（含 TickerInfo）+ floor_to_lot
   fake_adapter.py  内存假交易所（单测注入）
 
-factors/           因子挖掘研究层（factor_discovery/evolution/mining）
+factors/           因子研究层（注册表→日内挖掘→purged WF 门→概率/极值模型训练）
 tools/             工具脚本（scan.py / paper_trade.py / okx_pg_ingest.py / watchdog.py / code_graph.py）
 data/              数据源（fetch_okx / fetch_* / realtime_okx / economic_calendar）
 strategy/  risk/  backtest/   指标 / 风控 / 回测
@@ -94,7 +102,7 @@ CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 ```
 
 一个进程承载全部功能：
-- 方向性引擎：1s 止损监控 + `config.SCAN_INTERVAL_MINUTES` 信号扫描（当前 5min）
+- 方向性引擎：1s 风控监控 + 5min 轮询已收线 15m 主信号 + 1H/4H 环境 + 新交易最长 4h
 - 实时行情后端由 `config.REALTIME_BACKEND` 选择；心跳/PID/数据库按实例隔离
 
 HTTP 接口（127.0.0.1，Swagger 文档在 `GET /docs`）：
@@ -112,6 +120,12 @@ HTTP 接口（127.0.0.1，Swagger 文档在 `GET /docs`）：
 | GET | /scan/evolve | 扫描尺子进化状态（影线比影子/是否待批准） |
 | POST | /scan/evolve/approve | 批准已通过验证门的扫描尺子（不改 config） |
 | POST | /scan/evolve/rollback | 回滚活体影线比到 config 基线 |
+| GET | /models/entry | 入场模型版本、样本、校准、状态机与变更历史 |
+| POST | /models/entry/rollback | 仅回滚入场模型到父版本（不触发下单） |
+| GET | /forecast/calibration | 首次触及概率与极值分位预测校准指标 |
+| GET | /factors/trials | 因子样本外试验、验证门结果与拒绝原因 |
+| GET | /research/readiness | 15m 开仓准确率计划的自然平仓、因子、模型、Agent 与预算锁统计门 |
+| GET | /agent/evaluation | Agent 相对量化基线的增量 EV、拦损与机会成本 |
 | GET | /error | 引擎最近异常堆栈 |
 
 独立调试模式仍可用（不改交易逻辑）：`python3 engines/directional_trader.py --once`。
@@ -124,8 +138,13 @@ PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测�
 python3 tests/test_ai_repo_check.py                    # AI 入口/链接/索引守卫
 python3 tools/ai_repo_check.py                         # 同一守卫的命令行入口
 python3 tools/code_graph.py --check                    # 分层/循环依赖/共享状态检查
+python3 tools/params_lint.py                           # 策略参数集中化
+python3 tools/test_isolation_lint.py                   # DB/事件/运行目录隔离
+python3 tools/fix_guard.py                             # 已修问题回归护栏
 python3 -m py_compile <改动的文件>                      # 改动后必跑
 ```
+CI 自动发现全部 `tests/test_*.py`（当前 45 个），逐脚本使用独立 DB、事件文件与运行目录；
+不得维护会漏新测试的固定白名单。完整命令以 `.github/workflows/ci.yml` 为准。
 改交易逻辑后：先单测，再沙盘实测一条下单链路（开仓→挂止损→pending→撤单→平仓），最后才重启活体进程。
 
 ## 5. 关键安全不变量（不可破坏）

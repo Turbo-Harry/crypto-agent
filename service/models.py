@@ -2,8 +2,8 @@
 HTTP 响应模型 — Pydantic 类型化 schema，自动生成 OpenAPI 文档（/docs）。
 AI 读代码时先看这里：每个接口的输入/输出结构一目了然。
 """
-from typing import List, Optional
-from pydantic import BaseModel
+from typing import Dict, List, Optional
+from pydantic import BaseModel, Field
 
 
 class HealthOut(BaseModel):
@@ -81,6 +81,7 @@ class SignalOut(BaseModel):
 class TradeItem(BaseModel):
     id: str
     symbol: str
+    strategy_id: str = "A_pullback"
     direction: str
     entry_price: Optional[float]
     exit_price: Optional[float]
@@ -91,6 +92,8 @@ class TradeItem(BaseModel):
     exit_time: Optional[float]
     venue: str
     notional_usdt: Optional[float]    # 投注额（名义 USDT）
+    strategy_timeframe: Optional[str] = None
+    max_hold_hours: Optional[float] = None
     review: Optional[dict] = None     # 复盘报告（deep_review 输出，平仓后落盘）
 
 
@@ -117,6 +120,11 @@ class RealtimeOut(BaseModel):
     funding: Optional[float]
     vol_15m: Optional[float]
     fresh: bool                 # 数据是否新鲜（<60s）
+    orderflow_status: str       # missing/insufficient/stale/ready
+    ofi_event_multilevel: Optional[float]
+    ofi_event_cancel_imbalance: Optional[float]
+    ofi_event_count: int
+    ofi_event_age_ms: Optional[float]
 
 
 class ScanOut(BaseModel):
@@ -186,3 +194,83 @@ class AgentEvaluationOut(BaseModel):
     incremental_ev: float
     mature_samples: int
     pending_samples: int
+    status: str = "insufficient_data"
+    valid_n: int = 0
+    reject_n: int = 0
+    blocked_loss_precision: Optional[float] = None
+    opportunity_cost_r: Optional[float] = None
+    avoided_loss_r: Optional[float] = None
+    incremental_ev_r: Optional[float] = None
+    baseline_ev_r: Optional[float] = None
+    agent_policy_ev_r: Optional[float] = None
+    call_status_counts: Dict = Field(default_factory=dict)
+    stability: Dict = Field(default_factory=dict)
+    harness: Dict = Field(default_factory=dict)
+
+
+class ModelItemOut(BaseModel):
+    model_id: str
+    model_type: str
+    strategy_id: str = "A_pullback"
+    direction: Optional[str] = None
+    version: str
+    state: str
+    created_at: float
+    training_cutoff: Optional[float] = None
+    data_hash: Optional[str] = None
+    feature_names: List[str] = Field(default_factory=list)
+    metrics: Dict = Field(default_factory=dict)
+    parent_id: Optional[str] = None
+    activated_at: Optional[float] = None
+    history: List[Dict] = Field(default_factory=list)
+
+
+class EntryModelsOut(BaseModel):
+    models: List[ModelItemOut]
+    budget_expansion_allowed: bool
+
+
+class ForecastCalibrationOut(BaseModel):
+    n: int
+    status: str
+    brier_tp: Optional[float] = None
+    brier_sl: Optional[float] = None
+    brier_multiclass: Optional[float] = None
+    buckets: Dict = Field(default_factory=dict)
+    extrema: Dict = Field(default_factory=dict)  # 分位 pinball/coverage/状态
+
+
+class FactorTrialOut(BaseModel):
+    id: int
+    ts: float
+    name: str
+    strategy_id: str = "A_pullback"
+    status: str
+    n_samples: Optional[int] = None
+    n_folds: Optional[int] = None
+    ic_tstat: Optional[float] = None
+    net_spread: Optional[float] = None
+    dsr: Optional[float] = None
+    pbo: Optional[float] = None
+    missing_rate: Optional[float] = None
+    fold_consistency: Optional[int] = None
+    redundant_with: Optional[str] = None
+
+
+class EntryAccuracyAuditOut(BaseModel):
+    """15m 开仓准确率计划的统计完成度；只读且历史研究不冒充 paper。"""
+    generated_ts: float
+    db_path: str
+    scope: Dict
+    counts: Dict
+    model_states: Dict
+    agent_version: Optional[Dict] = None
+    budget: Dict
+    gates: Dict
+    blockers: List[str]
+    statistically_complete: bool
+    research_only_samples_do_not_count_as_paper: bool
+
+
+class FactorTrialsOut(BaseModel):
+    trials: List[FactorTrialOut]

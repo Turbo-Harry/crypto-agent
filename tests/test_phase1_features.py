@@ -78,6 +78,45 @@ def test_scan_shadow_fields(tmp):
               reg is not None and reg.get("tag") in
               ("low_vol", "mid_vol", "high_vol"),
               f"实际 {reg}")
+        market_state = sig.get("market_regime") or {}
+        route = sig.get("strategy_route") or {}
+        check("行情状态权重进入候选且明确未校准",
+              market_state.get("ready") is True and
+              market_state.get("calibrated") is False and
+              abs(sum((market_state.get("weights") or {}).values()) - 1) < 1e-5,
+              f"实际 {market_state}")
+        check("策略路由仅 shadow 且无执行权限",
+              route.get("mode") == "shadow" and
+              route.get("has_execution_authority") is False,
+              f"实际 {route}")
+
+
+def test_scan_cross_sectional_fields(tmp):
+    print("== 同一已收线时点的跨币市场状态 ==")
+    tmp = os.path.join(tmp, "cross_section")
+    os.makedirs(tmp, exist_ok=True)
+    dt, fake = _make_trader(tmp)
+    bases = ["BTC", "ETH", "SOL", "XRP", "DOGE"]
+    from exchange.models import Instrument
+    for idx, base in enumerate(bases):
+        inst_id = f"{base}-USDT-SWAP"
+        if inst_id not in fake._instruments:
+            fake._instruments[inst_id] = Instrument(
+                inst_id, base, "swap", ct_val=1, lot_sz=1, min_sz=1)
+        candles = _make_candles(base=100.0 * (idx + 1), drift=.1 * (idx + 1))
+        fake.candles[inst_id] = candles
+        fake.last_prices[inst_id] = candles[-1].close
+    dt.watchlist = bases
+    sig = dt.scan_signal("BTC")
+    factors = (sig or {}).get("factor_features") or {}
+    check("前置: 跨币数据仍形成 BTC 回踩候选", sig is not None)
+    check("市场宽度与相关集中度不再固定缺失",
+          factors.get("market_breadth") is not None and
+          factors.get("correlation_concentration") is not None, str(factors))
+    check("截面排名、BTC beta 与残差动量进入冻结快照",
+          factors.get("cross_sectional_rank") is not None and
+          factors.get("btc_beta") is not None and
+          factors.get("btc_residual_momentum") is not None, str(factors))
 
 
 def test_entry_features_row(tmp):
@@ -171,6 +210,7 @@ def test_close_features_updated(tmp):
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_p1_feat_")
     test_scan_shadow_fields(tmp)
+    test_scan_cross_sectional_fields(tmp)
     test_entry_features_row(tmp)
     test_close_features_updated(tmp)
     print(f"\n结果: {passed} 通过, {failed} 失败")

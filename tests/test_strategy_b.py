@@ -7,6 +7,7 @@
 运行: PYTHONPATH=lib python3 tests/test_strategy_b.py
 """
 import os
+import json
 import sqlite3
 import sys
 import tempfile
@@ -154,8 +155,25 @@ def test_engine_shadow_no_orders(tmp):
         dt.scan_signals()
         conn = sqlite3.connect(os.path.join(tmp, "scan.db"))
         n = conn.execute("SELECT COUNT(*) FROM shadow_signals").fetchone()[0]
+        candidate = conn.execute(
+            "SELECT strategy_id,timeframe,final_decision,reject_reason,features "
+            "FROM signal_samples WHERE strategy_id=?",
+            ("B_breakout",)).fetchone()
         conn.close()
         check("影子信号落库(隔离)", n >= 1, f"实际 {n}")
+        check("B 进入共同 15m/4h 候选结算链",
+              candidate is not None and candidate[1] == "15m" and
+              candidate[2] == "rejected" and
+              candidate[3] == "strategy_shadow:B_breakout",
+              f"实际 {candidate}")
+        frozen = json.loads(candidate[4]) if candidate else {}
+        factors = frozen.get("factor_features") or {}
+        check("B 冻结行情/资金费/时段特征且仍无执行权",
+              frozen.get("market_regime") is not None and
+              frozen.get("strategy_route", {}).get(
+                  "has_execution_authority") is False and
+              "funding_rate" in factors and "hour_sin" in factors,
+              str(frozen))
         check("零真实下单(fake.orders==0)", len(fake.orders) == 0,
               f"实际 {len(fake.orders)}")
         check("journal 零新增交易", len(dt.journal.trades) == 0,
@@ -272,4 +290,3 @@ if __name__ == "__main__":
     test_attribution_feedback()
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
-

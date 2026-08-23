@@ -20,6 +20,9 @@ from collections import deque
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import websocket
 
+import config
+from data.orderflow import OrderFlowAccumulator
+
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 MAX_STALE_SECONDS = 120   # 数据僵死阈值：超过则判定死链，强制重连
 CANDLE_KEEP = 15          # REST 预热 K线根数（仅冷启动用）
@@ -46,6 +49,9 @@ class OKXRealtime:
         self._restart_lock = threading.Lock()
         self.last_msg_ts = time.time()
         self._err_count = 0  # 解析错误计数（防静默吞异常）
+        self._orderflow = OrderFlowAccumulator(
+            config.ORDERFLOW_BOOK_DEPTH, config.ORDERFLOW_WINDOW_SECONDS,
+            config.ORDERFLOW_MIN_EVENTS, config.ORDERFLOW_MAX_AGE_SECONDS)
 
     def _on_message(self, ws, message):
         try:
@@ -115,6 +121,9 @@ class OKXRealtime:
                 buys = sum(1 for t in d["data"] if t.get("side") == "buy")
                 total = len(d["data"])
                 self.latest.setdefault(base, {})["taker_buy"] = buys / total if total else 0.5
+            elif channel == "books5":
+                base = inst.split("-")[0]
+                self._orderflow.update(base, d["data"][0], ts=now)
         except Exception as e:
             self._err_count += 1
             if self._err_count % 50 == 1:   # 每 50 次错误打一条日志，不刷屏
@@ -138,6 +147,7 @@ class OKXRealtime:
                 {"channel": "tickers", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "funding-rate", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "trades", "instId": f"{base}-USDT"},
+                {"channel": "books5", "instId": f"{base}-USDT-SWAP"},
             ]
             sub = {"op": "subscribe", "args": args}
             ws.send(json.dumps(sub))
@@ -159,6 +169,7 @@ class OKXRealtime:
                 {"channel": "tickers", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "funding-rate", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "trades", "instId": f"{base}-USDT"},
+                {"channel": "books5", "instId": f"{base}-USDT-SWAP"},
             ]
             with self._restart_lock:
                 ws.send(json.dumps({"op": "subscribe", "args": args}))
@@ -283,6 +294,10 @@ class OKXRealtime:
     def snapshot(self):
         """获取所有标的的实时快照。"""
         return {b: self.latest.get(b, {}) for b in self.symbols}
+
+    def get_orderflow(self, base):
+        """Return freshness-gated multilevel event OFI shadow features."""
+        return self._orderflow.snapshot(base)
 
 
 if __name__ == "__main__":

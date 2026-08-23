@@ -128,6 +128,37 @@ class CCXTAdapter(ExchangeAdapter):
                 continue   # 2026-08-20 防御解析: 坏行跳过(float('') 事故)
         return out
 
+    def fetch_candles_range(self, inst_id: str, bar: str, since_ms: int,
+                            until_ms: int, max_bars: int = 1800) -> List[Candle]:
+        """按 since 分页读取闭区间 OHLCV，重复页/空页均安全终止。"""
+        self._load()
+        symbol = self._to_ccxt_symbol(inst_id)
+        cursor = int(since_ms)
+        collected = {}
+        while cursor <= until_ms and len(collected) < max_bars:
+            try:
+                rows = self._ccxt.fetch_ohlcv(symbol, bar.lower(), since=cursor,
+                                              limit=min(300, max_bars - len(collected)))
+            except Exception as e:
+                raise ExchangeError(f"历史K线失败: {e}")
+            if not rows:
+                break
+            newest = cursor
+            for r in rows:
+                try:
+                    candle = Candle(ts=int(r[0]), open=float(r[1]), high=float(r[2]),
+                                    low=float(r[3]), close=float(r[4]),
+                                    volume=float(r[5] or 0))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                newest = max(newest, candle.ts)
+                if since_ms <= candle.ts <= until_ms:
+                    collected[candle.ts] = candle
+            if newest < cursor or newest >= until_ms:
+                break
+            cursor = newest + 1
+        return [collected[key] for key in sorted(collected)][:max_bars]
+
     def fetch_ticker_last(self, inst_id: str) -> float:
         self._load()
         try:
@@ -141,6 +172,25 @@ class CCXTAdapter(ExchangeAdapter):
             return float(last)
         except (TypeError, ValueError):
             raise ExchangeError(f"ticker last 非法: {inst_id}")
+
+    def fetch_open_interest(self, inst_id: str) -> Optional[float]:
+        self._load()
+        try:
+            row = self._ccxt.fetch_open_interest(self._to_ccxt_symbol(inst_id))
+            value = row.get("openInterestAmount") or row.get("openInterestValue")
+            return float(value) if value is not None else None
+        except Exception:
+            return None
+
+    def fetch_basis(self, inst_id: str) -> Optional[float]:
+        if not inst_id.endswith("-USDT-SWAP"):
+            return None
+        try:
+            swap = self.fetch_ticker_last(inst_id)
+            spot = self.fetch_ticker_last(inst_id[:-len("-SWAP")])
+            return swap / spot - 1 if spot else None
+        except Exception:
+            return None
 
     def fetch_funding_rate(self, inst_id: str) -> float:
         self._load()
@@ -163,8 +213,12 @@ class CCXTAdapter(ExchangeAdapter):
 
     def fetch_tickers(self, venue: str = "swap") -> List[TickerInfo]:
         self._load()
+        inst_type = "SWAP" if venue == "swap" else "SPOT"
         try:
-            raw = self._ccxt.fetch_tickers()
+            # OKX/CCXT 的无参数 fetch_tickers 默认只取 SPOT。daily_scan 随后
+            # 按 ``:USDT`` 过滤会得到 0 个永续，再悄悄退化成固定主流池。
+            # 显式传 instType 才是在扫描目标场所的完整 ticker 截面。
+            raw = self._ccxt.fetch_tickers(params={"instType": inst_type})
         except Exception as e:
             raise ExchangeError(f"tickers 失败: {e}")
         out = []
@@ -183,7 +237,14 @@ class CCXTAdapter(ExchangeAdapter):
                     vol_usdt = float(t.get("info", {}).get("volCcy24h") or 0) * last
                 except (TypeError, ValueError):
                     vol_usdt = 0
-            base = t.get("base")
+            # OKX 批量 fetch_tickers 的统一 ticker 实测没有 ``base``，
+            # 但 dict key / symbol 仍是 ``BTC/USDT:USDT``。若直接读取
+            # t.base，会生成 ``None-USDT-SWAP``，后续 venue 探测再把全池刷空。
+            market = (getattr(self._ccxt, "markets", {}) or {}).get(sym) or {}
+            unified = str(t.get("symbol") or sym)
+            base = market.get("base") or t.get("base") or unified.split("/", 1)[0]
+            if not base:
+                continue
             inst = f"{base}-USDT-SWAP" if venue == "swap" else f"{base}-USDT"
             out.append(TickerInfo(inst_id=inst, base=base, last=last,
                                   vol_ccy_24h=0.0,

@@ -314,7 +314,7 @@
 
 ## 2026-08-16 晚 全部不依赖样本的工程一次性落地（用户:"所有都一次性做完,样本可以等"）
 - Phase 2 评估引擎: tools/strategy_report.py（SQN≥30 笔才报/PF/回撤/MAE-MFE 分布/缺失率,样本不足时诚实标注）+ 体检 H10。
-- Phase 3 学习闸门基建: 阈值层喂影子分(FLAG_USE_SHADOW_SCORE_GATE=False 门控默认关, A3 通过后人工开启); experiments 试验注册表 + decision/experiments.py(propose/judge, DSR≥1+PBO<0.3+样本≥30); factors/overfit_guard.py(Deflated Sharpe Acklam 逆正态 + CSCV-PBO, 8 项单测含 n_trials=1 边界)。
+- Phase 3 学习闸门基建: 阈值层喂影子分(FLAG_USE_SHADOW_SCORE_GATE=False 门控默认关, A3 通过后人工开启); experiments 试验注册表 + decision/experiments.py(propose/judge, DSR 概率≥0.95+PBO<0.3+样本≥30); factors/overfit_guard.py(Deflated Sharpe Acklam 逆正态 + CSCV-PBO, 8 项单测含 n_trials=1 边界)。
 - Phase 4: lessons 加 regime 列(SCHEMA+ALTER 迁移) + 结构化匹配; analyst 的 symbol='*' 教训进入决策; tools/replay_signals.py 决策重放集(影子,只给证伪权,结果落 data/replay.db)。
 - Phase 5: data-dashboard 新增「闭环健康」页签(/api/strategy-report + /api/closed-loop)。
 - 收尾: M6 变异注入自证(test_mutation_selfcheck.py 4 项,注入三类污染必被抓+合法行不误报); M7 完成声明=证据包(AGENTS.md §12); pid/心跳写入统一走 execution/pidfile.py(code_graph --check 从 1 处违规 → 0)。
@@ -613,7 +613,7 @@
      kind=scan_wick 提案（候选=现役×0.9，下限 0.8）。
   ② 现役没信号、候选影线比会出信号 → shadow_signals(A_wick) 只记账、不下单。
   ③ 随后 24 根 1H 按止盈/止损路径结算（同根两边都打按止损，影子不美化）。
-  ④ 满 30 笔且均盈>GATE_MIN_EDGE 且 DSR≥1 → accepted；**仍不改尺子**。
+  ④ 满 30 笔且均盈>GATE_MIN_EDGE 且 DSR 概率≥0.95 → accepted；**仍不改尺子**。
   ⑤ POST /scan/evolve/approve 才写 kv 覆盖；config 基线不变；rollback 恢复。
 - 红线: 机器不得自动放宽扫描门槛；风控 1%/150/600/交易所止损未动。
 - 测试: tests/test_scan_evolve.py；test_service_api 增 /scan/evolve 观测与
@@ -662,3 +662,170 @@
   compile、参数集中化、代码图分层、测试隔离和修复护栏。依赖补
   `ccxt>=4.5,<5`，验证项目 `lib` 中 ccxt 4.5.64 与 `ccxt.pro` 均可导入。
 - 安全边界：未改 sandbox、风险参数、下单/止损逻辑，未启动或重启活体进程。
+
+## 2026-08-23 开仓准确率计划·批次 A（候选数据可信）
+- T0：在 `config.py` 固化策略版本、特征 schema、24H/1m 标签口径和结算周期；新链路不改变 1%/150/600、交易所侧止损或 HTTP 权限。
+- T1：新增 `signal_samples` 与幂等采样器。结构信号先留样，再过额度、冷却、分数、经验、AI 和执行；同币/方向/1H K/含配置哈希版本只允许一个候选，决策轨迹保留 rule/AI/final/reason/trade_id。
+- T2：新增 `signal_outcomes`、纯函数首触结算器、worker 定时 sweep 和默认 dry-run 的回填工具。原生 OKX 与 CCXT 适配器均提供区间 K 线分页；覆盖不足保持 pending，禁止用当前价伪造。
+- 验证：新增 `test_signal_sampling.py` 9/0、`test_signal_outcomes.py` 15/0；改动文件 py_compile 通过；params_lint、code_graph、test_isolation_lint 全绿。未联网、未启动/重启实例、未写生产库。
+
+## 2026-08-23 开仓准确率计划·批次 B（预测语义可信）
+- T3：`decision.forecast` 拆为 regime moving-block 路径、完整 terminal distribution 和独立 first-passage；空单障碍改为 stop 在上/TP 在下，历史概率按样本量收缩，校准只接受 `signal_outcomes` 的真实路径标签。
+- T7：新增 `decision.extrema_forecast`，提供 U_H/D_H 的 q10/q50/q90、方向+regime 经验基线、L2 线性分位模型、pinball/coverage/adaptive conformal 工具；分位交叉 fail-closed。
+- 接线：扫描链使用方向正确的 ATR 障碍；样本达到经验基线门槛后把最高/最低概率区间附到 forecast，仍只展示、不成为开仓门。
+- 验证：`test_forecast` 12/0、`test_forecast_semantics` 11/0、`test_extrema_calibration` 8/0、`test_exchange_layers` 37/0；short 扫描 forecast 非空、terminal 不截断、三类概率归一。参数 lint 与代码图通过；未联网、未启动/重启实例。
+
+## 2026-08-23 开仓准确率计划·盘口特征可达性修复
+- 修复信号扫描中 `_microstructure_features` 被动态 OFI 函数截断的问题，恢复 spread、microprice、多档深度失衡与深度斜率的真实计算。
+- 修复原生 OKX `/market/books` 外层 `data[0]` 翻译，避免请求成功后被静默降级为无盘口。
+- 增加两层回归：领域特征公式使用非空盘口快照；原生适配器使用真实 envelope 验证 books/OI/basis 翻译。
+- 安全边界：只恢复信号时点研究特征，不改变现役规则阈值、风控、下单或 live 状态。
+
+## 2026-08-23 开仓准确率计划·15m 主周期收敛
+- 口径：用户指定日内 15m 短线。主信号由 1H 改为已收线 15m；1H/4H 只做环境；预测、反事实标签与新交易最大持有统一为 4h（16 根）。
+- 数据身份：策略版本升为 `pullback-15m-v1`；新增 `factor_trials.timeframe/horizon_hours`；因子、Brier 校准、入场/极值模型、Agent 评估和状态机都只消费当前 15m/4h 样本。旧制品 scope 不匹配时拒绝加载。
+- 执行对齐：新交易写入 `strategy_timeframe=15m/max_hold_hours=4`；超时走原有 reduce-only + 撤条件单 + 账本释放 + 复盘。旧持仓字段为 NULL，不追溯强平。
+- 验证门补齐：因子试验持久化 direction/symbol/regime/month 的 OOS 稳定性；入场模型新增同覆盖率 precision lift，并要求至少 4/5 折提升。
+- 定向证据：15m 候选/路径/预测/因子/入场/极值/模型状态/Agent/权重/决策链共 218 项通过、0 失败；全量自动发现 35 个离线测试脚本全部通过、0 个脚本失败。compileall、参数、代码图、隔离和 AI 仓库守卫全绿。
+- 数据证据：改造完成时模拟盘与 live 库的 15m/4h 候选、路径、六维平仓、有效 AI 结果、预测校准、validated 因子和 accepted 模型均为 0；只能开始积累，不能宣称准确率已提升。长期样本外 EV 未转正前不扩大预算。
+- 运行边界：未启动、未重启任何实例，未操作 live，未改 1%/150/600 和交易所侧止损。
+
+## 2026-08-23 开仓准确率计划·Agent 结果回流闭环
+- 权威结果：legacy AI 判断与新 Harness 评价统一消费 `signal_outcomes` 的 15m/4h first-passage 标签，不再各自用成交 PnL 或到期现价近似；路径落库即时回填，worker 小时 sweep 幂等兜底。
+- Harness 生命周期：pending 评价在真实路径到达后转为 mature，保留 TP/SL/timeout/ambiguous、MFE/MAE、saved loss、missed profit 与增量 EV；重复 Harness 调用和 pending 写入不能覆盖成熟事实。
+- 记忆隔离：SQLite schema 升至 v24，`agent_memories` 区分旧 `outcome_pnl` 与标准化 `outcome_r`；legacy/Harness episodic memory 均继承 signal 的 strategy_version、15m timeframe 与 regime，并经过独立年龄门才进入检索。
+- 身份修复：Harness run_id 改由 signal_id 与 prompt/model/context/schema/retrieval 版本稳定生成，入口读取候选的真实策略、周期和特征 schema；Agent 仍固定 shadow，不因本次闭环修复获得 veto 权限。
+- 定向证据：Harness/评价/记忆 20 项、路径脚本 16 项、legacy Agent 脚本 17 项全部通过，0 失败；CI 同款自动发现 45/45 个离线脚本通过，compileall、AI 仓库、代码图、参数、隔离和 21 条 fix guard 全绿。未启动或重启任何实例，未写活体库，尚无真实成熟样本，因此不能宣称 Agent 已提升开仓准确率。
+
+## 2026-08-23 开仓准确率计划·真实 SWAP 历史重放与停止裁决
+- 数据边界：新增 `tools/replay_15m_research.py`，只接受 OKX `*-USDT-SWAP`，拒绝把现货当合约代理，也拒绝写 `crypto_agent.db`/`crypto_agent_live.db`；15m 已收线 K 形成候选，随后连续 4h/1m 路径结算，缺一分钟保持 missing。
+- 下载韧性：公共历史行情按序列提交，页面有限重试、全局限速、错误聚合与重复回填幂等；10 个 USDT 永续、40 条标的×周期序列完成，收到 131,839 行，单序列覆盖 99.44%～100%。
+- 历史结果：扫描 7,085 个时点，得到 437 个候选与 414 个完整路径；TP 131、SL 246、timeout 37。按单边 taker 0.05% + 滑点 0.05% 后，全部/long/short EV 分别为 -0.7571R/-0.4599R/-1.3204R，否决扩大预算。
+- 因子与模型：41 个试验 validated=0，因子试验身份绑定数据哈希与评估版本，重复挖掘仍为 41 行；正式入场/极值训练均因无验证特征返回 `insufficient_data`，不写模型制品。
+- 防泄漏：经验概率和校准增加 as-of 截止；历史重放使用固定 seed、禁用跨样本经验混合。414 条概率校准的多分类 Brier skill=-2.90%，探索极值 pinball 改善 long=-99.47%、short=-344.14%，继续 shadow/拒绝晋升。
+- 验证：新增历史重放脚本 7/7、日内因子门 16/16、forecast 13/13、forecast semantics 13/13、Harness 存储 4/4；CI 同款自动发现 46/46 个离线脚本通过。compileall、AI 文档/链接、代码图、参数、隔离和 21 条 fix guard 全绿。
+- 证据边界：历史候选不能充当模拟盘自然平仓、六维完整样本或有效 Agent 结果。运行库对应计数仍为 0；未启动/重启实例、未写活体库，后续只允许继续采集并等待跨月/跨 regime 证据。
+
+## 2026-08-23 开仓准确率计划·机器完成度审计
+- 问题：既有 `tools/readiness.py` 只回答实盘三盏灯，无法证明 T0～T10 的自然平仓、候选类别、因子、Brier、极值、Agent 和长期 EV 门；人工拼计数容易把独立历史研究误算成 paper 成绩。
+- 实现：新增纯只读 `tools/entry_accuracy_audit.py` 和 `GET /research/readiness`，SQLite 以 `mode=ro/query_only` 打开，不迁移、不写 KV；每个门同时返回 actual/required/reason/blocker，`--require-complete` 可供自动化 fail-closed。
+- 防串账：自然平仓只计当前 15m/4h `trades`，六维要求 `shadow_dims` 六项均非空；历史候选只进入候选/TP/SL/校准计数。paper、live 两库当前所有统计门仍为 0；独立研究库为候选 437、结果 414、TP 131、SL 246、校准 414，但自然平仓/六维/Agent 均为 0。
+- 生命周期修复：Agent 版本从 validated 迁移到 active-veto/observing 时不再用空字典覆盖验证指标；100/30 门改为引用 config。否则状态看似晋升，审计却无法追溯增量下界证据。
+- 验证：审计器 4/4（空库、历史不冒充 paper、全门可证明、封存 WAL 快照零写读取），`--require-complete` 未完成时退出 2 且快照哈希不变/无 WAL；Agent 生命周期 2/2，服务 API 43/43；完整 CI 同款 47/47。未启动/重启实例，未写运行库。
+
+## 2026-08-23 开仓准确率计划·Paper Harness 生产接线
+- 生产缺口：paper 的 legacy `ai_judgments` 正常增长，但 `agent_runs/evaluations` 为 0；根因是 Harness 调用点要求显式 `agent_model_call`，生产构造器从未注入。
+- 接线：仅真实 OKX paper 且 provider key 可用时注入严格 JSON 回调，版本身份和 evidence provenance 一并冻结；FakeAdapter/离线测试禁止外部 AI，live 不启用新 Harness。
+- 权限：每个通过量化基线的候选先运行 Harness shadow 留反事实 Trace，随后始终运行 legacy AI；Harness reject 不拦单，legacy reject 仍是唯一现役 AI 否决，模型异常继续回量化基线。
+- 证据：Harness 端到端 10/10（含生产构造器组装）、决策链累计 45/45、legacy AI 17/17；CI 同款 47/47 脚本、compileall、AI 仓库、代码图、参数、隔离和 21 条 fix guard 全绿。
+- 运行：用户只授权模拟盘。8091 重启后最终唯一 launchd 实例 PID 99395，日志为 `Agent Harness: paper shadow provider ready`；健康、空仓、账本/交易所对账均通过，原生模拟盘四类 pending 条件单合计 0、查询错误 0。8090 实盘 PID 89187 未停止、未重启、未改动。
+- 当前统计：paper 自然平仓 1/60、六维完整平仓 1/30、候选 8/300、路径/校准 0、成熟 Harness 结果 0/100。接线完成不等于 Agent 有增量，必须等待新自然候选运行及 4h 路径成熟。
+
+## 2026-08-23 固定 2:1 的开仓前胜率预测门
+- 用户口径：目标不是搜索止损/止盈组合，而是每笔固定止损 -1R、止盈 +2R，并提高胜率。无成本盈亏平衡胜率为 33.33%，实际必须按双边费用、滑点和 timeout 计算更高的动态门槛。
+- 历史证据：30 天真实 OKX SWAP 重放 1,690 个完整路径，TP/SL/timeout=462/1,110/118；固定 2:1 毛 EV=-0.078866R、成本后 EV=-0.969655R，多分类 Brier skill=-2.5314%，因子 validated=0。因此不能把现有 bootstrap 展示概率直接当成开仓依据。
+- 落地：新增 `preopen_2to1_decision`，审计实际 RR、active 模型状态、预测 TP/SL/timeout 与成本后 EV；真实 OKX paper 只有 RR=2 且 EV 单侧 95% 下界>0 才放行。无已验证模型失败关闭，但所有拒绝候选继续结算 4h 反事实标签。
+- 执行复核：发现 `stop_adj=0.2` 会把最终订单降成约 1.67:1；严格 paper 现已忽略该经验修正，成交价重锚后仍固定 1×ATR/2×ATR，避免预测标签与实际订单错位。
+- 生命周期：`ENTRY_MODEL_SHADOW_ONLY=False` 只表示通过 OOS 与独立 60 候选 shadow 门的 entry 模型可自动 active；extrema 与 Agent 仍保持原影子权限。FakeAdapter 与 live 隔离，本次不触碰 live。
+- 运行证据：全量自动发现 47/47 个测试脚本通过，compileall、参数、代码图、隔离、AI 链接与 21 条修复护栏全绿；最终 8091 paper PID 14247 健康、空仓、对账一致，10 个主流合约 pending 条件单合计 0。8090 live PID 89187 未变化。
+- 样本闭环：严格 2:1 门会在无 active 模型时拒绝全部候选；Harness 若仍位于门后则 100/30 评价样本永久为 0。现已把无权限 Harness 前移到去重结构候选处，量化门拒绝仍留下 Trace 并在 4h 后成熟；legacy 下单二判位置与权限不变。
+- 自动评价：schema v26 持久化 Harness `risk_probability/reason_codes`；按 model+prompt+context+schema+retrieval 组合版本自动汇总费用后增量 EV、95% 下界、Brier、拦亏 precision、原因与分段集中度。worker 成熟 sweep 同步登记版本，100 有效/30 reject 且增量下界为正后只自动到 validated；`AGENT_HARNESS_VETO_ENABLED=False` 与未调用 activate 共同保证不会自动获得交易权限。
+- 观测：`GET /agent/evaluation` 新增 `harness` 分项，旧 legacy 指标保持兼容；定向测试覆盖 120 条成熟反事实、正增量自动 validated、风险概率/reason 持久化及服务 schema。
+
+## 2026-08-23 自动因子候选闭环修复
+
+- 缺口：注册表 41 项已经超过旧上限 40，自动交互剩余名额恒为 0；旧任意交互又没有经济依据，只能进入 `hypothesis_only`，无法成为开仓模型特征。
+- 实现：取消无假设两两穷举，预注册 5 个信号时点可复算交互：趋势×成交量、拒绝影线×成交量、回踩质量×成交量、趋势×拒绝影线、1h 动量×成交量。统一变换函数供实时扫描、历史重放、研究提取和模型消费复用，候选上限改为 46 并在挖掘入口 fail-fast。
+- 真实复核：在 10 个 OKX SWAP、30 天、1,690 条连续 4h/1m 结果上重跑 46 项；23 reject、23 insufficient、validated=0。5 个新交互全部 reject，未降低 t≥3、4/5 折、DSR/PBO、成本和集中度门，也未生成或晋升模型。
+- 验证与运行：定向因子门 18/18、入场概率 18/18、重放 10/10；CI 同款完整 47/47 脚本及 compileall/AI 索引/参数/代码图/隔离/fix guard 全绿。只重启 8091 paper 到 PID 17342；健康、空仓、对账一致，交易所六类 pending 条件单 0。8090 live PID 89187 未变化。当前 paper 候选 12、路径结果 0，不能宣称胜率已提高。
+
+## 2026-08-23 连续多档事件 OFI 影子采集
+- 语义修复：旧 `ofi_dynamic` 是稀疏信号时点盘口差，保留兼容但不再标成事件流。新增 top-5 连续 L2 累加器，60 秒窗口按多档 Cont 队列事件规则计算 `sum(OFI)/sum(depth)`；同价队列消退失衡、事件数、数据年龄一起冻结到候选。
+- 可用性闸门：窗口少于 10 个事件或最后事件年龄超过 5 秒时两个事件因子均为缺失，不回退到静态盘口。`signal-features-v2` 与 config hash 共同形成新候选身份，避免同一根 K 被旧 schema 去重吞掉。
+- 因子门：注册表由 46 增至 50；因子评估升为 v2 并把候选宇宙写入 `trial_key`，避免 DSR 多重检验口径变化却复用旧证据。1,690 条历史路径因没有 L2 事件数据，4 个新增候选均 `insufficient_data(n=0)`；50 项汇总为 reject 22、reject_missing 1、insufficient 27、validated 0。
+- 实测：纯回放/缺失/stale/试验身份共 23/23；真实 OKX ccxt.pro 公共 WS 12 秒收到 19 个盘口事件，最新年龄 15.9ms，事件 OFI 与队列消退失衡均非空。该链仅影子采样，不改变 2:1 预测门、下单、止损或 Agent 权限。
+- 部署证据：只读 `/realtime/{base}` 增加 status/OFI/队列消退/事件数/年龄；最终 CI 47/47、静态护栏全绿。仅重启 8091 paper 到 PID 22631，BTC 观测实测 missing→insufficient→ready（10 事件、年龄 8.0ms）；空仓、对账一致、六类 pending 条件单 0。8090 live PID 89187 未变化。
+
+## 2026-08-23 策略改进：候选级成本门与吸收形态审计
+
+- 选择依据：30 天 1,690 条固定 2:1 路径中，全量成本后 EV=-0.9697R；预先定义的 `cost_r≤0.35` 子集 176 条改善到 -0.1116R，long 子集 147 条改善到 -0.0378R，但仍未转正。成本是当前策略的首要结构性约束，不能继续用训练平均值代表每笔交易。
+- 修复：`execution_cost_r` 按候选自身止损距离换算双边 taker+滑点；purged walk-forward 的选样策略改为与部署一致的 Beta 收缩三分类 `EV_R` 单侧 95% 下界>0，且每折费用后净 EV 必须为正。实时预测输出 `cost_r/binary_breakeven_win_rate/baseline_p_tp`。
+- 生命周期：shadow/observing 改用费用后实际 R 与训练期冻结频率基线，新增至少 30 个真实预测放行样本门；放行样本净 EV≤0 或只靠空仓提高组合 EV 时不得 accepted。
+- 候选策略：`cost_r≤0.35 + 放量拒绝影线` 在全样本只有 20 条、净 EV +0.1102R，但前四时间折 3 条且全部亏损，正收益集中在最后一折；`趋势+影线+放量` 仅 12 条且全部集中在最后一折。两者证据不独立，继续作为 `wick_volume_absorption` 等因子 shadow，禁止直接启用。
+- 运行证据：最终只重启 8091 paper 到 PID 19291，8090 live PID 89187 不变；首批 3 个到期候选由 worker 自动完成 `scanned=3/settled=3/missing=0/errors=0`，结果 TP 2/SL 1，并同步形成 3 条校准与 3 条有效 legacy Agent 反事实（reject 2）。全量 47/47 脚本、全部静态护栏再次全绿；paper 仍空仓且六类 pending 条件单为 0。
+
+## 2026-08-23 策略改进：资金费净 EV 与六维因子物化
+
+- 成本口径：统一 `entry_probability`、因子门、模型训练/生命周期、Agent 评价与研究报告，按候选止损距离扣除双边 taker、滑点和方向不利的预计资金费；资金费按 4h/8h 比例折算，潜在收入保守记 0。旧成本版本模型制品拒绝加载。
+- 历史可得性：重放器新增 OKX 已结算资金费分页、重试、幂等和 `--funding-only`；10 个 USDT SWAP 各取得 90 条，共 900 条。1,712 个候选全部用事件时点之前最近两次费率和当时横截面分位，未来费率由回归测试证明不可见。
+- 数据语义修复：六维子分此前只在 `shadow_dims`，注册因子矩阵仍是空值；统一物化函数现把 wick/depth/trend/volume/funding/book 本身和五个理论交互一起输出，历史/实时/训练/推理共用。
+- 真实裁决：30 天 1,690 条路径的毛 EV=-0.078866R；新净 EV=-0.977041R（long=-0.896368R、short=-1.065521R），多分类 Brier skill=-2.7536%。v3 共 50 项：27 reject、23 insufficient、validated=0；资金费相关项已有完整值但仍未过门，继续 `stop_no_promotion`，不改策略阈值、不扩大预算。
+- 验证与部署：CI 同款 47/47 脚本，compileall、AI 文档/链接、参数、代码图、隔离和 21 条 fix guard 全绿。仅重启 8091 paper 到 PID 28084；健康、空仓、账本与交易所对账一致，六类 pending 条件单 0 且查询错误 0，BTC 连续 L2 为 ready（24 事件、年龄 58.2ms）。8090 live PID 89187 未变化。只读审计为候选 19、路径/校准/有效 legacy Agent 各 5（TP 3/SL 1/timeout 1，reject 4），自然平仓仍 1/60、六维自然平仓 1/30、成熟 Harness 0。
+
+## 2026-08-23 历史 5m 波动与横截面行情因子补齐
+
+- 缺口：注册表已有 5m RV/vol-of-vol/HAR、BTC beta/残差动量、横截面排名、市场宽度和相关性集中度，但历史重放未提供这些可由现有 1m/多标的 15m 数据因果重建的字段；实时相关性集中度还被固定为缺失，5m RV 公式也误用了整段 24h 窗口。
+- 修复：新增历史/实时共用纯变换；1m 只聚合事件时点前已完成且连续的 5m 桶，横截面只取所有标的同一根已收线 15m；1h RV、vol-of-vol、HAR-RV、EMA20 宽度、相关矩阵首特征值占比、动量排名、BTC beta/残差统一计算。特征 schema 升为 v3，因子评价升为 v4。
+- 防复现：重放管线版本与 bootstrap 随机种子版本解耦；特征管线升级不能仅因 seed 改变就让 Brier 指标漂移。回归覆盖未来 1m 排除、同收线横截面、少于 5 标的缺失、实时接线和 seed 稳定性。
+- 真实裁决：1,712/1,712 个候选取得横截面，1,703/1,712 取得 5m RV；50 项变为 reject=34、reject_missing=1、insufficient=15、validated=0。新解锁 7 项均 reject，HAR-RV 以 10.24% 缺失触发 reject_missing；固定 seed 的多分类 Brier skill=-2.6286%，净 EV 仍为 -0.977041R。因此只增加可证伪范围，不晋升因子、不训练模型、不扩大预算。
+- 架构修订：先接入“行情权重 → 策略候选 → 固定 2:1 概率/成本门”的 shadow 元策略。首版只用等权理论轴与 softmax 归一，明确未校准；低置信度、低间隔、disorder 或未实现策略默认 abstain，输出始终 `has_execution_authority=false`。该批次先让 A_pullback 冻结路由证据；随后同日批次已用 schema v27 把 B_breakout 接入共同 15m/4h 标签链，见下一节。
+
+## 2026-08-23 行情优先路由、策略隔离与技术状态因子
+
+- 策略身份：schema v27 为 `signal_samples` 增加 `strategy_id`，配置哈希/候选版本同时包含策略；A/B 同币同方向同 K 可并存。因子挖掘、入场/极值模型、经验概率、校准与完成度审计默认只消费 A，B 不得污染 A 的 300 条门。
+- B 共同标签：`B_breakout` 从旧 1H 观察改为已收线 15m，且在 A 的任何额度/冷却/model/AI `continue` 前独立留样；进入同一 4h/1m 首触结果表后立刻标记 shadow rejected，仍不调用预测、Agent 或执行。旧 235 条 hypothetical 不追溯冒充新样本。
+- 行情特征：新增布林带宽分位/%B/squeeze、ADX/DMI、Kaufman 效率比、VWAP/ATR 距离/穿越率、量能 z-score，以及 RV/HAR、squeeze×volume 交互；历史/实时/B 路由复用同一纯变换。注册表 50→61，多重检验候选宇宙同步更新，不复用旧 trial 身份。
+- 真实裁决：候选/路径仍精确为 1,712/1,690，TP/SL/timeout 与净 EV 均未漂移。61 项为 reject=44、reject_missing=2、insufficient=15、validated=0；11 个新增项无一晋升。`vwap_crossing_rate` 虽 4/5 折且净 spread +0.0911R，但 t=1.4465、DSR=0、筛后 EV 仍负；继续观察。概率 Brier skill=-2.6286%，正式入场/极值模型仍不生成。
+
+## 2026-08-23 最终回归与模拟盘部署收尾
+
+- 测试夹具随模型制品新增 `strategy_id` 后同步更新；决策主循环 50/50 通过。CI 隔离命令明确使用 `PYTHONPATH=.:lib`，从头执行自动发现的 48 个 `tests/test_*.py`，最终 `FULL_SUITE_OK scripts=48`、失败 0。
+- 只重启 8091 paper：PID 28084 → 36809；8090 live 始终为 PID 89187。重启后健康、空仓、journal/交易所持仓对账一致，数据库 `PRAGMA user_version=27`，`strategy_id` 列存在。
+- 当前 A 候选 24、成熟路径 6（TP 4/SL 1/timeout 1）、校准 6、有效 legacy Agent 6（reject 4）；自然平仓 1/60、六维自然平仓 1/30、成熟 Harness 0。B 新增 1 条 `signal-features-v4` 候选、成熟路径 0，落库为 `shadow/rejected`，不污染 A readiness。
+- BTC 连续 L2 在重连后由 1 事件 `insufficient` 恢复为 34 事件 `ready`，事件年龄 179.5ms，多档 OFI 非空。部署前后模拟账户六类 pending 条件单总数均为 0、查询错误 0；预算扩大锁继续关闭。
+
+## 2026-08-23 B 突破独立历史重放与策略级证据隔离
+
+- 隔离修复：schema v28 为 `factor_trials` 增加 `strategy_id`；试验键、因子挖掘、入场/极值模型训练和制品身份全部按策略隔离。B 的突破窗口与量比只进入 B 配置身份，修改 B 不会使 A 候选身份漂移。
+- 公平重放：replay v4 在相同 30 天真实 OKX SWAP 市场库上同时生成 A/B，并为两者冻结相同 causal 行情权重/路由。A 仍为 1,712/1,690，原标签与损益零漂移；B 为 1,973/1,931。
+- 证伪结论：B 的 TP/SL/timeout=673/1,177/81，毛 EV=+0.101312R，但逐候选成本后净 EV=-0.756528R；路由命中的 334 条净 EV=-0.461477R。A/B 路由命中合并 385 条净 EV=-0.513970R。A/B 各 61 个因子 validated=0，Brier skill 分别为 -2.6286%/-4.3575%。
+- 权限边界：行情路由和 B 继续 shadow，严格 2:1 门、风险预算和现役 Agent 权限不变；历史证据不抵扣 paper 的 60/30/100 自然样本门。
+
+## 2026-08-23 每日 SWAP 候选池 CCXT 场所修复
+
+- 部署后证据暴露：每日扫描只得到人工追加的 9 个美股/公司代币，且成交额全为 0，阶段 1 全部剔除后静默回退固定五币。根因是 CCXT `fetch_tickers()` 无参数默认只取 SPOT，而适配器随后按 SWAP symbol 过滤。
+- 修复：目标场所显式传 `instType=SWAP/SPOT`；批量 ticker 缺失 `base` 时从 markets/symbol 恢复标的名；USDT 成交额归一仍封装在 exchange 层。新增离线测试同时锁定请求场所、缺 base 映射和 SWAP `volCcy24h×last`/SPOT `quoteVolume` 语义。
+- 美股边界：9 个沙盘实测永续仍由 `STOCK_SWAP_TOKENS` 强制并入观察池，但和加密币共同经过实际 venue、流动性、1H/4H 趋势及 ATR 门，不获得特殊下单权。
+- 最终证据：隔离扫描与部署后扫描都得到 64 个观察标的、60 个流动性合格、35 个 1H 趋势/ATR 合格、30 个 4H 共振，原子写入 12 个非回退候选；当天美股未进前 12。全量 48/48 和全部静态护栏复跑为绿；仅重启 8091 paper 到 PID 48502，schema v28、健康、空仓、对账、BTC L2 ready（54 事件）和六类 pending=0 均通过，8090 PID 89187 未变化。
+
+## 2026-08-23 模型制品与 readiness 策略隔离补完
+
+- 审计缺口：候选/标签/因子虽已按 A/B 隔离，但模型表、SQL 选择、生命周期父子替换、默认回滚、预算锁和 readiness 的因子/模型门仍可能跨策略串证据。
+- 修复：schema v29 将 `strategy_id` 提升为模型制品一等列；训练、入场/极值推理、在线 conformal、shadow/observing、父模型选择、默认回滚、预算判断和完成度审计统一带策略 scope。观测输出同时显示模型/因子策略。
+- 回归：B-only validated 因子、kept entry 与 accepted extrema 均不能点亮 A readiness；A/B 同方向 active 模型按候选策略各取自己的制品，不再出现“较新的 B 遮挡 A”。
+- Combo 口径：7 个有经济依据的预注册二阶/状态交互各自接受完整因子门；多个 validated 因子才会作为同一特征向量进入开仓概率与极值模型的 purged walk-forward 联合评价。禁止同数据集无假设穷举全部两两/三三组合；当前 validated=0，不生成“最佳组合”。
+- 机器证据：新增 Combo 联合特征向量回归与 A/B active 模型互不遮挡回归；全量 48/48 个独立测试脚本通过，compileall、AI 仓库、参数、代码图、测试隔离与 21 条 fix guard 全绿。
+- 运行证据：只重启 launchd 托管的 8091 paper，最终唯一 PID 57060，schema=29，健康、空仓、账本/交易所一致；BTC 连续订单流恢复 ready（90 事件）。部署前后六类 pending 条件单均为 0、查询错误 0。8090 live PID 89187 未停止或重启。
+- 当前边界：A 候选 26、路径/校准/有效 legacy Agent 结果各 8（TP 4、SL 3、timeout 1），自然平仓 1/60、六维自然平仓 1/30、Harness 成熟 0、validated 因子与模型均为 0；长期成本后 EV 未转正，预算扩大锁继续关闭。
+
+## 2026-08-23 A/B 自动研究生产调度补完
+
+- 缺口：B 已进入独立候选/标签表，但 worker 每日只调用默认 A 的因子与模型训练；同时日内研究异常被空 `except` 吞掉，且运行时间已前移，一次失败会静默停 24 小时。
+- 实现：新增分策略研究周期，A/B 各自运行 61 项因子、long/short 概率模型和 long/short 极值模型，再统一推进生命周期。失败写 `/error` 和隔离 `engine_errors`，按配置 15 分钟退避重试；trial key 与模型 ID 保证重试幂等。
+- 离线证据：服务生产组装测试新增 4 项，覆盖 A/B 调用集合、双方向概率/极值、失败可观测与 15 分钟重试；该脚本 48/48，全量仍为 48/48 个独立脚本。compileall、参数、代码图、隔离、AI 仓库和 21 条 fix guard 全绿。
+- 生产证据：只重启 8091 paper 到 PID 57060。首次日志实际返回 A/B 各 61 项，四类模型均按策略调用，lifecycle=[]、errors=[]；A 有 26 候选/8 路径，B 有 2 候选/0 路径，两边均因数据和 validated 特征不足停在 insufficient。服务健康、空仓、对账一致、六类 pending=0；8090 PID 89187 未变化。
+
+## 2026-08-23 自然平仓与 Agent 版本策略隔离补完
+
+- 审计缺口：A/B 候选、因子和模型已隔离，但 `trades` 无 `strategy_id`，自然平仓只按 15m/4h 汇总；`agent_versions` 又取全局最新，B 的证据未来可能误点亮 A 的 60/30 或 Agent 增量门。
+- 实现：schema v30 为交易与 Agent 版本增加策略归属和复合索引，旧数据安全默认 A；开仓台账与 `/journal` 显式输出策略。`audit_status(..., strategy_id=...)`、CLI、`GET /research/readiness`、因子列表、模型快照与 Agent 生命周期按策略过滤，未知策略 fail-closed；展示版本复用候选采样器的配置身份哈希。
+- 回归：新增 A 59 笔+B 1 笔不能凑成 A 60 笔、B Agent 版本不能点亮 A、未知策略返回 422、journal 写入策略身份等证据。最终全量自动发现 48/48 个脚本通过；compileall、AI 文档/链接、参数、代码图、测试隔离、21 条 fix guard 与 diff 检查全绿。
+- 运行证据：只重启 launchd 的 8091 paper 到最终 PID 61829，schema=30，健康、空仓、对账一致、`/error` 为空，BTC L2 ready（37 事件）；部署前后六类 pending 条件单均为 0、查询错误 0。8090 live PID 始终为 89187。A 当前仍为自然平仓 1/60、六维 1/30、候选 26/300、路径/校准/有效 legacy Agent 各 8、validated 因子和模型 0；B 为候选 2、路径/自然平仓 0，预算扩大锁保持关闭。
+
+## 2026-08-23 跨配置候选伪重复修复
+
+- 缺口：`strategy_version` 变化会正确保留新审计快照，但同币、同方向、同 15m K 的不同配置行仍被因子、模型和 readiness 当成独立观察。生产 A 的 26 个 signal_id 中实际只有 23 个自然市场机会，直接计数会构成伪重复并夸大显著性。
+- 实现：schema v31 新增动态只读 `signal_samples_canonical` 视图，以 `strategy_id+symbol+direction+timeframe+kline_ts` 为自然实验单位选择最新快照。原始表和每版本结果不删除；因子挖掘、概率/极值训练、shadow 生命周期、经验预测、校准、Agent 评价、研究报告与完成度统一消费 canonical 视图。
+- 回归证据：新增“同 K 多配置原始保留 2 条、canonical 只计 1 条”和“原始 300 行含 1 条版本重复，训练门仍为 299”断言；相关定向 124 项、全量 48/48 个独立脚本以及所有静态门通过。
+- 运行证据：仅重启 8091 paper 到最终 PID 63433，数据库 schema=31；原始 A/B=26/3、独立 A/B=23/3，readiness 显式返回 `raw_candidate_snapshots=26`、`duplicate_version_snapshots=3`、A 独立候选 23/300。服务健康、空仓、对账一致、BTC L2 ready（31 事件）、`/error` 为空，部署前后六类 pending=0；8090 PID 89187 未变化。
+- 持续闭环证据：18:31 新增 1 个真实 A 路径，结算器返回 `scanned=1/settled=1/missing=0/errors=0`；校准同步到 9/30，Harness 首条自然结果进入 mature，A 因标签身份变化自动产生新一轮 61 项 canonical 因子试验。A 当前 TP/SL/timeout=4/4/1、有效判断 9/100；B 独立候选自然增长到 6、尚无到期路径。无到期未结算候选、无研究或引擎错误。

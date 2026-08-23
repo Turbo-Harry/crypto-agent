@@ -132,6 +132,40 @@ class OKXAdapter(ExchangeAdapter):
                 continue
         return out
 
+    def fetch_candles_range(self, inst_id: str, bar: str, since_ms: int,
+                            until_ms: int, max_bars: int = 1800) -> List[Candle]:
+        """用 OKX 历史 K 线分页取精确窗口；仍封装在 exchange 层。
+
+        after 以窗口终点起步并逐页向旧数据移动，避免每次从“现在”回溯。
+        返回不足时不补点，由上层保持 pending/missing。
+        """
+        collected = {}
+        after = int(until_ms) + 1
+        page_size = min(300, max(1, int(max_bars)))
+        while len(collected) < max_bars:
+            resp = self.t.public("/api/v5/market/history-candles", {
+                "instId": inst_id, "bar": str(bar), "limit": page_size,
+                "after": after,
+            })
+            rows = resp.get("data", [])
+            if not rows:
+                break
+            oldest = after
+            for r in rows:
+                try:
+                    candle = Candle(ts=int(r[0]), open=float(r[1]), high=float(r[2]),
+                                    low=float(r[3]), close=float(r[4]),
+                                    volume=float(r[5] or 0))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                oldest = min(oldest, candle.ts)
+                if since_ms <= candle.ts <= until_ms:
+                    collected[candle.ts] = candle
+            if oldest <= since_ms or len(rows) < page_size or oldest >= after:
+                break
+            after = oldest
+        return [collected[key] for key in sorted(collected)][:max_bars]
+
     def fetch_ticker_last(self, inst_id: str) -> float:
         resp = self.t.public("/api/v5/market/ticker", {"instId": inst_id})
         data = resp.get("data") or []
@@ -148,6 +182,25 @@ class OKXAdapter(ExchangeAdapter):
         except (TypeError, ValueError):
             raise ExchangeError(f"ticker last 非法: {inst_id}")
 
+    def fetch_open_interest(self, inst_id: str) -> Optional[float]:
+        try:
+            resp = self.t.public("/api/v5/public/open-interest",
+                                 {"instType": "SWAP", "instId": inst_id})
+            rows = resp.get("data") or []
+            return float(rows[0]["oi"]) if rows and rows[0].get("oi") else None
+        except Exception:
+            return None
+
+    def fetch_basis(self, inst_id: str) -> Optional[float]:
+        if not inst_id.endswith("-USDT-SWAP"):
+            return None
+        try:
+            swap = self.fetch_ticker_last(inst_id)
+            spot = self.fetch_ticker_last(inst_id[:-len("-SWAP")])
+            return swap / spot - 1 if spot else None
+        except Exception:
+            return None
+
     def fetch_funding_rate(self, inst_id: str) -> float:
         resp = self.t.public("/api/v5/public/funding-rate", {"instId": inst_id})
         data = resp.get("data") or []
@@ -161,10 +214,13 @@ class OKXAdapter(ExchangeAdapter):
             resp = self.t.public("/api/v5/market/books",
                                  {"instId": inst_id, "sz": min(int(depth), 400)})
             rows = resp.get("data") or []
-            bids, asks = [], []
-            for r in rows:
-                px, sz = float(r[0]), float(r[1])
-                (bids if float(r[3]) > 0 else asks).append([px, sz])
+            if not rows:
+                return None
+            book = rows[0]
+            bids = [[float(r[0]), float(r[1])]
+                    for r in (book.get("bids") or [])[:depth]]
+            asks = [[float(r[0]), float(r[1])]
+                    for r in (book.get("asks") or [])[:depth]]
             return {"bids": bids, "asks": asks}
         except Exception:
             return None

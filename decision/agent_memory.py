@@ -7,7 +7,9 @@ from typing import Any, Mapping
 import config
 
 from decision.agent_contracts import AgentInput
-from storage.agent_memory import decay_memories, promote_mature_legacy_memories, retrieve
+from storage.agent_memory import (decay_memories,
+                                  promote_mature_harness_memories,
+                                  promote_mature_legacy_memories, retrieve)
 
 
 def retrieve_for_input(agent_input: AgentInput, *, limit: int = 5,
@@ -30,4 +32,8 @@ def retrieve_for_input(agent_input: AgentInput, *, limit: int = 5,
 
 
 def refresh(db_path: str | None = None, *, min_age_hours: float = 24.0) -> int:
-    return promote_mature_legacy_memories(db_path=db_path, min_age_hours=min_age_hours)
+    legacy = promote_mature_legacy_memories(
+        db_path=db_path, min_age_hours=min_age_hours)
+    harness = promote_mature_harness_memories(
+        db_path=db_path, min_age_hours=min_age_hours)
+    return legacy + harness

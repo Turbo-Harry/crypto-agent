@@ -75,6 +75,21 @@ def propose(db_path=None, force=False):
     if not getattr(config, "WEIGHT_EVOLVE_ENABLED", False):
         return "disabled", "权重进化已关闭(config.WEIGHT_EVOLVE_ENABLED=False)", {}
     sdb.init_db(db_path)
+    # T5/T9: 逐维同样本 Pearson 只能用于描述，不能再自我证明并改权重。
+    # 自动生效的必要前提是该维已由 signal_samples/outcomes 的 purged
+    # walk-forward、成本、DSR/PBO、稳定性完整验证为 validated。
+    validated_rows = sdb.q(
+        "SELECT f.name FROM factor_trials f JOIN "
+        "(SELECT name,MAX(id) id FROM factor_trials WHERE timeframe=? "
+        "AND horizon_hours=? GROUP BY name) x ON x.id=f.id "
+        "WHERE f.status='validated' AND f.name IN (?,?,?,?,?,?)",
+        [config.SIGNAL_SAMPLE_TIMEFRAME, config.SIGNAL_OUTCOME_HORIZON_HOURS,
+         *DIMS], db_path=db_path)
+    validated_dims = {row["name"] for row in validated_rows}
+    if not validated_dims:
+        return ("insufficient",
+                "尚无六维因子通过 purged walk-forward + DSR/PBO，禁止自动改权重",
+                {d: {"n": 0, "ic": None, "oos_validated": False} for d in DIMS})
     rows = sdb.q("SELECT pnl, shadow_dims FROM trades WHERE status='closed' "
                  "AND pnl IS NOT NULL AND shadow_dims IS NOT NULL "
                  "AND shadow_dims != ''", db_path=db_path)
@@ -98,13 +113,15 @@ def propose(db_path=None, force=False):
         ic = _ic(per_dim[d], pnls[:n])
         evidence[d] = {"n": n, "ic": round(ic, 4) if ic is not None else None}
     strong = [d for d in DIMS
-              if evidence[d]["ic"] is not None
+              if d in validated_dims and evidence[d]["ic"] is not None
               and evidence[d]["n"] >= config.WEIGHT_EVOLVE_MIN_SAMPLES
               and evidence[d]["ic"] >= config.WEIGHT_EVOLVE_MIN_IC]
     weak = [d for d in DIMS
-            if evidence[d]["ic"] is not None
+            if d in validated_dims and evidence[d]["ic"] is not None
             and evidence[d]["n"] >= config.WEIGHT_EVOLVE_MIN_SAMPLES
-            and evidence[d]["ic"] <= -config.WEIGHT_EVOLVE_MIN_IC]
+              and evidence[d]["ic"] <= -config.WEIGHT_EVOLVE_MIN_IC]
+    for d in DIMS:
+        evidence[d]["oos_validated"] = d in validated_dims
     if not strong and not weak:
         return ("no_edge", "无维度 |IC| 达标,权重维持基线", evidence)
     base = effective_weights(db_path)

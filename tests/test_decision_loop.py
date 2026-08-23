@@ -13,6 +13,7 @@
 运行：PYTHONPATH=lib python3 tests/test_decision_loop.py
 """
 import os
+import json
 import sys
 import tempfile
 import time
@@ -27,6 +28,7 @@ from execution.trade_journal import (
 )
 from exchange.fake_adapter import FakeAdapter
 from engines.directional_trader import DirectionalTrader, _ExpAdapter
+from engines.signal_scan import _dynamic_ofi, _microstructure_features
 
 passed = failed = 0
 
@@ -85,6 +87,51 @@ def test_realized_pnl_usdt():
     check("两笔同 +2% 合计是 4 USDT 不是 4%",
           total_realized_pnl_usdt([a, b, open_t]) == 4.0)
     check("含亏损合计 4-3=1 USDT", total_realized_pnl_usdt([a, b, loss]) == 1.0)
+
+
+def test_microstructure_snapshot():
+    """盘口派生值与动态 OFI 必须真的可达，防辅助函数插入截断函数体。"""
+    print("== 盘口特征与动态 OFI ==")
+    first = {"bids": [[99.0, 8.0], [98.0, 2.0]],
+             "asks": [[101.0, 2.0], [102.0, 1.0]]}
+    features = _microstructure_features(first, depth=2)
+    check("spread bps 从最佳档计算", features["spread_bps"] == 200.0)
+    check("买深度更厚时 microprice 偏上", features["microprice_bps"] > 0)
+    check("多档深度失衡为正", features["depth_imbalance"] > 0)
+    ofi0, state = _dynamic_ofi(first, None)
+    second = {"bids": [[99.0, 10.0]], "asks": [[101.0, 1.0]]}
+    ofi1, _ = _dynamic_ofi(second, state)
+    check("首个快照不伪造 OFI", ofi0 is None)
+    check("买量增加且卖量减少产生正 OFI", ofi1 > 0)
+
+
+def test_only_closed_kline_is_sampled(tmp):
+    """尾部未收线 15m bar 不得改变形态或候选 kline_ts。"""
+    print("== 只消费已收线 K ==")
+    work = os.path.join(tmp, "closed_kline")
+    os.makedirs(work, exist_ok=True)
+    dt, fake = _make_trader(work)
+    candles = _make_candles()
+    closed_ts = candles[-1].ts
+    from exchange.models import Candle
+    current_open = int(time.time() // 900 * 900 * 1000)
+    candles.append(Candle(ts=current_open, open=90.0, high=91.0,
+                          low=80.0, close=81.0, volume=1.0))
+    fake.candles["BTC-USDT-SWAP"] = candles
+    fake.last_prices["BTC-USDT-SWAP"] = 110.0
+    calls = []
+    original_fetch = dt._fetch_klines_any
+    def traced_fetch(base, timeframe, limit):
+        calls.append(timeframe)
+        return original_fetch(base, timeframe, limit)
+    dt._fetch_klines_any = traced_fetch
+    sig = dt.scan_signal("BTC")
+    check("15m 主周期且 1H/4H 仅作环境输入",
+          calls and calls[0] == "15m" and "1H" in calls and "4H" in calls)
+    check("未收线尾 bar 被忽略，仍识别上一根闭合信号",
+          sig is not None and sig["dir"] == "long")
+    check("候选身份使用上一根闭合 K 时间",
+          sig and sig["kline_ts"] == closed_ts)
 
 
 def test_decision_rules(tmp):
@@ -175,6 +222,59 @@ def test_stop_adj_effect(tmp):
     # size_factor=0.5：数量减半（150/110=1.36 → 0.68）
     check("size_factor=0.5 后数量减半", abs(t["size"] - 0.68) < 0.01)
 
+    strict_work = os.path.join(tmp, "strict")
+    os.makedirs(strict_work, exist_ok=True)
+    strict_dt, strict_fake = _make_trader(strict_work)
+    strict_fake.candles["BTC-USDT-SWAP"] = _make_candles()
+    strict_fake.last_prices["BTC-USDT-SWAP"] = 110.0
+    strict_fake.last_prices["BTC-USDT"] = 110.0
+    strict_sig = strict_dt.scan_signal("BTC")
+    strict_dt.require_2to1_prediction = True
+    strict_dt.open_position("BTC", strict_sig, score=80, stop_adj=0.2)
+    strict_trade = strict_dt.journal.trades[-1]
+    actual_rr = (abs(strict_trade["take_profit"] - strict_trade["entry_price"]) /
+                 abs(strict_trade["entry_price"] - strict_trade["stop_loss"]))
+    check("严格预测门忽略 stop_adj，实际订单仍为 2:1",
+          abs(actual_rr - 2.0) < 1e-9)
+
+
+def test_four_hour_time_exit(tmp):
+    """15m 策略必须在 4h timeout 经过原有安全平仓链。"""
+    print("== 15m 策略 4h 时间退出 ==")
+    import config
+    work = os.path.join(tmp, "time_exit")
+    os.makedirs(work, exist_ok=True)
+    dt, fake = _make_trader(work)
+    fake.candles["BTC-USDT-SWAP"] = _make_candles()
+    fake.last_prices["BTC-USDT-SWAP"] = 110.0
+    fake.last_prices["BTC-USDT"] = 110.0
+    sig = dt.scan_signal("BTC")
+    assert sig, "前置：应出 15m 信号"
+    dt.open_position("BTC", sig, score=80)
+    trade = dt.journal.trades[-1]
+    trade["entry_time"] = time.time() - config.MAX_HOLD_HOURS * 3600 - 1
+    dt.journal._update_trade(trade["id"], {"entry_time": trade["entry_time"]})
+    reviews = []
+    dt._post_close_review = lambda closed, original: reviews.append(closed)
+    dt._last_pos_fetch = 0
+    dt.monitor()
+    check("4h 到期即使未触 TP/SL 也平仓",
+          trade["status"] == "closed" and "4h时间退出" in
+          trade.get("exit_reason", ""))
+    check("时间退出使用 reduce-only 且交易所持仓已归零",
+          any(order.get("reduce_only") for order in fake.orders) and
+          not fake.fetch_positions())
+    check("时间退出撤条件单并进入复盘链",
+          not fake.algos and len(reviews) == 1)
+    legacy_id = dt.journal.log_entry(
+        "BTC", "legacy", "migration safety", 110.0, 108.0, 112.0, 0.1,
+        entry_time=time.time() - 24 * 3600, direction="long")
+    dt._last_pos_fetch = 0
+    dt.monitor()
+    legacy = next(row for row in dt.journal.trades if row["id"] == legacy_id)
+    check("旧持仓无 max_hold_hours 时不追溯强平",
+          legacy["status"] == "open")
+
 
 def test_threshold_gate(tmp):
     print("== 信号阈值卡（SIGNAL_SCORE vs 自适应阈值）==")
@@ -200,9 +300,53 @@ def test_threshold_gate(tmp):
     # 阈值放低到初始值(45) → 应开仓
     dt.threshold_learner.threshold = config.THRESHOLD_INITIAL
     dt.signal_cool = {}
+    # 同一根 15m K 现在是同一次真实机会，已拒绝候选不得在 5 分钟后
+    # 重试；推进到下一根 K 再验证低阈值放行语义。
+    next_candles = _make_candles()
+    for candle in next_candles:
+        candle.ts += 900_000
+    fake.candles["BTC-USDT-SWAP"] = next_candles
     dt.scan_signals()
     check(f"阈值 {config.THRESHOLD_INITIAL} < {config.SIGNAL_SCORE} → 开仓",
           len(fake.orders) >= 1)
+
+
+def test_strict_2to1_preopen_wiring(tmp):
+    """无 active 模型拒单，但 Harness 仍须取得结构候选反事实样本。"""
+    print("== 固定 2:1 开仓前预测门接线 ==")
+    import config
+    import storage.db as sdb
+    work = os.path.join(tmp, "strict_2to1")
+    os.makedirs(work, exist_ok=True)
+    dt, fake = _make_trader(work)
+    dt.require_2to1_prediction = True
+    dt.agent_model_call = lambda prompt: {
+        "verdict": "reject", "risk_probability": 0.8, "confidence": 0.7,
+        "reason_codes": ["liquidity_failure"],
+        "evidence_ids": ["signal:test:structure"], "reason": "shadow only"}
+    fake.candles["BTC-USDT-SWAP"] = _make_candles()
+    fake.last_prices["BTC-USDT-SWAP"] = 110.0
+    fake.last_prices["BTC-USDT"] = 110.0
+    dt.watchlist = ["BTC"]
+    dt.watch_scores = {"BTC": 0.9}
+    dt._watch_date = time.strftime("%Y-%m-%d")
+    dt._last_watch_refresh = time.time()
+    dt.signal_cool = {}
+    dt.threshold_learner.threshold = config.THRESHOLD_INITIAL
+    dt.scan_signals()
+    row = sdb.q1(
+        "SELECT features,reject_reason FROM signal_samples ORDER BY event_ts DESC LIMIT 1",
+        db_path=dt._db_path)
+    audit = json.loads(row["features"])["preopen_2to1"] if row else {}
+    check("无 active 模型时订单为 0", len(fake.orders) == 0)
+    check("候选仍保存严格 2:1 预测审计",
+          audit.get("actual_reward_risk") == 2.0 and
+          audit.get("reason") == "no_validated_active_model")
+    check("拒绝原因明确来自 2:1 前置门",
+          (row or {}).get("reject_reason", "").startswith("2to1_prediction:"))
+    harness = sdb.q1("SELECT final_action FROM agent_runs", db_path=dt._db_path)
+    check("2:1 门拒单前 Harness 已留下可成熟的 shadow Trace",
+          harness and harness["final_action"] == "shadow_reject")
 
 
 def test_open_logged_only_on_fill(tmp):
@@ -260,6 +404,119 @@ def test_open_logged_only_on_fill(tmp):
           len(dt.journal.trades) == 0)
 
 
+def test_extrema_shadow_wiring(tmp):
+    """极值影子制品必须进入候选快照和开仓预测展示，但不能改变放行权。"""
+    print("== 极值影子预测接入候选与展示 ==")
+    import config
+    import storage.db as sdb
+    work = os.path.join(tmp, "extrema_wiring")
+    os.makedirs(work, exist_ok=True)
+    dt, fake = _make_trader(work)
+    fake.candles["BTC-USDT-SWAP"] = _make_candles()
+    fake.last_prices["BTC-USDT-SWAP"] = 110.0
+    fake.last_prices["BTC-USDT"] = 110.0
+    dt.watchlist = ["BTC"]
+    dt.watch_scores = {"BTC": 0.9}
+    dt._watch_date = time.strftime("%Y-%m-%d")
+    dt._last_watch_refresh = time.time()
+    dt.signal_cool = {}
+    dt.threshold_learner.threshold = config.THRESHOLD_INITIAL
+    qmodel = lambda a, b, c: {
+        "means": [0.0], "scales": [1.0], "quantiles": [0.1, 0.5, 0.9],
+        "models": {"0.1": {"bias": a, "weights": [0.0]},
+                   "0.5": {"bias": b, "weights": [0.0]},
+                   "0.9": {"bias": c, "weights": [0.0]}}}
+    artifact = {
+        "version": "extrema-test-v1", "direction": "long",
+        "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+        "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
+        "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
+        "feature_names": ["trend"], "high_model": qmodel(0.01, 0.02, 0.03),
+        "low_model": qmodel(-0.03, -0.02, -0.01),
+        "baseline_high_returns": {"q10": 0.01, "q50": 0.02, "q90": 0.03},
+        "baseline_low_returns": {"q10": -0.03, "q50": -0.02, "q90": -0.01},
+        "high_conformal_radius": 0.001, "low_conformal_radius": 0.001}
+    sdb.x(
+        "INSERT INTO model_artifacts (model_id,model_type,direction,version,state,"
+        "created_at,training_cutoff,data_hash,feature_names,artifact,metrics) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ["extrema_wire", "extrema", "long", "extrema-test-v1", "shadow",
+         time.time(), 0, "hash", '["trend"]', json.dumps(artifact), "{}"],
+        db_path=dt._db_path)
+    dt.scan_signals()
+    sample = sdb.q1("SELECT features FROM signal_samples ORDER BY event_ts DESC LIMIT 1",
+                    db_path=dt._db_path)
+    snapshot = json.loads(sample["features"])
+    check("候选快照记录 extrema_prediction",
+          snapshot["extrema_prediction"]["model_id"] == "extrema_wire")
+    trade = dt.journal.trades[-1]
+    trade_forecast = (json.loads(trade["forecast"])
+                      if isinstance(trade.get("forecast"), str)
+                      else trade.get("forecast"))
+    check("开仓展示 forecast 携带概率极值区间",
+          trade_forecast["extrema"]["model_id"] == "extrema_wire")
+    check("shadow 极值模型不获得交易决策权",
+          snapshot["extrema_prediction"]["decision_effective"] is False)
+
+
+def test_harness_shadow_keeps_legacy_authority(tmp):
+    """Harness 必须真实留痕，但不能夺走 legacy AI 的现役否决权。"""
+    print("== Agent Harness shadow 与 legacy 权限隔离 ==")
+    import config
+    import decision.agent_judge as agent_judge
+    import storage.db as sdb
+
+    def setup(work):
+        dt, fake = _make_trader(work)
+        fake.candles["BTC-USDT-SWAP"] = _make_candles()
+        fake.last_prices["BTC-USDT-SWAP"] = 110.0
+        fake.last_prices["BTC-USDT"] = 110.0
+        dt.watchlist = ["BTC"]
+        dt.watch_scores = {"BTC": 0.9}
+        dt._watch_date = time.strftime("%Y-%m-%d")
+        dt._last_watch_refresh = time.time()
+        dt.signal_cool = {}
+        dt.threshold_learner.threshold = config.THRESHOLD_INITIAL
+        dt.ai_judge_enabled = True
+        return dt, fake
+
+    reject_shadow = lambda prompt: {
+        "verdict": "reject", "risk_probability": 0.9, "confidence": 0.8,
+        "reason_codes": ["liquidity_failure"],
+        "evidence_ids": ["signal:test:market"], "reason": "shadow only",
+    }
+    approve_shadow = lambda prompt: {
+        "verdict": "approve", "risk_probability": 0.1, "confidence": 0.8,
+        "reason": "shadow approve",
+    }
+    original_judge = agent_judge.judge
+    try:
+        work = os.path.join(tmp, "harness_shadow_reject")
+        os.makedirs(work, exist_ok=True)
+        dt, fake = setup(work)
+        dt.agent_model_call = reject_shadow
+        agent_judge.judge = lambda *a, **k: ("approve", "legacy pass", None)
+        dt.scan_signals()
+        run = sdb.q1("SELECT final_action FROM agent_runs",
+                     db_path=dt._db_path)
+        check("Harness reject 留下 shadow_reject Trace",
+              run and run["final_action"] == "shadow_reject")
+        check("legacy approve 时 Harness reject 不得拦单", len(fake.orders) >= 1)
+
+        work = os.path.join(tmp, "harness_legacy_reject")
+        os.makedirs(work, exist_ok=True)
+        dt, fake = setup(work)
+        dt.agent_model_call = approve_shadow
+        agent_judge.judge = lambda *a, **k: ("reject", "legacy veto", None)
+        dt.scan_signals()
+        run = sdb.q1("SELECT final_action FROM agent_runs",
+                     db_path=dt._db_path)
+        check("Harness approve 也会留下可评价 Trace", run is not None)
+        check("legacy reject 仍是唯一实际 AI 否决", len(fake.orders) == 0)
+    finally:
+        agent_judge.judge = original_judge
+
+
 def _make_candles(n=100, base=100.0, drift=0.1):
     from exchange.models import Candle
     out = []
@@ -267,7 +524,7 @@ def _make_candles(n=100, base=100.0, drift=0.1):
     for i in range(n):
         close = base + i * drift
         open_ = close - drift * 0.8
-        out.append(Candle(ts=ts + i * 3600_000, open=open_, high=close + 0.5,
+        out.append(Candle(ts=ts + i * 900_000, open=open_, high=close + 0.5,
                           low=open_ - 0.5, close=close, volume=1000))
     last = out[-1]
     body = 0.4
@@ -279,10 +536,16 @@ def _make_candles(n=100, base=100.0, drift=0.1):
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_dec_")
     test_realized_pnl_usdt()
+    test_microstructure_snapshot()
+    test_only_closed_kline_is_sampled(tmp)
     test_decision_rules(tmp)
     test_experience_gate(tmp)
     test_stop_adj_effect(tmp)
+    test_four_hour_time_exit(tmp)
     test_threshold_gate(tmp)
+    test_strict_2to1_preopen_wiring(tmp)
     test_open_logged_only_on_fill(tmp)
+    test_extrema_shadow_wiring(tmp)
+    test_harness_shadow_keeps_legacy_authority(tmp)
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)

@@ -40,6 +40,16 @@ class ExchangeAdapter(ABC):
     def fetch_candles(self, inst_id: str, bar: str, limit: int = 100) -> List[Candle]:
         """K线（升序）。bar: 1m/15m/1H/4H/1D。"""
 
+    def fetch_candles_range(self, inst_id: str, bar: str, since_ms: int,
+                            until_ms: int, max_bars: int = 1800) -> List[Candle]:
+        """闭区间历史 K 线（升序），供反事实标签结算。
+
+        默认实现适配只支持近期窗口的旧替身；原生 OKX/CCXT 会覆盖为分页
+        实现。数据不完整由结算器保持 pending，绝不拿当前价伪造路径。
+        """
+        rows = self.fetch_candles(inst_id, bar, limit=max_bars)
+        return [row for row in rows if since_ms <= row.ts <= until_ms]
+
     @abstractmethod
     def fetch_ticker_last(self, inst_id: str) -> float:
         """最新成交价。"""
@@ -47,6 +57,14 @@ class ExchangeAdapter(ABC):
     def fetch_order_book(self, inst_id: str, depth: int = 10) -> Optional[dict]:
         """盘口(2026-08-23 信号评分第6维): {"bids":[[价,量]...],"asks":[[价,量]...]}
         或 None(取不到)。非 abstract——旧实现可缺省返回 None(评分取中性)。"""
+        return None
+
+    def fetch_open_interest(self, inst_id: str) -> Optional[float]:
+        """永续持仓量；实现不支持时返回 None，研究特征显式记缺失。"""
+        return None
+
+    def fetch_basis(self, inst_id: str) -> Optional[float]:
+        """永续/现货-1；无同名现货时返回 None。"""
         return None
 
     @abstractmethod

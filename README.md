@@ -29,6 +29,9 @@
 | 历史先验 | 教训诞生即查历史同场景先例（胜率/期望 R），只观测不进验证循环 |
 | 异常 → 值守 | 所有异常统一进异常中心，单一告警链推送飞书交互卡片 + 会话注入 |
 | 修复经验 | 每个已修缺陷登记为一条机器护栏（G1-G19），体检每 5 分钟验证防回退 |
+| 结构候选 → 反事实 | 每根已收线 15m K 去重留样，规则/额度/Agent 拒绝仍用后续 4h/1m 路径结算 |
+| 因子/模型 → 影子 | 自动因子、开仓概率和极值分位必须先过 purged walk-forward 与校准门，默认不改变下单 |
+| Agent → 增量评价 | Harness 的模型判断、故障状态和最终策略动作分开落 Trace，用成熟反事实评价拦损与机会成本 |
 
 ## 实盘就绪三盏灯
 
@@ -54,9 +57,9 @@ CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
 
 | 组件 | 说明 |
 |---|---|
-| 方向性引擎 | 2s 止损监控 + 5min 回踩信号扫描 + 每日候选刷新 |
+| 方向性引擎 | 1s 风控监控 + 5min 轮询已收线 15m 回踩信号 + 4h 时间退出 + 每日候选刷新 |
 | 实时行情 | ccxt.pro watch_ticker（config.REALTIME_BACKEND 可切回原生 WS） |
-| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback |
+| HTTP API | `GET /docs`（Swagger）、/health、/status、/watchlist、/journal、/signals/{base}、/realtime/{base}、/scan/evolve、/models/entry、/forecast/calibration、/factors/trials、/agent/evaluation、/research/readiness；POST /pause /resume /scan/daily /scan/evolve/approve /scan/evolve/rollback /models/entry/rollback |
 
 ### 双实例实现现状（不是 AI 的 live 操作授权）
 
@@ -108,14 +111,15 @@ crypto-agent/
 ├── engines/                # 交易引擎层（2026-08-20 按功能拆分，行为零变化）
 │   ├── directional_trader.py   # 方向性引擎核心壳（入口/组装/对账/tick 主循环）
 │   ├── signal_scan.py          #   信号扫描/候选池/额度/冷却（SignalScanMixin）
+│   ├── signal_sampling.py      #   15m 候选冻结/同 K 幂等/决策轨迹（不下单）
 │   ├── position_mgmt.py        #   开仓全链路/条件单/失败落库（PositionMixin）
 │   ├── risk_monitor.py         #   止损监控/熔断强平（RiskMonitorMixin）
 │   ├── review_pipeline.py      #   平仓复盘链/阈值进化门（ReviewMixin）
 │   └── daily_scan.py           # 每日全市场候选扫描 → watchlist（走 ExchangeAdapter）
-├── decision/               # 决策与进化层（self_evolving/experience/threshold/review/evolution_gate）
+├── decision/               # 决策/标签/概率/极值/模型生命周期/Agent Harness
 ├── execution/              # 执行与台账层（quantity/trade_journal/position_ownership）
 ├── exchange/               # 交易所访问四层（transport/okx_adapter/base/models/fake）
-├── factors/                # 因子挖掘研究层
+├── factors/                # 特征注册、日内因子验证、开仓概率与极值模型训练
 ├── tools/                  # 工具（scan/paper_trade/okx_pg_ingest/watchdog）
 ├── data/                   # 数据源（fetch_okx/fetch_*/realtime_okx/economic_calendar）
 ├── strategy/  risk/  backtest/
@@ -133,8 +137,16 @@ crypto-agent/
 PYTHONPATH=lib python3 tests/test_exchange_layers.py   # 分层架构单测（FakeAdapter 离线）
 PYTHONPATH=lib python3 tests/test_service_api.py       # 服务端接口单测（TestClient 离线）
 python3 tools/ai_repo_check.py                         # AI 入口/链接/索引守卫
+python3 tools/code_graph.py --check                    # 分层检查
+python3 tools/params_lint.py                           # 参数集中化
+python3 tools/test_isolation_lint.py                   # 测试副作用隔离
+python3 tools/fix_guard.py                             # 修复护栏
 python3 -m py_compile <改动的文件>
 ```
+
+CI 自动发现全部 `tests/test_*.py`（当前 45 个），每个脚本使用独立数据库、事件文件和
+运行目录。代码阶段通过不代表准确率已经提高：当前 15m/4h 真实候选与校准样本仍不足，
+模型和 Harness 保持 shadow；样本外 EV 未转正前不得扩大预算。
 
 改交易逻辑后：先单测 → 沙盘实测一条下单链路（开仓→挂止损→pending→撤单→平仓）→ 再重启活体进程 → 验证心跳与持仓衔接。
 

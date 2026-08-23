@@ -62,9 +62,22 @@ def main():
     st, msg, ev = propose(db_path=db)
     check("样本不足 → insufficient", st == "insufficient", f"{st}")
 
-    # ---- 2. 证据达标 → 自动生效,无需批准 ----
+    # ---- 2. 同样本 IC 即使很高，未过 OOS 门也不得自动生效 ----
     random.seed(42)
     seed(db, 40, "book", +1, 0, t0)
+    st, msg, ev = propose(db_path=db)
+    check("40 笔同样本 IC 不得自我证明", st == "insufficient" and
+          effective_weights(db) == base_w, f"{st}: {msg}")
+
+    # 模拟上游因子门已给出完整 OOS 证据（真实运行只能由 intraday_factor_gate 写）
+    sdb.x("INSERT INTO factor_trials (ts,name,rationale,n_samples,n_folds,"
+          "ic_tstat,net_spread,status,dsr,pbo,missing_rate,fold_consistency,"
+          "symbol_concentration,timeframe,horizon_hours) "
+          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [t0, "book", "盘口失衡 OOS 验证", 720, 5, 4.0, 0.2,
+           "validated", 0.99, 0.1, 0.0, 5, 0.25,
+           config.SIGNAL_SAMPLE_TIMEFRAME,
+           config.SIGNAL_OUTCOME_HORIZON_HOURS], db_path=db)
     st, msg, ev = propose(db_path=db)
     check("证据达标 → auto_applied(自动生效)", st == "auto_applied",
           f"{st}: {msg}")

@@ -13,5 +13,5 @@
 ## 活跃占用（机器维护，勿手改）
 
 <!-- AGENT_CLAIMS_BEGIN -->
-- codex-entry-accuracy-plan | 1787435943 | docs/README.md,docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md | 
+- strategy_b_replay | 1787475706 | config.py,decision/signal_outcomes.py,docs/architecture/ai_friendly_repo.md,docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md,docs/reports/2026-08-23_15m_research_replay_report.md,docs/reports/optimization_notes.md,docs/reports/pitfalls.md,engines/signal_sampling.py,engines/strategy_b.py,tests/test_replay_15m_research.py,tests/test_strategy_b.py,tools/evaluate_15m_research.py,tools/replay_15m_research.py
 <!-- AGENT_CLAIMS_END -->

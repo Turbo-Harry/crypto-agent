@@ -46,7 +46,7 @@ def judge(change_id, returns_incumbent, returns_candidate=None, db_path=None,
           n_trials=1):
     """按证据裁决一次试验:
       - 样本 < MIN_SAMPLES → insufficient_data(不可接受,等样本)
-      - DSR < 1 或 PBO ≥ 0.3 → rejected
+      - DSR < config.DSR_ACCEPT（当前 0.95 概率）或 PBO ≥ 0.3 → rejected
       - 全部达标 → accepted
     证据写入 experiments 行。返回 (status, {dsr, pbo, n})。"""
     import storage.db as sdb

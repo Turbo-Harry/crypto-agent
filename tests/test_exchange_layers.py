@@ -202,6 +202,114 @@ def test_ticker_usdt_normalization():
           abs(spot["ETH"].vol_usdt_24h - 5_000_000) < 1)
 
 
+def test_ccxt_ticker_requests_target_venue():
+    """CCXT 无参数默认 SPOT；候选扫描必须显式请求目标 instType。"""
+    print("== CCXT ticker 场所参数 ==")
+    from exchange.ccxt_adapter import CCXTAdapter
+
+    class _StubCCXT:
+        markets = {}
+
+        def __init__(self):
+            self.calls = []
+
+        def fetch_tickers(self, params=None):
+            self.calls.append(dict(params or {}))
+            if params == {"instType": "SWAP"}:
+                return {"BTC/USDT:USDT": {
+                    "base": None, "symbol": "BTC/USDT:USDT",
+                    "last": 100.0, "quoteVolume": None,
+                    "info": {"volCcy24h": "200"}}}
+            return {"BTC/USDT": {
+                "base": "BTC", "last": 100.0, "quoteVolume": 20_000.0,
+                "info": {}}}
+
+    adapter = CCXTAdapter.__new__(CCXTAdapter)
+    adapter._ccxt = _StubCCXT()
+    adapter._load = lambda: None
+    swaps = adapter.fetch_tickers("swap")
+    spots = adapter.fetch_tickers("spot")
+    check("SWAP ticker 显式传 instType",
+          adapter._ccxt.calls[0] == {"instType": "SWAP"})
+    check("SPOT ticker 显式传 instType",
+          adapter._ccxt.calls[1] == {"instType": "SPOT"})
+    check("SWAP 成交额按 volCcy24h×last 归一",
+          len(swaps) == 1 and swaps[0].base == "BTC" and
+          swaps[0].inst_id == "BTC-USDT-SWAP" and
+          swaps[0].vol_usdt_24h == 20_000.0)
+    check("SPOT 仍按 quoteVolume 归一",
+          len(spots) == 1 and spots[0].vol_usdt_24h == 20_000.0)
+
+
+def test_native_market_features():
+    """原生适配器盘口/OI/basis 必须翻译成领域标量，不能误读 books 外层。"""
+    print("== 原生盘口/OI/basis 翻译 ==")
+    from exchange.okx_adapter import OKXAdapter
+
+    class _StubT:
+        def public(self, path, params=None):
+            if path.endswith("/books"):
+                return {"data": [{"bids": [["99", "10", "0", "2"]],
+                                   "asks": [["101", "8", "0", "1"]]}]}
+            if path.endswith("/open-interest"):
+                return {"data": [{"oi": "1234"}]}
+            if path.endswith("/ticker"):
+                price = "101" if params["instId"].endswith("SWAP") else "100"
+                return {"data": [{"last": price}]}
+            return {"data": []}
+
+    ad = OKXAdapter.__new__(OKXAdapter)
+    ad.t = _StubT()
+    book = ad.fetch_order_book("BTC-USDT-SWAP", 10)
+    check("books 外层 dict 正确拆 bids/asks",
+          book == {"bids": [[99.0, 10.0]], "asks": [[101.0, 8.0]]}, str(book))
+    check("OI 翻译为 float", ad.fetch_open_interest("BTC-USDT-SWAP") == 1234.0)
+    check("basis=swap/spot-1", abs(ad.fetch_basis("BTC-USDT-SWAP") - 0.01) < 1e-9)
+
+
+def test_candle_range_pagination():
+    """原生与 CCXT 区间 K 线都必须排序、裁窗且可终止分页。"""
+    print("== 24H 标签区间 K 线分页 ==")
+    from exchange.okx_adapter import OKXAdapter
+    since = 1_700_000_000_000
+    until = since + 120_000
+
+    class _NativeT:
+        def public(self, path, params=None):
+            return {"data": [
+                [str(until + 60_000), "1", "2", "0", "1", "1"],
+                [str(until), "1", "2", "0", "1", "1"],
+                [str(since + 60_000), "1", "2", "0", "1", "1"],
+                [str(since), "1", "2", "0", "1", "1"],
+                [str(since - 60_000), "1", "2", "0", "1", "1"]]}
+
+    native = OKXAdapter.__new__(OKXAdapter)
+    native.t = _NativeT()
+    rows = native.fetch_candles_range("BTC-USDT-SWAP", "1m", since, until)
+    check("原生 history-candles 闭区间排序裁剪",
+          [row.ts for row in rows] == [since, since + 60_000, until])
+
+    from exchange.ccxt_adapter import CCXTAdapter
+
+    class _CCXT:
+        markets = {"BTC/USDT:USDT": {}}
+
+        def fetch_ohlcv(self, symbol, bar, since=None, limit=None):
+            if since <= globals_since + 60_000:
+                return [[globals_since, 1, 2, 0, 1, 1],
+                        [globals_since + 60_000, 1, 2, 0, 1, 1]]
+            return [[globals_until, 1, 2, 0, 1, 1],
+                    [globals_until + 60_000, 1, 2, 0, 1, 1]]
+
+    globals_since, globals_until = since, until
+    ccxt = CCXTAdapter.__new__(CCXTAdapter)
+    ccxt._ccxt = _CCXT()
+    ccxt._load = lambda: None
+    rows = ccxt.fetch_candles_range("BTC-USDT-SWAP", "1m", since, until)
+    check("CCXT since 分页闭区间排序裁剪",
+          [row.ts for row in rows] == [since, since + 60_000, until])
+
+
 def test_daily_scan_offline_fallback():
     """daily_scan 必须可注入 FakeAdapter，零网络；成交额为 0 时回退主流合约池。"""
     print("== daily_scan 离线回退（FakeAdapter） ==")
@@ -301,6 +409,9 @@ if __name__ == "__main__":
     test_min_size_reject()
     test_51121_lot_self_heal()
     test_ticker_usdt_normalization()
+    test_ccxt_ticker_requests_target_venue()
+    test_native_market_features()
+    test_candle_range_pagination()
     test_daily_scan_offline_fallback()
     test_daily_scan_drops_untradable()
     test_trading_layers_no_okx_url()

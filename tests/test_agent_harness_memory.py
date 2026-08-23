@@ -2,8 +2,10 @@ import tempfile
 import unittest
 
 from decision.agent_memory import retrieve_for_input
-from decision.agent_contracts import AgentInput
-from storage import agent_memory, db
+from decision.agent_contracts import (AgentInput, FinalAction, HarnessRun,
+                                      LifecycleStatus, RuntimeStatus, Verdict)
+from engines.signal_sampling import record_signal_sample
+from storage import agent_harness, agent_memory, db
 
 
 class AgentHarnessMemoryTest(unittest.TestCase):
@@ -45,6 +47,66 @@ class AgentHarnessMemoryTest(unittest.TestCase):
                                                                        min_age_hours=0), 1)
         rows = db.q("SELECT * FROM agent_memories WHERE memory_type='episodic'", db_path=self.path)
         self.assertEqual(len(rows), 1)
+        self.assertEqual(agent_memory.promote_mature_legacy_memories(
+            db_path=self.path, now_ts=100000, min_age_hours=0), 0)
+
+    def test_path_r_memory_inherits_signal_scope(self):
+        signal_id, _ = record_signal_sample(
+            "BTC", {"dir": "long", "kline_ts": 1_000,
+                    "entry": 100, "stop": 99, "tp": 102, "atr": 1,
+                    "shadow_dims": {}, "regime": "trend"}, "swap",
+            db_path=self.path, event_ts=1)
+        db.x("INSERT INTO ai_judgments "
+             "(ts,base,direction,verdict,reason,signal_id,outcome_r,outcome_ts) "
+             "VALUES (?,?,?,?,?,?,?,?)",
+             [1, "BTC", "long", "reject", "path risk", signal_id, -1.0, 2],
+             db_path=self.path)
+        self.assertEqual(agent_memory.promote_mature_legacy_memories(
+            db_path=self.path, now_ts=100000, min_age_hours=0), 1)
+        row = db.q1("SELECT * FROM agent_memories WHERE signal_id=?",
+                    [signal_id], db_path=self.path)
+        sample = db.q1("SELECT strategy_version,timeframe FROM signal_samples "
+                       "WHERE signal_id=?", [signal_id], db_path=self.path)
+        self.assertEqual(row["outcome_r"], -1.0)
+        self.assertIsNone(row["outcome_pnl"])
+        self.assertEqual(row["strategy_version"], sample["strategy_version"])
+        self.assertEqual(row["timeframe"], "15m")
+        self.assertIn('"outcome_unit": "R"', row["metadata_json"])
+
+    def test_mature_harness_evaluation_becomes_scoped_memory(self):
+        signal_id, _ = record_signal_sample(
+            "ETH", {"dir": "short", "kline_ts": 1_000,
+                    "entry": 100, "stop": 101, "tp": 98, "atr": 1,
+                    "shadow_dims": {}, "regime": "range"}, "swap",
+            db_path=self.path, event_ts=1)
+        agent_input = AgentInput(
+            run_id="run-memory", signal_id=signal_id, event_ts="1",
+            kline_ts="1000", strategy_version="strategy-v1",
+            prompt_version="judge-v1", model_version="model-v1",
+            context_version="context-v1", schema_version="schema-v1",
+            retrieval_version="retrieval-v1")
+        run = HarnessRun(
+            run_id="run-memory", signal_id=signal_id,
+            runtime_status=RuntimeStatus.COMPLETED,
+            final_action=FinalAction.SHADOW_REJECT,
+            model_verdict=Verdict.REJECT)
+        agent_harness.record_run(run, agent_input, created_ts=1,
+                                 db_path=self.path)
+        agent_harness.record_evaluation(
+            run.run_id, lifecycle_status=LifecycleStatus.MATURE,
+            label="sl_first", settle_ts=2, pnl_r=-1.0, mfe_r=.1, mae_r=1.0,
+            db_path=self.path)
+        self.assertEqual(agent_memory.promote_mature_harness_memories(
+            db_path=self.path, now_ts=100000, min_age_hours=0), 1)
+        row = db.q1("SELECT * FROM agent_memories WHERE run_id=?",
+                    [run.run_id], db_path=self.path)
+        sample = db.q1("SELECT strategy_version,timeframe FROM signal_samples "
+                       "WHERE signal_id=?", [signal_id], db_path=self.path)
+        self.assertEqual(row["outcome_r"], -1.0)
+        self.assertEqual(row["strategy_version"], sample["strategy_version"])
+        self.assertEqual(row["timeframe"], "15m")
+        self.assertEqual(agent_memory.promote_mature_harness_memories(
+            db_path=self.path, now_ts=100000, min_age_hours=0), 0)
 
     def test_decay_demotes_without_deleting_and_retrieval_excludes_stale(self):
         evidence_id = agent_memory.upsert_memory(

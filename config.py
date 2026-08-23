@@ -159,6 +159,9 @@ AGENT_JUDGE_LESSONS_TOP = 3             # 回喂的该币 trusted/discarded 教�
 # 进入 active-veto 且人工/验证门明确开启时，模型 reject 才能影响开仓。
 AGENT_HARNESS_ENABLED = True
 AGENT_HARNESS_VETO_ENABLED = False
+AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v1"
+AGENT_HARNESS_CONTEXT_VERSION = "context-v1"
+AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
 AGENT_HARNESS_MAX_TOOL_CALLS = 3
 AGENT_HARNESS_MAX_STEPS = 8
 AGENT_HARNESS_TIMEOUT_MS = 4000
@@ -167,21 +170,66 @@ AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 AGENT_HARNESS_EPISODIC_TTL_DAYS = 90
 AGENT_HARNESS_SEMANTIC_TTL_DAYS = 180
 AGENT_HARNESS_MEMORY_MIN_STRENGTH = 0.2
-# 预测机制(2026-08-23 用户要求"最好能有预测机制"): 1h 对数收益 bootstrap
-# 价格分布 + 触达概率,与历史同向信号实证命中率混合;平仓后自动校准(Brier)。
+AGENT_EVAL_MIN_VALID = 100               # 有真实路径结果的有效判断门槛
+AGENT_EVAL_MIN_REJECT = 30               # reject 拦截能力最少样本
+AGENT_EVAL_EV_Z = 1.645                  # Agent 增量 EV 单侧 95% 保守下界
+AGENT_EVALUATION_VERSION = "agent-net-ev-v2"  # v2: 交易成本 + 保守期望资金费
+# 预测机制：15m OHLC 移动区块 bootstrap，预测未来 16 根（4h）
+# 价格分布 + 触达概率；与同一 15m/4h 标签口径的历史实证率混合。
 FORECAST_ENABLED = True                 # 开关
-FORECAST_HORIZON_HOURS = 24             # 预测窗口
+FORECAST_BAR = "15m"                    # 与入场主周期一致
+FORECAST_BAR_MINUTES = 15
+FORECAST_HORIZON_BARS = 16              # 15m×16=4h，日内不跨 24h 标签
+MAX_HOLD_HOURS = 4                       # 到期按市价时间退出
+FORECAST_HORIZON_HOURS = MAX_HOLD_HOURS # 对外展示/兼容字段
 FORECAST_PATHS = 500                    # bootstrap 模拟路径数
-FORECAST_LOOKBACK_BARS = 168            # 收益样本窗口(7 天 1h K)
+FORECAST_LOOKBACK_BARS = 288            # 3 天 15m K，不超 OKX 近期 K 单次上限
+FORECAST_REGIME_LOOKBACK_BARS = 96      # 当前波动 regime 看最近 24h
+FORECAST_MIN_RETURN_BARS = 60           # 少于 15h 收益不生成预测
 FORECAST_BLEND = 0.5                    # 历史实证概率混合权重(0.5=各半)
 FORECAST_MIN_EMP_N = 5                  # 历史样本 < N 笔不混合(纯 bootstrap)
+FORECAST_BLOCK_SIZE = 4                 # 移动区块 bootstrap 长度(保留短期相关)
+FORECAST_EMP_PRIOR_STRENGTH = 30        # 实证概率收缩先验等效样本量
+FORECAST_MIN_CALIBRATION = 30           # 少于该数明确标 uncalibrated
+EXTREMA_MIN_BASELINE_SAMPLES = 30       # 分方向/regime 经验极值分位最少样本
+EXTREMA_MIN_MODEL_SAMPLES = 300         # 正则化分位模型训练门槛
+EXTREMA_MIN_FOLD_TRAIN_SAMPLES = 30     # 每折 purge 后最少训练样本
+EXTREMA_MIN_GOOD_FOLDS = 4              # 至少 4/5 折 pinball 不劣于基线
+EXTREMA_QUANTILES = (0.1, 0.5, 0.9)
+EXTREMA_L2 = 0.01
+EXTREMA_LEARNING_RATE = 0.03
+EXTREMA_EPOCHS = 600
+EXTREMA_CONFORMAL_WINDOW = 100
+EXTREMA_MIN_CONFORMAL_SAMPLES = 30      # 在线半径不足时沿用训练期 OOS 半径
+EXTREMA_PINBALL_IMPROVEMENT = 0.05      # 相对滚动经验基线至少改善 5%
+EXTREMA_COVERAGE_LOW = 0.75
+EXTREMA_COVERAGE_HIGH = 0.85
+EXTREMA_MODEL_SHADOW_ONLY = True        # 极值模型默认只影子展示，不改变交易
 SHADOW_DIMS = ("wick", "depth", "trend", "volume", "funding", "book")  # 6 维名
+
+# 开仓候选监督样本（T0-T2）：15m 主周期，1H/4H 只做环境。
+# strategy_version 会与 config_hash 拼接；同币/方向/15m K/版本只允许
+# 一个候选，避免 5 分钟扫描把同一根 K 重复留样或开仓。
+ENTRY_STRATEGY_VERSION = "pullback-15m-v1"
+SIGNAL_SAMPLE_TIMEFRAME = "15m"
+SIGNAL_CONTEXT_TIMEFRAME = "1H"
+SIGNAL_REGIME_TIMEFRAME = "4H"
+SIGNAL_LOOKBACK_BARS = 300
+SIGNAL_TIMEFRAME_SECONDS = {"5m": 300, "15m": 900, "1H": 3600, "4H": 14400}
+SIGNAL_BAR_CLOSE_GRACE_SECONDS = 2       # 交易所时间/传输边界缓冲
+SIGNAL_FEATURE_SCHEMA_VERSION = "signal-features-v4"  # v4: 行情路由 + 显式 strategy_id
+SIGNAL_OUTCOME_HORIZON_HOURS = MAX_HOLD_HOURS  # 标签/执行/预测同窗口
+SIGNAL_OUTCOME_BAR = "1m"
+SIGNAL_OUTCOME_LABEL_VERSION = "first-passage-15m-4h-v1"
+SIGNAL_OUTCOME_SWEEP_SECONDS = 900
+SIGNAL_OUTCOME_MAX_FETCH_BARS = 300   # 4h 1m + 边界/接口分页余量
 
 # ============ 费率与手续费（2026-08-23 用户问"会计算费率和手续费吗"） ============
 # 平仓时优先按账户账单(fetch_bills)取【实际】手续费与资金费;
 # 账单取不到时按 FEE_RATE_TAKER 估算(市价单双边 taker 0.05%)兜底。
 FEE_ACCOUNTING_ENABLED = True  # 开关: 实盘盈亏扣费(硬止损累计也按净额)
 FEE_RATE_TAKER = 0.0005        # OKX 基础 taker 费率 0.05%(VIP0,双边收)
+FUNDING_EXPECTED_INTERVAL_HOURS = 8  # 信号时点费率按持有时长折算；收益不抵扣成本
 REJECT_WICK_RATIO = 1.0      # 拒绝K线: 影线/实体 最小比（激进第二档 1.5→1.0,信号更多）
 STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR
 TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比）
@@ -257,9 +305,101 @@ GATE_MIN_EDGE = 0.001         # 候选须超越现役的最小期望优势(平�
 GATE_OBSERVE_BATCH = 10       # 晋升后观察期批大小(每批对比一次,连续退化→回滚基线)
 
 # ---- 试验注册表（experiments） ----
-DSR_ACCEPT = 1.0              # Deflated Sharpe 接受线（LdP）
+DSR_ACCEPT = 0.95             # DSR 返回概率，统一按 ≥0.95 接受（不是比率 ≥1）
 PBO_ACCEPT = 0.3              # PBO 接受线（LdP）
 MIN_SAMPLES = 30              # Tharp 最低样本门槛（S2）
+
+# ---- 日内因子样本外验证（T4-T6） ----
+FACTOR_MIN_SAMPLES = 300
+FACTOR_WALK_FORWARD_FOLDS = 5
+FACTOR_PURGE_HOURS = 4
+FACTOR_EMBARGO_HOURS = 4
+FACTOR_MIN_TSTAT = 3.0
+FACTOR_MIN_CONSISTENT_FOLDS = 4
+FACTOR_MAX_MISSING_RATE = 0.10
+FACTOR_REDUNDANT_CORR = 0.70
+FACTOR_MAX_SYMBOL_CONCENTRATION = 0.50
+FACTOR_PBO_BLOCKS = 16
+FACTOR_MAX_EXPRESSION_DEPTH = 3
+# 54 个基础/质量因子 + 7 个预注册且有经济逻辑的二阶/状态交互；禁止无假设穷举。
+FACTOR_MAX_AUTO_CANDIDATES = 61
+FACTOR_MINING_INTERVAL_HOURS = 24
+FACTOR_MINING_RETRY_SECONDS = 900       # 自动研究失败后 15min 重试，禁止静默停 24h
+FACTOR_5M_LOOKBACK_BARS = 288        # 需要 288 个 5m 收益，拉取时应取 289 个收盘
+FACTOR_HAR_WINDOWS = (12, 72, 288)  # 5m bar 数：1h、6h、24h
+FACTOR_CROSS_SECTION_LOOKBACK_BARS = 25  # 15m 跨币相关/动量共同历史窗
+FACTOR_CROSS_SECTION_MIN_ASSETS = 5      # 少于 5 币不冒充市场状态
+FACTOR_BREADTH_EMA_PERIOD = 20           # 市场宽度：收盘高于 EMA20 的币占比
+FACTOR_CORRELATION_POWER_ITERATIONS = 24 # 相关矩阵首特征值幂迭代次数
+FORECAST_REPLAY_SEED_VERSION = "moving-block-bootstrap-v1"  # 仅预测算法变更才升级
+FACTOR_BB_PERIOD = 20                    # 15m 布林中枢约 5h
+FACTOR_BB_STDDEV_MULT = 2.0
+FACTOR_BB_PERCENTILE_LOOKBACK = 100      # 约 25h 的带宽相对状态
+FACTOR_BB_SQUEEZE_LOOKBACK = 4           # 释放前观察 1h 挤压
+FACTOR_BB_SQUEEZE_MAX_PERCENTILE = 0.20
+FACTOR_ADX_PERIOD = 14
+FACTOR_EFFICIENCY_PERIOD = 20
+FACTOR_VWAP_PERIOD = 20
+FACTOR_VOLUME_Z_PERIOD = 20
+
+# ---- 行情状态与策略路由（仅 shadow，不获得开仓权限）----
+# 不是声称已校准的概率模型：先用可解释的趋势/波动/横截面轴形成 softmax 权重，
+# 再分别积累 regime×strategy 标签。达到同一 T5/T6 门之前只能记录、不能拦放单。
+MARKET_REGIME_VERSION = "market-regime-shadow-v1"
+ENTRY_SIGNAL_STRATEGY_ID = "A_pullback"
+BREAKOUT_SIGNAL_STRATEGY_ID = "B_breakout"
+MARKET_REGIME_TREND_SLOPE_REF = 0.01       # 近 10 根主周期累计变化的强趋势参照
+MARKET_REGIME_TF4H_SPREAD_REF = 0.02       # 4H EMA20/50 离散度参照
+MARKET_REGIME_VOL_INSTABILITY_REF = 0.50   # vol-of-vol / 当前 RV 的不稳定度参照
+MARKET_REGIME_SOFTMAX_TEMPERATURE = 0.20   # 影子权重，不解释为已校准概率
+MARKET_REGIME_ROUTE_MIN_CONFIDENCE = 0.45
+MARKET_REGIME_ROUTE_MIN_MARGIN = 0.10
+MARKET_REGIME_MIN_CORE_INPUTS = 2          # vol_pct + trend_slope 均须可用
+MARKET_REGIME_STRATEGY_MAP = {
+    "trend": (ENTRY_SIGNAL_STRATEGY_ID, BREAKOUT_SIGNAL_STRATEGY_ID),
+    "range": ("C_range_reversion",),
+    "vol_expansion": (BREAKOUT_SIGNAL_STRATEGY_ID,),
+    "disorder": (),
+}
+MARKET_REGIME_IMPLEMENTED_STRATEGIES = (ENTRY_SIGNAL_STRATEGY_ID,
+                                        BREAKOUT_SIGNAL_STRATEGY_ID)
+# ---- 多档盘口事件流（仅影子留样，未经验证不参与开仓） ----
+ORDERFLOW_BOOK_DEPTH = 5
+ORDERFLOW_WINDOW_SECONDS = 60
+ORDERFLOW_MIN_EVENTS = 10
+ORDERFLOW_MAX_AGE_SECONDS = 5
+
+# ---- 开仓概率 meta-label（固定 1R 止损 / 2R 止盈） ----
+# 模拟盘只允许“已通过样本外 + 独立 shadow 验证”的概率模型参与开仓；候选即使
+# 被拒仍结算 4h 反事实路径，因此 fail-closed 不会切断训练/校准数据。
+PAPER_REQUIRE_VALIDATED_2TO1_PREDICTION = True
+ENTRY_REQUIRED_REWARD_RISK = 2.0
+ENTRY_COST_MODEL_VERSION = "roundtrip-plus-conservative-funding-v1"
+ENTRY_MODEL_SHADOW_ONLY = False
+ENTRY_MODEL_MIN_SAMPLES = 300
+ENTRY_MODEL_MIN_TP = 60
+ENTRY_MODEL_MIN_SL = 60
+ENTRY_MODEL_MAX_FEATURES = 15
+ENTRY_MODEL_L2 = 0.05
+ENTRY_MODEL_LEARNING_RATE = 0.05
+ENTRY_MODEL_EPOCHS = 800
+ENTRY_MODEL_PRIOR_STRENGTH = 30
+ENTRY_MODEL_MIN_BRIER_SKILL = 0.05
+ENTRY_MODEL_MIN_GOOD_FOLDS = 4
+ENTRY_MODEL_EV_Z = 1.645            # 单侧 95% 保守下界
+MODEL_SHADOW_MIN_CANDIDATES = 60
+MODEL_OBSERVE_MIN_CANDIDATES = 60
+MODEL_OBSERVE_MIN_CLOSED = 30
+MODEL_MIN_SELECTED_EVALUATIONS = 30  # 防止仅凭极少数放行样本通过 EV/胜率观察门
+MODEL_MAX_BRIER_DEGRADE = 0.02
+MODEL_MAX_EV_DEGRADE_R = 0.10
+MODEL_MAX_DRAWDOWN_R = 3.0
+MODEL_BUDGET_EXPANSION_MIN_LONG_TERM_EV_R = 0.0
+
+# ---- 开仓准确率计划统计完成门（只读审计，不改变交易行为） ----
+# 复用既有 60 笔就绪门与 30 笔六维权重证据门，避免同一语义维护两套数字。
+ENTRY_ACCURACY_MIN_PAPER_CLOSED = READY_MIN_TRADES
+ENTRY_ACCURACY_MIN_SIX_DIM_CLOSED = WEIGHT_EVOLVE_MIN_SAMPLES
 
 # ---- 扫描尺子进化（2026-08-20：提案→影子→验证门→人工批准，永不自动改尺子）----
 # 只动一根尺子：REJECT_WICK_RATIO（拒绝K线影线/实体比）。放宽方向先影子记账，
@@ -286,7 +426,7 @@ LEGACY_CT_VAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 0.01, "XRP": 0.001, "DOGE": 1.0
 
 # ---- 策略 B（突破/动量确认,影子模式 Phase 4 T3.3）----
 STRATEGY_B_SHADOW_ENABLED = True   # 只记录假设性交易,绝不下单
-BREAKOUT_LOOKBACK = 20             # 突破前 N 根 1H K 线的高低点
+BREAKOUT_LOOKBACK = 20             # 突破前 N 根 15m K 线的高低点
 BREAKOUT_VOL_RATIO = 1.2           # 突破 K 线量能 ≥ 均量 × 1.2 才确认
 
 # ---- 库维护（storage/db.py prune_old_rows）----

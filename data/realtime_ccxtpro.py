@@ -19,6 +19,9 @@ import asyncio
 import threading
 import time
 
+import config
+from data.orderflow import OrderFlowAccumulator
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "lib"))
 
@@ -40,6 +43,9 @@ class OKXRealtime:
         self._last_msg_ts = time.time()
         self._loop = None
         self._thread = None
+        self._orderflow = OrderFlowAccumulator(
+            config.ORDERFLOW_BOOK_DEPTH, config.ORDERFLOW_WINDOW_SECONDS,
+            config.ORDERFLOW_MIN_EVENTS, config.ORDERFLOW_MAX_AGE_SECONDS)
 
     def _resolve_cred(self):
         """凭证解析: LIVE_MODE → 实盘凭证;否则 okx_config.json(与 connect() 一致)。
@@ -100,6 +106,7 @@ class OKXRealtime:
         self._seed_candles_from_rest()
         tasks = {}
         f_tasks = {}
+        book_tasks = {}
         while not self._shutdown:
             for base in list(self.subscribed):
                 if base in tasks and not tasks[base].done():
@@ -108,8 +115,12 @@ class OKXRealtime:
                 if base not in f_tasks or f_tasks[base].done():
                     f_tasks[base] = asyncio.ensure_future(
                         self._watch_funding(ex, base))
+                if base not in book_tasks or book_tasks[base].done():
+                    book_tasks[base] = asyncio.ensure_future(
+                        self._watch_book(ex, base))
             await asyncio.sleep(1)
-        for t in list(tasks.values()) + list(f_tasks.values()):
+        for t in (list(tasks.values()) + list(f_tasks.values()) +
+                  list(book_tasks.values())):
             t.cancel()
 
     async def _watch_one(self, ex, base):
@@ -140,6 +151,19 @@ class OKXRealtime:
                     self.latest[base]["funding_ts"] = time.time()
             except Exception:
                 await asyncio.sleep(10)
+
+    async def _watch_book(self, ex, base):
+        """Continuous L2 events for shadow OFI; never used to place orders."""
+        sym = f"{base}/USDT:USDT"
+        while not self._shutdown:
+            try:
+                book = await ex.watch_order_book(
+                    sym, limit=config.ORDERFLOW_BOOK_DEPTH)
+                now = time.time()
+                self._orderflow.update(base, book, ts=now)
+                self._last_msg_ts = now
+            except Exception:
+                await asyncio.sleep(2)
 
     def _seed_candles_from_rest(self):
         """冷启动预热(与旧模块同语义): REST 拉最近 15 根 1m K 线算 vol_15m。"""
@@ -186,6 +210,10 @@ class OKXRealtime:
     def stale_seconds(self):
         """距最后一条推送消息的秒数(判断链路是否僵死)。"""
         return time.time() - self._last_msg_ts
+
+    def get_orderflow(self, base):
+        """Return freshness-gated multilevel event OFI shadow features."""
+        return self._orderflow.snapshot(base)
 
     def snapshot(self):
         """获取所有标的的实时快照。"""

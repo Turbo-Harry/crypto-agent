@@ -11,6 +11,10 @@ import os
 import sys
 import time
 
+# 本脚本单独运行时也必须与 CI 一样锁定 paper；必须发生在 import config 前，
+# 否则心跳实例名已按默认模式冻结，测试命令会产生与代码无关的假红。
+os.environ["CRYPTO_AGENT_MODE"] = "paper"
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # tests 目录（import test_exchange_layers）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
@@ -18,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import config
 
 from fastapi.testclient import TestClient
-from service.app import app
+from service.app import create_app
 from service.worker import ServiceTrader
 from exchange.fake_adapter import FakeAdapter
 
@@ -42,6 +46,15 @@ class _FakeWorker:
         self.trader = trader
         self.last_hb_dir = time.time()
         self.started_at = time.time()
+        self.start_calls = 0
+        self.stop_calls = 0
+
+    def start(self):
+        self.start_calls += 1
+
+    def stop(self):
+        self.stop_calls += 1
+        return True
 
     def heartbeat_age(self):
         return time.time() - self.last_hb_dir
@@ -56,6 +69,7 @@ def main():
     # 隔离持久化（临时 journal/账本，不碰活体服务状态文件）
     import tempfile
     tmp = tempfile.mkdtemp(prefix="tst_svc_")
+    os.environ["CRYPTO_AGENT_RUNTIME_DIR"] = tmp
     # Phase0 T0.4：ServiceTrader 也必须传 db_path——本测试会 tick() 触发
     # scan_signals，不隔离会把测试决策行写进生产 scan_decisions（DEF-8）。
     trader = ServiceTrader(exchange=fake, rt=None,
@@ -71,19 +85,62 @@ def main():
     trader.threshold_learner = ThresholdLearner(path="test", db_path=os.path.join(tmp, "threshold.db"),
                                                 initial_threshold=config.THRESHOLD_INITIAL)
     trader.exp_bank = ScoredExperience(path=os.path.join(tmp, "exp.json"))
+    # 把 storage 默认路径指向哨兵库：任何端点漏传 trader._db_path 都会在
+    # 哨兵留下行，测试可直接捕获，且无论如何都不会碰生产库。
+    import storage.db as sdb
+    sentinel_db = os.path.join(tmp, "default_path_sentinel.db")
+    sdb.init_db(sentinel_db)
+    original_default_db = sdb.DB_PATH
+    sdb.DB_PATH = sentinel_db
     worker = _FakeWorker(trader)
-    app.state.worker = worker
+    app = create_app(worker_factory=lambda: worker)
     trader._last_scan = 0
     trader._last_risk_update = 0
     trader.signal_cool = {}
 
     # base_url=127.0.0.1:让 Host 头落在控制面白名单内(审计 B-H1 的 Host 校验)
+    check("app factory 每次返回独立实例",
+          app is not create_app(worker_factory=lambda: worker))
+    check("lifespan 前未创建 worker", not hasattr(app.state, "worker"))
     client = TestClient(app, base_url="http://127.0.0.1")
+    client.__enter__()
+    check("lifespan 启动 worker 且注入 app.state",
+          worker.start_calls == 1 and app.state.worker is worker)
+
+    original_web_concurrency = os.environ.get("WEB_CONCURRENCY")
+    os.environ["WEB_CONCURRENCY"] = "2"
+    guarded_worker = _FakeWorker(trader)
+    guard_factory_calls = []
+
+    def guard_factory():
+        guard_factory_calls.append(1)
+        return guarded_worker
+
+    try:
+        try:
+            with TestClient(create_app(worker_factory=guard_factory),
+                            base_url="http://127.0.0.1"):
+                pass
+            rejected_multi_worker = False
+        except RuntimeError:
+            rejected_multi_worker = True
+    finally:
+        if original_web_concurrency is None:
+            os.environ.pop("WEB_CONCURRENCY", None)
+        else:
+            os.environ["WEB_CONCURRENCY"] = original_web_concurrency
+    check("单 worker 守卫在创建 worker 前拒绝 WEB_CONCURRENCY=2",
+          rejected_multi_worker and not guard_factory_calls
+          and guarded_worker.start_calls == 0)
+
     print("== 聚合冒烟（全部只读端点一次遍历）==")
     smoke_ok, smoke_detail = True, []
     for path in ("/health", "/status", "/watchlist", "/journal", "/realtime/FAKE",
                  "/error", "/analysis/latest", "/reconcile", "/scan/evolve",
-                 "/agent/status", "/agent/runs", "/agent/evaluation"):
+                 "/agent/status", "/agent/runs", "/agent/evaluation",
+                 "/models/entry", "/forecast/calibration", "/factors/trials",
+                 "/research/readiness",
+                 ):
         r = client.get(path)
         try:
             r.json()
@@ -93,7 +150,7 @@ def main():
         if not ok:
             smoke_ok = False
             smoke_detail.append(f"{path}→{r.status_code}")
-    check("12 个只读端点全部 200+JSON 可解析", smoke_ok)
+    check("16 个只读端点全部 200+JSON 可解析", smoke_ok)
     if smoke_detail:
         print(f"    失败明细: {smoke_detail}")
     r = client.get("/scan/evolve")
@@ -108,7 +165,31 @@ def main():
           and "runs" in client.get("/agent/runs").json())
     check("/agent/evaluation 返回成熟度统计",
           client.get("/agent/evaluation").status_code == 200
-          and "incremental_ev" in client.get("/agent/evaluation").json())
+          and "incremental_ev" in client.get("/agent/evaluation").json()
+          and "incremental_ev_lower_bound" in
+          client.get("/agent/evaluation").json()["harness"])
+    check("/models/entry 默认无模型且禁止扩大预算",
+          client.get("/models/entry").json() ==
+          {"models": [], "budget_expansion_allowed": False})
+    check("/forecast/calibration 无样本明确 uncalibrated",
+          client.get("/forecast/calibration").json()["status"] == "uncalibrated")
+    check("/factors/trials 返回结构化列表",
+          "trials" in client.get("/factors/trials").json())
+    research_readiness = client.get("/research/readiness").json()
+    check("/research/readiness 不把空测试库冒充统计完成",
+          research_readiness["statistically_complete"] is False
+          and research_readiness["counts"]["paper_closed"] == 0
+          and research_readiness["counts"]["raw_candidate_snapshots"] == 0
+          and research_readiness["counts"]["duplicate_version_snapshots"] == 0
+          and research_readiness["budget"]["expansion_allowed"] is False)
+    breakout_readiness = client.get(
+        "/research/readiness?strategy_id=B_breakout")
+    check("/research/readiness 可按 B 策略独立审计",
+          breakout_readiness.status_code == 200
+          and breakout_readiness.json()["scope"]["strategy_id"] == "B_breakout"
+          and breakout_readiness.json()["counts"]["paper_closed"] == 0)
+    check("/research/readiness 拒绝未知策略",
+          client.get("/research/readiness?strategy_id=unknown").status_code == 422)
     r = client.post("/scan/evolve/approve")
     check("无验证通过提案时 /scan/evolve/approve → 409",
           r.status_code == 409)
@@ -124,12 +205,20 @@ def main():
           all(k in j for k in ("total_notional_usdt", "open_notional_usdt", "today_notional_usdt")))
     r = client.get("/realtime/FAKE")
     check("/realtime rt=None 时 fresh=false 不崩", r.json()["fresh"] is False)
+    check("/realtime 无盘口流时显式返回 missing 而非伪值",
+          r.json()["orderflow_status"] == "missing" and
+          r.json()["ofi_event_multilevel"] is None and
+          r.json()["ofi_event_count"] == 0)
     r = client.post("/analysis/daily")
     j = r.json()
     check("/analysis/daily 跑通（含 report/issues）",
           r.status_code == 200 and "report" in j and "issues" in j)
     r = client.get("/analysis/latest")
     check("/analysis/latest 触发后有报告", r.status_code == 200 and r.json()["report"] is not None)
+    check("分析报告写入 trader 隔离库",
+          sdb.q1("SELECT COUNT(*) n FROM analyses", db_path=trader._db_path)["n"] == 1)
+    check("服务端点没有回落到默认数据库",
+          sdb.q1("SELECT COUNT(*) n FROM analyses", db_path=sentinel_db)["n"] == 0)
     # /signals/{base}：FakeAdapter 灌 K 线出信号（复用 test_exchange_layers 的构造）
     from test_exchange_layers import make_candles
     fake.candles["BTC-USDT-SWAP"] = make_candles()
@@ -163,6 +252,9 @@ def main():
     opened = [x for x in trader.journal.trades if x["status"] == "open"]
     check("journal 记录投注额 notional_usdt", opened and opened[-1].get("notional_usdt", 0) > 0)
     check("journal 记录风险额 risk_usdt", opened and opened[-1].get("risk_usdt", 0) > 0)
+    check("journal 记录策略身份 strategy_id",
+          opened and opened[-1].get("strategy_id") ==
+          config.ENTRY_SIGNAL_STRATEGY_ID)
     r = client.get("/journal")
     jr = r.json()
     check("/journal 交易项含 notional_usdt",
@@ -175,9 +267,11 @@ def main():
     check("/reconcile 200 且 balanced", r.status_code == 200 and rc["balanced"] is True)
     check("/reconcile per_symbol 含 BTC", any(p["symbol"] == "BTC" for p in rc["per_symbol"]))
 
-    # 心跳文件（tick 会写 heartbeat_directional.txt）
-    check("tick 写心跳文件", os.path.exists("heartbeat_directional.txt")
-          and time.time() - float(open("heartbeat_directional.txt").read().strip()) < 30)
+    # paper 模式必须读本测试运行目录里的 heartbeat_paper，不能误读活体
+    # heartbeat_directional 形成假绿。
+    heartbeat = os.path.join(tmp, "heartbeat_paper.txt")
+    check("tick 写入隔离的 paper 心跳文件", os.path.exists(heartbeat)
+          and time.time() - float(open(heartbeat).read().strip()) < 30)
 
     # 旧记录 legacy 单位回填：写入一张 legacy journal 记录（0.5 张 ETH），
     # 回填后 notional = 0.5 × ctVal(0.1) × entry，且标 size_unit
@@ -220,6 +314,64 @@ def main():
     check("总盈亏约等于名义×2%（不是把 2% 写成 2）",
           expected is not None and abs(expected - 0.02 * notional) < 0.05)
 
+    print("== 日内研究生产调度 ==")
+    from unittest.mock import patch
+    from service.worker import (run_intraday_research_cycle,
+                                _intraday_research_retry_marker,
+                                _record_background_failure)
+    calls = []
+
+    def fake_mining(db_path=None, strategy_id=None):
+        calls.append(("factor", strategy_id, db_path))
+        return [{"status": "insufficient_data"}]
+
+    def fake_entry(direction, db_path=None, strategy_id=None):
+        calls.append(("entry", strategy_id, direction))
+        return {"status": "insufficient_data"}
+
+    def fake_extrema(direction, db_path=None, strategy_id=None):
+        calls.append(("extrema", strategy_id, direction))
+        return {"status": "insufficient_data"}
+
+    with patch("factors.intraday_factor_mining.run_mining", fake_mining), \
+            patch("factors.entry_model_training.train_entry_model", fake_entry), \
+            patch("factors.extrema_model_training.train_extrema_model", fake_extrema), \
+            patch("decision.model_lifecycle.advance", return_value=[]):
+        research = run_intraday_research_cycle(os.path.join(tmp, "research.db"))
+    expected_strategies = {config.ENTRY_SIGNAL_STRATEGY_ID,
+                           config.BREAKOUT_SIGNAL_STRATEGY_ID}
+    check("paper worker 自动研究 A/B 两个策略且证据隔离",
+          {row["strategy_id"] for row in research["strategies"]} ==
+          expected_strategies and not research["errors"] and
+          {(kind, sid) for kind, sid, _ in calls if kind == "factor"} ==
+          {("factor", sid) for sid in expected_strategies})
+    check("每个策略分别训练 long/short 的概率与极值模型",
+          all(sum(1 for kind, strategy_id, direction in calls
+                  if kind == model_type and strategy_id == sid and
+                  direction in ("long", "short")) == 2
+              for model_type in ("entry", "extrema")
+              for sid in expected_strategies))
+    error_db = os.path.join(tmp, "research-error.db")
+    error_trader = type("ErrorTrader", (), {
+        "_db_path": error_db, "last_error": ""})()
+    try:
+        raise RuntimeError("research failed")
+    except RuntimeError as exc:
+        _record_background_failure(error_trader, "intraday_research", exc)
+    research_error = sdb.q1(
+        "SELECT engine,error FROM engine_errors ORDER BY id DESC LIMIT 1",
+        db_path=error_db)
+    check("日内研究失败进入 /error 与隔离事件库而非静默 24h",
+          "research failed" in error_trader.last_error and
+          research_error and research_error["engine"] == "intraday_research")
+    retry_marker = _intraday_research_retry_marker(now=1_000_000)
+    next_due = retry_marker + config.FACTOR_MINING_INTERVAL_HOURS * 3600
+    check("日内研究失败按配置退避 15 分钟而非等待下一天",
+          next_due - 1_000_000 == config.FACTOR_MINING_RETRY_SECONDS)
+
+    client.__exit__(None, None, None)
+    check("lifespan 退出仅停止 worker 一次", worker.stop_calls == 1)
+    sdb.DB_PATH = original_default_db
     print(f"\n结果: {passed} 通过, {failed} 失败")
     sys.exit(1 if failed else 0)
 

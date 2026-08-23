@@ -58,7 +58,9 @@ def _save(claims):
     lines = []
     for tag, c in sorted(claims.items()):
         files = ",".join(sorted(set(c["files"])))
-        lines.append(f"- {tag} | {c['ts']:.0f} | {files} | {c.get('commit', '')}")
+        commit = c.get("commit", "")
+        suffix = f" | {commit}" if commit else ""
+        lines.append(f"- {tag} | {c['ts']:.0f} | {files}{suffix}")
     block = ("<!-- AGENT_CLAIMS_BEGIN -->\n" + "\n".join(lines)
              + ("\n" if lines else "") + "<!-- AGENT_CLAIMS_END -->")
     src = re.sub(r"<!-- AGENT_CLAIMS_BEGIN -->\n(.*?)\n?<!-- AGENT_CLAIMS_END -->",

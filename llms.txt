@@ -27,17 +27,27 @@
 
 ## 计划与设计（当前活跃方案）
 
+- [docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md](docs/plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md): 15m 主周期/4h horizon 的开仓准确率、因子挖掘、极值区间预测与 Agent 增量验证权威实施稿（T0–T10）
 - [docs/plans/2026-08-16_self_evolution_design.md](docs/plans/2026-08-16_self_evolution_design.md): 自进化系统设计方案 v0.2 —— 复盘驱动的系统与策略改进（DEF 缺陷清单/业界标准 S1-S5 验收/Phase 0-5/质疑轮/零回归约束/权责矩阵）
 - [docs/plans/2026-08-23_agent_harness_improvement_FINAL.md](docs/plans/2026-08-23_agent_harness_improvement_FINAL.md): 交易 Agent Harness 权威实施稿 —— 版本化上下文/三层记忆/只读工具/确定性策略核/Trace/Eval/champion-challenger/回滚
 - [docs/reports/2026-08-16_strategy_research.md](docs/reports/2026-08-16_strategy_research.md): 业界策略调研（订单流 CVD/聪明钱 SMC 批评/分场景策略套件/开源机器人，附来源 URL）
+- [docs/reports/2026-08-23_15m_research_replay_report.md](docs/reports/2026-08-23_15m_research_replay_report.md): 真实 OKX SWAP 15m/4h 历史重放、自动因子/概率/极值裁决；当前成本后 EV 与模型门均未通过
 
 ## 因子研究
 
 - [docs/prompts/2026-08-16_factor_mining_goal_prompt.md](docs/prompts/2026-08-16_factor_mining_goal_prompt.md): 因子挖掘完善目标 prompt（原理/业界标准/验证门/影子政策）
 - [factors/factor_gate.py](factors/factor_gate.py): 因子验证门（walk-forward t 值 ≥3.0 / 成本扣除 / 去冗余 / 经济逻辑必填 + factor_trials 试验日志）
 - [factors/overfit_guard.py](factors/overfit_guard.py): 防过拟合守卫（Deflated Sharpe + CSCV-PBO）
+- [factors/feature_registry.py](factors/feature_registry.py): 15m 信号时点特征注册表（公式/来源/缺失策略/理论依据/版本）
+- [factors/intraday_factor_mining.py](factors/intraday_factor_mining.py): 只消费去重候选与 4h 结果的自动因子挖掘入口
+- [factors/intraday_factor_gate.py](factors/intraday_factor_gate.py): purged walk-forward、embargo、成本后 EV、DSR/PBO 与稳定性验证门
+- [factors/entry_model_training.py](factors/entry_model_training.py): long/short 分离的开仓概率模型训练与样本外评价
+- [factors/extrema_model_training.py](factors/extrema_model_training.py): 最高/最低条件分位模型训练、pinball/coverage/conformal 评价
 - [tools/strategy_report.py](tools/strategy_report.py): 策略体检报告（SQN≥30 笔才报/MAE-MFE 分布/特征缺失率）
 - [tools/replay_signals.py](tools/replay_signals.py): 决策重放集（影子数据，只给证伪权）
+- [tools/replay_15m_research.py](tools/replay_15m_research.py): 只接受 SWAP 的 15m 候选/4h 1m 路径独立研究重放（公开行情回填、as-of、防缺口、拒绝运行库）
+- [tools/entry_accuracy_audit.py](tools/entry_accuracy_audit.py): 只读统计完成度审计；分开核验自然 paper、六维、候选类别、因子/模型、校准、Agent 增量与长期 EV 预算锁
+- [tools/evaluate_15m_research.py](tools/evaluate_15m_research.py): research-only 重放库的一键因子/模型/成本 EV/校准停止裁决
 - [tools/health_check.py](tools/health_check.py): 系统体检 H1-H10（launchd 每 5 分钟）
 
 ## 代码
@@ -46,14 +56,30 @@
 - [decision/scan_evolve.py](decision/scan_evolve.py): 扫描尺子进化（REJECT_WICK_RATIO 提案→影子→DSR 门→人工批准）
 - [engines/directional_trader.py](engines/directional_trader.py): 方向性引擎核心壳（入口/组装/tick 主循环；功能块 2026-08-20 拆分）
 - [engines/signal_scan.py](engines/signal_scan.py): 信号扫描功能块（SignalScanMixin）
+- [engines/signal_sampling.py](engines/signal_sampling.py): 15m 结构候选冻结、同 K 幂等与决策轨迹更新
 - [engines/position_mgmt.py](engines/position_mgmt.py): 仓位管理功能块（PositionMixin）
 - [engines/risk_monitor.py](engines/risk_monitor.py): 风控监控功能块（RiskMonitorMixin）
 - [engines/review_pipeline.py](engines/review_pipeline.py): 复盘管道功能块（ReviewMixin）
 - [engines/daily_scan.py](engines/daily_scan.py): 每日全市场候选扫描（走 ExchangeAdapter，禁止裸打 OKX）
+- [decision/signal_outcomes.py](decision/signal_outcomes.py): 4h/1m TP/SL 首触、MFE/MAE 与最高/最低路径标签
+- [decision/entry_probability.py](decision/entry_probability.py): 固定 2:1 开仓概率、成本后 EV 95% 下界与 paper 严格前置门
+- [decision/extrema_forecast.py](decision/extrema_forecast.py): 最高/最低 q10/q50/q90 与 conformal 区间消费端
+- [decision/model_lifecycle.py](decision/model_lifecycle.py): 模型 shadow、观察、晋升、退化回滚与预算扩大否决
+- [decision/agent_harness.py](decision/agent_harness.py): 版本化上下文、记忆、只读工具、模型契约与 Trace 编排
+- [decision/agent_judge.py](decision/agent_judge.py): legacy AI 现役否决与 paper Harness shadow provider 的生产接线桥
+- [decision/agent_policy.py](decision/agent_policy.py): Agent 确定性策略核（默认 shadow、故障回量化基线）
+- [decision/agent_evaluation.py](decision/agent_evaluation.py): Harness 与旧 AI 把关的反事实增量评价
+- [storage/agent_harness.py](storage/agent_harness.py): Agent runs/steps/evaluations 持久化
+- [storage/agent_memory.py](storage/agent_memory.py): 证据范围记忆、成熟度过滤与衰减
 - [exchange/okx_adapter.py](exchange/okx_adapter.py): OKX 原生 REST 适配器
 - [exchange/ccxt_adapter.py](exchange/ccxt_adapter.py): ccxt.pro 适配器（后端选择见 config.REALTIME_BACKEND）
 - [tests/test_exchange_layers.py](tests/test_exchange_layers.py): 分层单测（FakeAdapter 离线）
 - [tests/test_service_api.py](tests/test_service_api.py): 服务端接口单测（TestClient 离线）
+- [tests/test_signal_sampling.py](tests/test_signal_sampling.py): 15m 候选同 K 去重与版本身份
+- [tests/test_signal_outcomes.py](tests/test_signal_outcomes.py): 4h 首触、超时、歧义与路径完整性
+- [tests/test_entry_probability.py](tests/test_entry_probability.py): 开仓概率、Brier/precision、scope 与 fail-safe
+- [tests/test_extrema_calibration.py](tests/test_extrema_calibration.py): 极值分位、覆盖率、交叉拒绝与生命周期
+- [tests/test_agent_harness_end_to_end.py](tests/test_agent_harness_end_to_end.py): Agent Harness 端到端 shadow/fallback 行为
 - [tools/ai_repo_check.py](tools/ai_repo_check.py): AI 入口、Markdown 链接、llms 与 docs 索引守卫
 
 ## 运维

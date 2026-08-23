@@ -29,6 +29,8 @@ class FakeAdapter(ExchangeAdapter):
                                               "BTC-USDT": 63000.0,
                                               "ANTHROPIC-USDT-SWAP": 180.0}
         self.funding_rates: Dict[str, float] = {}
+        self.open_interests: Dict[str, float] = {}
+        self.basis_values: Dict[str, float] = {}
         self.candles: Dict[str, List[Candle]] = {}
         self.positions: List[PositionInfo] = []
         self.orders: List[dict] = []          # 记录全部市价单动作
@@ -57,6 +59,12 @@ class FakeAdapter(ExchangeAdapter):
     def fetch_candles(self, inst_id: str, bar: str, limit: int = 100) -> List[Candle]:
         return self.candles.get(inst_id, [])[-limit:]
 
+    def fetch_candles_range(self, inst_id: str, bar: str, since_ms: int,
+                            until_ms: int, max_bars: int = 1800) -> List[Candle]:
+        rows = [row for row in self.candles.get(inst_id, [])
+                if since_ms <= row.ts <= until_ms]
+        return rows[:max_bars]
+
     def fetch_ticker_last(self, inst_id: str) -> float:
         if inst_id not in self.last_prices:
             raise ExchangeError(f"无价格: {inst_id}")
@@ -64,6 +72,12 @@ class FakeAdapter(ExchangeAdapter):
 
     def fetch_funding_rate(self, inst_id: str) -> float:
         return self.funding_rates.get(inst_id, 0.0)
+
+    def fetch_open_interest(self, inst_id: str) -> Optional[float]:
+        return self.open_interests.get(inst_id)
+
+    def fetch_basis(self, inst_id: str) -> Optional[float]:
+        return self.basis_values.get(inst_id)
 
     def fetch_tickers(self, venue: str = "swap") -> List[TickerInfo]:
         out = []

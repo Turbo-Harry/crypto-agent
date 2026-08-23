@@ -72,7 +72,7 @@ def test_experiments_judge():
           f"实际 {st}")
     propose("chg_2", "threshold", '{"th": 70}', db_path=db)
     st, ev = judge("chg_2", list(rng.normal(0, 0.01, 40)), db_path=db)
-    check("30+ 噪声样本 → rejected（DSR<1）", st == "rejected",
+    check("30+ 噪声样本 → rejected（DSR<0.95）", st == "rejected",
           f"实际 {st} dsr={ev['dsr']}")
     propose("chg_3", "threshold", '{"th": 70}', db_path=db)
     st, ev = judge("chg_3", list(rng.normal(0.01, 0.005, 40)), db_path=db)

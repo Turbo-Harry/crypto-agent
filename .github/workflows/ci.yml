@@ -44,20 +44,22 @@ jobs:
       - name: Fix regression guards
         run: python tools/fix_guard.py
 
-      - name: Full offline test suite (27 scripts)
+      - name: Full offline test suite (auto-discovered)
         env:
           CRYPTO_AGENT_MODE: paper
           PYTHONPATH: "lib:."
         run: |
           test_files=(tests/test_*.py)
-          if [ "${#test_files[@]}" -ne 27 ]; then
-            echo "Expected 27 test scripts, found ${#test_files[@]}"
+          if [ "${#test_files[@]}" -lt 1 ]; then
+            echo "No test scripts discovered"
             exit 1
           fi
+          echo "Discovered ${#test_files[@]} offline test scripts"
           for test_file in "${test_files[@]}"; do
             test_name="$(basename "$test_file" .py)"
             echo "Running $test_file"
             CRYPTO_AGENT_DB="$RUNNER_TEMP/${test_name}.db" \
             CRYPTO_AGENT_EVENTS_FILE="$RUNNER_TEMP/${test_name}.events.jsonl" \
+            CRYPTO_AGENT_RUNTIME_DIR="$RUNNER_TEMP/${test_name}.runtime" \
               python "$test_file"
           done
