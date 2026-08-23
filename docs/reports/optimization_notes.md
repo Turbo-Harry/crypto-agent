@@ -960,3 +960,15 @@
   quick_check=ok，Harness v2 新增 4 条 completed/replayable/evidence 完整 Trace 和 4 条 pending 评价，
   未再出现 Trace 持久化告警。paper 健康、心跳 0.7 秒、空仓、对账一致、`/error` 为空；六类
   pending 条件单均为 0。入场模型仍为空、预算扩张仍锁定，不据此宣称胜率已提高。
+
+## 2026-08-23 Harness v3 反事实市场证据口径
+
+- v2 活体诊断：4 条不同 A 候选均为 abstain，风险/信心固定 0.55/0.60，缺失理由全部锚定空入场模型；
+  Trace 已完整，但这种标签没有分辨率，也不可能积累 30 个 qualified reject。
+- v3 单变量变更：只改 prompt 身份与语义，不改模型、context、0.70/0.70 reject 门、量化基线或风险预算。
+  明确忽略 `no_validated_active_model`、未校准预测和 route abstain 等治理元数据，只按冻结市场证据做
+  反事实亏损概率标注；证据不足仍 abstain，Agent 仍只能否决、不能放行。
+- 本地证伪：同一 30 天终值候选把固定 2:1 风险距离扩到 0.75～4 倍，A/B 多空四组扣费后 EV 仍全部
+  为负；B 多头最好为 -0.087R，禁止改止损。预声明 11 特征本地 logit 对 B 多头的 10%～30% 覆盖
+  也全部负 EV，且 precision 不优于同覆盖率现役分数，禁止生成模型。外部历史 replay 因数据出站
+  未获明确授权而停止，不把缺失的模型调用结果伪装成证据。
