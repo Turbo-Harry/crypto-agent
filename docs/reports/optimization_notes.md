@@ -1135,3 +1135,10 @@
 - 修复：三周期统一预取 `MIN_BARS+2`，过滤逻辑和 60 根有效门完全不变；回归测试显式断言三次
   请求均为 62 根、proposal run 可落库、2:1 几何仍由代码生成、fake orders/algos 均为空。
   修复只恢复 paper-only shadow 反事实采样，不给 C_agent_proposal 执行、veto 或预算权限。
+- 部署验收：提交 `9f94579` 后只 kickstart `com.crypto.paper`，模拟盘 PID 12828→14086；8090
+  `com.crypto.agent` 始终为原 PID 90574。02:35 自然扫描首次记录 1 个 run、1 个 AAVE long 提案，
+  `runtime_status=completed`、确定性几何 `reward_risk=2.0`、`valid_count=1`；因
+  `no_validated_active_model` 保持 `prediction_passed=0`、`execution_authority=0`，没有订单。
+  `/health` ok、未暂停，`/status` 空仓/未熔断/敞口 0，`/reconcile balanced=true`、`/error`
+  为空；`/models/entry` 仍为空且 `budget_expansion_allowed=false`。这证明采样链已恢复，不代表
+  提案或入场模型已经通过正期望验证。
