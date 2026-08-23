@@ -72,6 +72,8 @@ class AgentProposalReplayTest(unittest.TestCase):
     def test_one_event_replays_idempotently_and_settles_without_authority(self):
         calls = []
         active_prompt_version = replay_tool.config.AGENT_PROPOSAL_PROMPT_VERSION
+        active_implementation_version = (
+            replay_tool.config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
 
         def model(prompt):
             calls.append(prompt)
@@ -100,6 +102,9 @@ class AgentProposalReplayTest(unittest.TestCase):
                          json.loads(calls[0])["snapshots"][0])
         self.assertEqual(replay_tool.config.AGENT_PROPOSAL_PROMPT_VERSION,
                          active_prompt_version)
+        self.assertEqual(
+            replay_tool.config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION,
+            active_implementation_version)
         conn = sqlite3.connect(self.output_db)
         self.assertEqual(conn.execute(
             "SELECT COUNT(*) FROM agent_proposal_runs").fetchone()[0], 1)

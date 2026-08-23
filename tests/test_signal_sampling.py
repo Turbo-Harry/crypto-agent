@@ -115,6 +115,16 @@ def main():
             config.BREAKOUT_LOOKBACK = old_lookback
         check("B 突破参数只改变 B 候选身份",
               b_version != b_changed and a_version == a_unchanged)
+        c_version = config_identity(config.AGENT_PROPOSAL_STRATEGY_ID)[0]
+        old_impl = config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION
+        try:
+            config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION = old_impl + "-fixture"
+            c_changed = config_identity(config.AGENT_PROPOSAL_STRATEGY_ID)[0]
+            a_unchanged = config_identity(config.ENTRY_SIGNAL_STRATEGY_ID)[0]
+        finally:
+            config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION = old_impl
+        check("C 实现版本只改变 Agent 提案候选身份",
+              c_version != c_changed and a_version == a_unchanged)
 
         sid = results[0][0]
         update_signal_decision(sid, db_path=db, rule_decision="pass",

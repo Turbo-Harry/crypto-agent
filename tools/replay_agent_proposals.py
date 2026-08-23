@@ -41,6 +41,7 @@ VALIDATION_END_TS = 1_787_486_400.0  # 2026-08-23 12:00 UTC (inclusive event)
 EVENT_STRIDE_SECONDS = 12 * 3600
 REPLAY_VERSION = "agent-proposal-causal-replay-v1"
 FROZEN_PROMPT_VERSION = "agent-proposal-v1"
+FROZEN_IMPLEMENTATION_VERSION = "agent-proposal-impl-v1"
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
 
 
@@ -190,12 +191,15 @@ def _estimated_call_cost(prompt: str) -> tuple[int, int, float]:
 @contextmanager
 def _frozen_v1_protocol():
     """Scope the research process to the predeclared v1 prompt identity."""
-    previous = config.AGENT_PROPOSAL_PROMPT_VERSION
+    previous = (config.AGENT_PROPOSAL_PROMPT_VERSION,
+                config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
     config.AGENT_PROPOSAL_PROMPT_VERSION = FROZEN_PROMPT_VERSION
+    config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION = FROZEN_IMPLEMENTATION_VERSION
     try:
         yield
     finally:
-        config.AGENT_PROPOSAL_PROMPT_VERSION = previous
+        (config.AGENT_PROPOSAL_PROMPT_VERSION,
+         config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION) = previous
 
 
 def _record_cost(output_db: str, run_id: str, phase: str,

@@ -266,14 +266,18 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
     model_version = str(getattr(model_call, "model_version", None) or
                         config.AGENT_JUDGE_MODEL)
     cycle_ts = max(item.kline_ts for item in ordered)
-    cycle_key = stable_hash({
+    cycle_identity = {
         "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
         "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
         "kline_ts": cycle_ts,
         "prompt_version": config.AGENT_PROPOSAL_PROMPT_VERSION,
         "schema_version": config.AGENT_PROPOSAL_SCHEMA_VERSION,
         "model_version": model_version,
-    })
+    }
+    if config.AGENT_PROPOSAL_PROMPT_VERSION != "agent-proposal-v1":
+        cycle_identity["implementation_version"] = (
+            config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
+    cycle_key = stable_hash(cycle_identity)
     existing = _read_existing(cycle_key, db_path)
     if existing:
         return existing
@@ -289,6 +293,9 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
         "minimum_confidence": config.AGENT_PROPOSAL_MIN_CONFIDENCE,
         "snapshots": snapshot_payload,
     }
+    if config.AGENT_PROPOSAL_PROMPT_VERSION != "agent-proposal-v1":
+        prompt_payload["implementation_version"] = (
+            config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
     prompt = canonical_json(prompt_payload)
     input_hash = stable_hash(prompt_payload)
     run_id = "proposal-run-" + cycle_key[:24]

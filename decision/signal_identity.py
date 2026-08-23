@@ -54,6 +54,10 @@ def config_identity(strategy_id: Optional[str] = None) -> Tuple[str, str]:
             "BREAKOUT_LOOKBACK": jsonable(config.BREAKOUT_LOOKBACK),
             "BREAKOUT_VOL_RATIO": jsonable(config.BREAKOUT_VOL_RATIO),
         })
+    if (strategy_id == config.AGENT_PROPOSAL_STRATEGY_ID and
+            config.AGENT_PROPOSAL_PROMPT_VERSION != "agent-proposal-v1"):
+        snapshot["AGENT_PROPOSAL_IMPLEMENTATION_VERSION"] = jsonable(
+            config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
     snapshot["STRATEGY_ID"] = strategy_id
     raw = json.dumps(snapshot, sort_keys=True, separators=(",", ":"),
                      ensure_ascii=True).encode("utf-8")

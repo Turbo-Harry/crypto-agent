@@ -1255,3 +1255,9 @@
   可复算。回放工具现以作用域明确锁定 `agent-proposal-v1`，同时恢复 v1 payload 形状、System Prompt、
   cycle key 与 signal strategy identity；退出作用域必定还原现役 v2。历史否决证据保持原协议，v2
   自然样本也不会反向污染 v1 重放。
+- 部署竞态隔离：提交后重启前，旧 PID 14086 热读到新 Prompt 字符串，曾产生 1 个标为 v2、但
+  `input_hash` 与同 K 的 v1 完全相同的 run（2 条提案）；它不含新微观结构实现，不能计入 v2。
+  模拟盘已先重启至 PID 34590 结束旧内存。随后新增独立
+  `AGENT_PROPOSAL_IMPLEMENTATION_VERSION=agent-proposal-impl-v2-microstructure`，同时进入 v2 cycle key、
+  prompt payload 和仅 C 策略的 signal identity；因此该竞态 run 与最终 v2 自然证据永久隔离，A/B
+  身份不受影响。v1 回放作用域仍省略该字段，保持原 cycle key/payload/identity。
