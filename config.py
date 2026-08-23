@@ -195,7 +195,7 @@ AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
 # evidence ID for every non-empty proposal, and audits structured abstention.
 # It remains paper-only shadow evidence with no execution authority.
 AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v3-audited-microstructure"
-AGENT_PROPOSAL_IMPLEMENTATION_VERSION = "agent-proposal-impl-v3-audited-microstructure"
+AGENT_PROPOSAL_IMPLEMENTATION_VERSION = "agent-proposal-impl-v3.1-audited-microstructure"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",

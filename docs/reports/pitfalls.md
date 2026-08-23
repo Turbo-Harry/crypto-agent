@@ -991,3 +991,13 @@
   强制引用该证据，空仓强制标准原因。接口只统计完整 implementation identity 的可审计样本。
 - 预防：任何模型实验的 input hash 必须与可重建输入快照成对；abstain coverage 和原因分布应与非空
   conditional precision 分开报告，不能用“会空仓”替代提案本身准确。
+
+### 2026-08-24 沙箱内 loopback 失败不能证明本机服务离线
+
+- 现象：沙箱内 `curl 127.0.0.1:8091` 返回 connection refused，但 `launchctl print` 与 `lsof` 均显示
+  paper PID 仍在监听；旧进程因此在真正暂停前又运行了两个周期。
+- 根因：受限命令环境的本机网络可见性与宿主 launchd 进程不一致，把单一 curl 失败误判成进程离线。
+- 修复：用已批准的宿主侧 loopback 请求成功执行 `/pause`，并以 implementation v3.1 隔离暂停前产生的
+  两条无完整 audit 竞态 run；不删改历史数据库记录。
+- 预防：运行态变更必须以 `launchctl print + lsof + 宿主侧 health` 三证交叉确认；配置/代码共同升级前，
+  若普通 loopback 失败，应立即切换经批准的本机请求，不能继续假设服务已经停止。

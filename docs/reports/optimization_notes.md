@@ -1281,7 +1281,7 @@
   放大，无法针对条件精度做可靠诊断。
 - 固定协议：版本升级为 `agent-proposal-v3-audited-microstructure` / schema
   `agent-proposal-schema-v2-abstain-reason` / implementation
-  `agent-proposal-impl-v3-audited-microstructure`。每个 paper 批次原子冻结完整 canonical input snapshot、
+  `agent-proposal-impl-v3.1-audited-microstructure`。每个 paper 批次原子冻结完整 canonical input snapshot、
   版本、input hash、标的数和 15 个微观字段的 present/total/coverage；不保存凭证或下单能力。
 - 证据与空仓契约：每个自然微观快照新增带 as-of 毫秒的 evidence ID；非空提案必须至少引用对应标的
   一个 K 线证据和 microstructure 证据，否则以 `microstructure_evidence_required` 在几何前拒绝。
@@ -1293,3 +1293,5 @@
 - 权限与晋升门不变：v3 仍是 OKX paper-only shadow，0 下单、0 veto、0 预算扩大；可审计覆盖率只是
   数据质量，不是收益证明。至少 100 条当前协议的独立成熟非空提案及既有费用后 EV/精度下界/时间折/
   方向平衡门全部通过后，才能提出下一阶段人工批准。
+- 部署前隔离：旧 PID 在代码重启前热读 v3 配置，留下 2 条无 input audit 的伪 v3 run；历史行不删除，
+  最终实现身份提升为 v3.1，当前协议统计只接受带完整 audit 且 implementation 精确等于 v3.1 的 run。
