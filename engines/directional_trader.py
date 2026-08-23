@@ -34,6 +34,20 @@ import config
 SYMBOLS = config.SYMBOLS
 
 
+def _scan_slot(now: float) -> int:
+    """Return the close-grace-aligned scan slot for a wall-clock timestamp.
+
+    The service may start at an arbitrary second.  Anchoring repeated scans to
+    that startup second can begin a long sequential universe scan just before
+    a 5m/15m close, so early and late symbols observe different closed bars.
+    Slots are instead aligned to UTC interval boundaries and open only after
+    the existing exchange-close grace period.
+    """
+    interval = max(1, int(config.SCAN_INTERVAL_MINUTES * 60))
+    grace = float(config.SIGNAL_BAR_CLOSE_GRACE_SECONDS)
+    return int((float(now) - grace) // interval)
+
+
 def _refresh_config():
     """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
     把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
@@ -548,8 +562,11 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         # 1. tick 级止损止盈监控（每 2 秒 — OP-1，替代 6 小时轮询）
         if run_monitor:
             self.monitor()
-        # 2. 信号扫描（间隔 config.SCAN_INTERVAL_MINUTES — 2026-08-21 用户改 5 分钟）
-        if now - self._last_scan >= config.SCAN_INTERVAL_MINUTES * 60:
+        # 2. 信号扫描（UTC 5m 边界 + 收线缓冲）。不能按进程启动秒滚动，
+        # 否则一轮长扫描可能跨过 15m 收线，前后标的消费不同 K 线。
+        last_slot = (_scan_slot(self._last_scan)
+                     if self._last_scan and self._last_scan > 0 else -1)
+        if _scan_slot(now) > last_slot:
             self._last_scan = now
             self.scan_signals()
 

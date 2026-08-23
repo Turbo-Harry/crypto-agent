@@ -308,7 +308,7 @@ class SignalScanMixin:
                   f"{strategy_id}/{base}: {type(exc).__name__}: {exc}")
             return None
 
-    def _scan_strategy_b_shadow(self, base):
+    def _scan_strategy_b_shadow(self, base, as_of_ts=None):
         """15m 突破候选进入共同 4h 标签表；仍只 shadow，绝不触达执行链。"""
         if not config.STRATEGY_B_SHADOW_ENABLED:
             return None
@@ -317,10 +317,11 @@ class SignalScanMixin:
                                              enrich_shadow_signal,
                                              record_shadow)
             signal_tf = config.SIGNAL_SAMPLE_TIMEFRAME
+            as_of_ts = (time.time() if as_of_ts is None else float(as_of_ts))
             kl_b = self._fetch_klines_any(
                 base, signal_tf, config.SIGNAL_LOOKBACK_BARS)
             close_before = (
-                (time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) * 1000 -
+                (as_of_ts - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) * 1000 -
                 config.SIGNAL_TIMEFRAME_SECONDS[signal_tf] * 1000)
             kl_b = [row for row in (kl_b or []) if int(row[0]) <= close_before]
             if not kl_b:
@@ -335,6 +336,12 @@ class SignalScanMixin:
             try:
                 kl4 = self._fetch_klines_any(
                     base, config.SIGNAL_REGIME_TIMEFRAME, 60)
+                close_before_4h = (
+                    (as_of_ts - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) * 1000 -
+                    config.SIGNAL_TIMEFRAME_SECONDS[
+                        config.SIGNAL_REGIME_TIMEFRAME] * 1000)
+                kl4 = [row for row in (kl4 or [])
+                       if int(row[0]) <= close_before_4h]
                 closes_4h = [float(row[4]) for row in (kl4 or [])]
             except Exception:
                 closes_4h = None
@@ -419,16 +426,19 @@ class SignalScanMixin:
             return None
 
     # ---------- 信号：15m 回踩确认，1H/4H 只做环境 ----------
-    def scan_signal(self, base, wick_ratio=None):
+    def scan_signal(self, base, wick_ratio=None, as_of_ts=None):
         """检查某币的 15m 回踩确认信号。
         多周期共振过滤（MTF）：15m 信号方向必须与 1H/4H 趋势同向，
         只抓高概率时点，不频繁交易。返回信号 dict 或 None。
         wick_ratio: 覆盖影线门槛（扫描影子用候选值）；默认读批准后的活体值。"""
+        # 一轮扫描可能持续几十秒并跨过 15m 收线。调用方传入轮次冻结时刻，
+        # 保证排在前后的标的都只消费同一个“当时已收线”集合。
+        as_of_ts = time.time() if as_of_ts is None else float(as_of_ts)
         try:
             signal_tf = config.SIGNAL_SAMPLE_TIMEFRAME
             kl = self._fetch_klines_any(base, signal_tf,
                                          config.SIGNAL_LOOKBACK_BARS)
-            close_before = ((time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) *
+            close_before = ((as_of_ts - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) *
                             1000 - config.SIGNAL_TIMEFRAME_SECONDS[signal_tf] * 1000)
             kl = [row for row in (kl or []) if int(row[0]) <= close_before]
             if not kl:
@@ -439,6 +449,20 @@ class SignalScanMixin:
             return None
         if len(klines) < 60:
             return None
+        closes = [k["close"] for k in klines]
+        ema20 = ema(closes, 20)
+        ema50 = ema(closes, 50)
+        atr_val = atr(klines, 14)
+        last = klines[-1]
+        from decision.scan_evolve import effective_wick_ratio
+        ratio = (wick_ratio if wick_ratio is not None
+                 else effective_wick_ratio(getattr(self, "_db_path", None)))
+        # 绝大多数标的没有 15m 回踩结构。先用主周期做无副作用预检，
+        # 未命中时不再串行拉 1H/4H、ticker 与 forecast；真正命中后仍走
+        # 完整 MTF/特征/风控链，信号语义不变但后排候选等待显著缩短。
+        if not detect_pullback_setup(
+                last, ema20[-1], ema50[-1], ratio, mtf_enabled=False):
+            return None
         # 1H/4H 只是上下文；开启 MTF 时才作硬过滤。
         tf1h_trend = 0
         tf4h_trend = 0   # 1=多, -1=空, 0=未知（数据不足时视为无共振，放弃信号）
@@ -448,7 +472,7 @@ class SignalScanMixin:
             context_tf = config.SIGNAL_CONTEXT_TIMEFRAME
             kl1 = self._fetch_klines_any(base, context_tf, 60)
             close_before_1h = (
-                (time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) * 1000 -
+                (as_of_ts - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) * 1000 -
                 config.SIGNAL_TIMEFRAME_SECONDS[context_tf] * 1000)
             kl1 = [row for row in (kl1 or []) if int(row[0]) <= close_before_1h]
             if kl1:
@@ -461,7 +485,7 @@ class SignalScanMixin:
         try:
             regime_tf = config.SIGNAL_REGIME_TIMEFRAME
             kl4 = self._fetch_klines_any(base, regime_tf, 60)
-            close_before_4h = ((time.time() - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) *
+            close_before_4h = ((as_of_ts - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) *
                                1000 - config.SIGNAL_TIMEFRAME_SECONDS[regime_tf] * 1000)
             kl4 = [row for row in (kl4 or []) if int(row[0]) <= close_before_4h]
             if kl4:
@@ -471,12 +495,11 @@ class SignalScanMixin:
                     tf4h_trend = 1 if e20[-1] > e50[-1] else -1
         except Exception:
             tf4h_trend = 0
-        closes = [k["close"] for k in klines]
-        ema20 = ema(closes, 20)
-        ema50 = ema(closes, 50)
-        atr_val = atr(klines, 14)
-
-        last = klines[-1]
+        setup = detect_pullback_setup(
+            last, ema20[-1], ema50[-1], ratio, tf1h_trend, tf4h_trend,
+            MTF_ENABLED)
+        if not setup:
+            return None
         body = abs(last["close"] - last["open"])
         lower_wick = min(last["open"], last["close"]) - last["low"]
         upper_wick = last["high"] - max(last["open"], last["close"])
@@ -667,9 +690,6 @@ class SignalScanMixin:
             except Exception:
                 return None, None, None, {}
 
-        from decision.scan_evolve import effective_wick_ratio
-        ratio = (wick_ratio if wick_ratio is not None
-                 else effective_wick_ratio(getattr(self, "_db_path", None)))
         # 2026-08-23 目标价位带: 近20根摆动结构位(不含当前未收线K)
         _swing = None
         try:
@@ -695,7 +715,8 @@ class SignalScanMixin:
                               if _direction == "long" else
                               entry_ref - config.TP_ATR_MULT * atr_val)}
             _forecast = forecast_for_trade(
-                _fc_sig, base, klines, db_path=getattr(self, "_db_path", None))
+                _fc_sig, base, klines, db_path=getattr(self, "_db_path", None),
+                as_of_ts=as_of_ts)
         except Exception:
             _forecast = None
         kline_ts = last.get("ts") if isinstance(last, dict) else None
@@ -703,11 +724,6 @@ class SignalScanMixin:
         if kline_ts is None and kl:
             kline_ts = kl[-1][0]
 
-        setup = detect_pullback_setup(
-            last, ema20[-1], ema50[-1], ratio, tf1h_trend, tf4h_trend,
-            MTF_ENABLED)
-        if not setup:
-            return None
         direction = setup["direction"]
         score, dims, regime, factors = _shadow(
             setup["touch"], setup["wick"], direction)
@@ -734,7 +750,7 @@ class SignalScanMixin:
         from engines.daily_scan import trades_budget
         return trades_budget(self.watch_scores.get(base))
 
-    def _run_agent_proposal_shadow(self, scan_pool):
+    def _run_agent_proposal_shadow(self, scan_pool, as_of_ts=None):
         """每根 15m K 一次批量主动提案；只留样，不进入开仓分支。"""
         model_call = getattr(self, "agent_proposal_model_call", None)
         if (not config.AGENT_PROPOSAL_SHADOW_ENABLED or
@@ -748,7 +764,8 @@ class SignalScanMixin:
                 key=lambda symbol: (-float(self.watch_scores.get(symbol, -1)),
                                     symbol))
             snapshots = []
-            now_ms = time.time() * 1000
+            now_ms = (time.time() if as_of_ts is None else
+                      float(as_of_ts)) * 1000
             for base in ranked[:config.AGENT_PROPOSAL_MAX_SYMBOLS]:
                 progress = getattr(self, "_long_scan_progress", None)
                 if callable(progress):
@@ -900,6 +917,9 @@ class SignalScanMixin:
         _blocked = untradable_bases(self._db_path)
         if _blocked:
             scan_pool = [b for b in scan_pool if b not in _blocked]
+        # 冻结整轮的 K 线可见截止点。盘口/现价仍按各标的实际检查时刻读取，
+        # 但 15m/1H/4H 形态不能因顺序和网络耗时跨入下一根 K。
+        scan_as_of_ts = time.time()
         n_from_watch = sum(1 for b in scan_pool if b in self.watchlist)
         print(f"\n=== 方向性信号扫描 [{time.strftime('%H:%M:%S')}] "
               f"加密候选 {len(getattr(self, 'crypto_watchlist', []))} 个 + "
@@ -940,10 +960,11 @@ class SignalScanMixin:
             self._long_scan_progress()
             # A/B 必须在任何 A 的额度、冷却、模型或 AI continue 之前各自留样；
             # 否则“先判断行情再选策略”的比较集仍会带选择偏差。
-            kl_b = self._scan_strategy_b_shadow(base)
+            kl_b = self._scan_strategy_b_shadow(
+                base, as_of_ts=scan_as_of_ts)
             # 先形成结构候选，再做任何额度/冷却/规则/AI 门控。此前先检查
             # 额度与冷却会让被拒候选永久缺失，反事实样本带选择偏差。
-            sig = self.scan_signal(base)
+            sig = self.scan_signal(base, as_of_ts=scan_as_of_ts)
             if sig:
                 signal_id = None
                 try:
@@ -1182,7 +1203,7 @@ class SignalScanMixin:
             else:
                 print(f"{base}: 无回踩确认信号")
                 self._log_scan_decision(base, False, "", "no_signal", "")
-                self._maybe_wick_shadow(base)
+                self._maybe_wick_shadow(base, as_of_ts=scan_as_of_ts)
                 # 未触发 A 时复盘 B 的瓶颈；复用本轮已收线 15m 数据，不再拉 1H。
                 if kl_b:
                     try:
@@ -1196,9 +1217,10 @@ class SignalScanMixin:
 
         # 与 A/B 量化候选完全分账。无论 AI 是否提案，本轮都不会调用
         # open_position；有效提案只等待既有 4h 完整路径反事实结算。
-        self._run_agent_proposal_shadow(scan_pool)
+        self._run_agent_proposal_shadow(
+            scan_pool, as_of_ts=scan_as_of_ts)
 
-    def _maybe_wick_shadow(self, base):
+    def _maybe_wick_shadow(self, base, as_of_ts=None):
         """现役没信号时用候选影线比再扫一次；命中只记影子，绝不下单/不占冷却。"""
         if not config.SCAN_EVOLVE_ENABLED:
             return
@@ -1208,7 +1230,8 @@ class SignalScanMixin:
             cand = active_candidate(self._db_path)
             if not cand:
                 return
-            sig = self.scan_signal(base, wick_ratio=cand["wick"])
+            sig = self.scan_signal(
+                base, wick_ratio=cand["wick"], as_of_ts=as_of_ts)
             if not sig:
                 return
             if record_shadow(base, config.SCAN_EVOLVE_STRATEGY, sig,

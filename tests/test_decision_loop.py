@@ -27,7 +27,7 @@ from execution.trade_journal import (
     TradeJournal, realized_pnl_usdt, total_realized_pnl_usdt,
 )
 from exchange.fake_adapter import FakeAdapter
-from engines.directional_trader import DirectionalTrader, _ExpAdapter
+from engines.directional_trader import DirectionalTrader, _ExpAdapter, _scan_slot
 from engines.signal_scan import _dynamic_ofi, _microstructure_features
 
 
@@ -122,6 +122,7 @@ def test_microstructure_snapshot():
 def test_only_closed_kline_is_sampled(tmp):
     """尾部未收线 15m bar 不得改变形态或候选 kline_ts。"""
     print("== 只消费已收线 K ==")
+    import config
     work = os.path.join(tmp, "closed_kline")
     os.makedirs(work, exist_ok=True)
     dt, fake = _make_trader(work)
@@ -146,6 +147,54 @@ def test_only_closed_kline_is_sampled(tmp):
           sig is not None and sig["dir"] == "long")
     check("候选身份使用上一根闭合 K 时间",
           sig and sig["kline_ts"] == closed_ts)
+    grace = config.SIGNAL_BAR_CLOSE_GRACE_SECONDS
+    just_before_visible = (closed_ts + 900_000) / 1000 + grace - 0.001
+    just_after_visible = (closed_ts + 900_000) / 1000 + grace + 0.001
+    check("冻结时刻在收线缓冲前不得提前看到目标 K",
+          dt.scan_signal("BTC", as_of_ts=just_before_visible) is None)
+    frozen = dt.scan_signal("BTC", as_of_ts=just_after_visible)
+    check("冻结时刻越过收线缓冲后稳定看到同一目标 K",
+          frozen is not None and frozen["kline_ts"] == closed_ts)
+
+
+def test_scan_slot_alignment():
+    """滚动服务不得在 5m/15m 边界前启动跨周期扫描。"""
+    print("== 扫描调度按收线缓冲对齐 ==")
+    import config
+    interval = config.SCAN_INTERVAL_MINUTES * 60
+    boundary = interval * 10_000
+    before = _scan_slot(boundary - 1)
+    check("边界后但尚未过收线缓冲仍属于上一扫描槽",
+          _scan_slot(boundary + config.SIGNAL_BAR_CLOSE_GRACE_SECONDS - 0.001)
+          == before)
+    check("越过收线缓冲才开启新的 UTC 对齐扫描槽",
+          _scan_slot(boundary + config.SIGNAL_BAR_CLOSE_GRACE_SECONDS)
+          == before + 1)
+
+
+def test_no_setup_skips_slow_context(tmp):
+    """无 15m 结构时只取主周期，避免全池串行 1H/4H 延迟。"""
+    print("== 无主结构时跳过慢上下文 ==")
+    work = os.path.join(tmp, "no_setup_fast_path")
+    os.makedirs(work, exist_ok=True)
+    dt, fake = _make_trader(work)
+    candles = _make_candles()
+    from exchange.models import Candle
+    last = candles[-1]
+    candles[-1] = Candle(
+        ts=last.ts, open=last.close - 0.05, high=last.close + 0.1,
+        low=last.close - 0.1, close=last.close, volume=last.volume)
+    fake.candles["BTC-USDT-SWAP"] = candles
+    calls = []
+    original_fetch = dt._fetch_klines_any
+
+    def traced_fetch(base, timeframe, limit):
+        calls.append(timeframe)
+        return original_fetch(base, timeframe, limit)
+
+    dt._fetch_klines_any = traced_fetch
+    check("无回踩形态时无信号", dt.scan_signal("BTC") is None)
+    check("无结构只拉 15m，不再串行等待 1H/4H", calls == ["15m"])
 
 
 def test_decision_rules(tmp):
@@ -584,6 +633,8 @@ if __name__ == "__main__":
     test_realized_pnl_usdt()
     test_microstructure_snapshot()
     test_only_closed_kline_is_sampled(tmp)
+    test_scan_slot_alignment()
+    test_no_setup_skips_slow_context(tmp)
     test_decision_rules(tmp)
     test_experience_gate(tmp)
     test_stop_adj_effect(tmp)
