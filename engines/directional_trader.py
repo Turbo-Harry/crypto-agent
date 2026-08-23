@@ -568,7 +568,12 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                      if self._last_scan and self._last_scan > 0 else -1)
         if _scan_slot(now) > last_slot:
             self._last_scan = now
-            self.scan_signals()
+            try:
+                self.scan_signals()
+            finally:
+                # 启动时的每日全市场刷新可能跨过一个 5m 边界；本轮 K 线
+                # 截止点在刷新后才冻结，结束时归属当前槽，避免立即重复扫。
+                self._last_scan = time.time()
 
     def run(self):
         lock = acquire_instance_lock()

@@ -195,6 +195,12 @@ def test_no_setup_skips_slow_context(tmp):
     dt._fetch_klines_any = traced_fetch
     check("无回踩形态时无信号", dt.scan_signal("BTC") is None)
     check("无结构只拉 15m，不再串行等待 1H/4H", calls == ["15m"])
+    calls.clear()
+    check("复用策略 B 的同轮 15m 快照仍保持无信号",
+          dt.scan_signal("BTC", preloaded_kl=[
+              [row.ts, row.open, row.high, row.low, row.close, row.volume]
+              for row in candles]) is None)
+    check("A 复用同轮快照时不重复请求 15m", calls == [])
 
 
 def test_decision_rules(tmp):

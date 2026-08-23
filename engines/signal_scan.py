@@ -426,7 +426,8 @@ class SignalScanMixin:
             return None
 
     # ---------- 信号：15m 回踩确认，1H/4H 只做环境 ----------
-    def scan_signal(self, base, wick_ratio=None, as_of_ts=None):
+    def scan_signal(self, base, wick_ratio=None, as_of_ts=None,
+                    preloaded_kl=None):
         """检查某币的 15m 回踩确认信号。
         多周期共振过滤（MTF）：15m 信号方向必须与 1H/4H 趋势同向，
         只抓高概率时点，不频繁交易。返回信号 dict 或 None。
@@ -436,8 +437,9 @@ class SignalScanMixin:
         as_of_ts = time.time() if as_of_ts is None else float(as_of_ts)
         try:
             signal_tf = config.SIGNAL_SAMPLE_TIMEFRAME
-            kl = self._fetch_klines_any(base, signal_tf,
-                                         config.SIGNAL_LOOKBACK_BARS)
+            kl = (list(preloaded_kl) if preloaded_kl is not None else
+                  self._fetch_klines_any(
+                      base, signal_tf, config.SIGNAL_LOOKBACK_BARS))
             close_before = ((as_of_ts - config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) *
                             1000 - config.SIGNAL_TIMEFRAME_SECONDS[signal_tf] * 1000)
             kl = [row for row in (kl or []) if int(row[0]) <= close_before]
@@ -964,7 +966,8 @@ class SignalScanMixin:
                 base, as_of_ts=scan_as_of_ts)
             # 先形成结构候选，再做任何额度/冷却/规则/AI 门控。此前先检查
             # 额度与冷却会让被拒候选永久缺失，反事实样本带选择偏差。
-            sig = self.scan_signal(base, as_of_ts=scan_as_of_ts)
+            sig = self.scan_signal(
+                base, as_of_ts=scan_as_of_ts, preloaded_kl=kl_b)
             if sig:
                 signal_id = None
                 try:
@@ -1203,7 +1206,8 @@ class SignalScanMixin:
             else:
                 print(f"{base}: 无回踩确认信号")
                 self._log_scan_decision(base, False, "", "no_signal", "")
-                self._maybe_wick_shadow(base, as_of_ts=scan_as_of_ts)
+                self._maybe_wick_shadow(
+                    base, as_of_ts=scan_as_of_ts, preloaded_kl=kl_b)
                 # 未触发 A 时复盘 B 的瓶颈；复用本轮已收线 15m 数据，不再拉 1H。
                 if kl_b:
                     try:
@@ -1220,7 +1224,7 @@ class SignalScanMixin:
         self._run_agent_proposal_shadow(
             scan_pool, as_of_ts=scan_as_of_ts)
 
-    def _maybe_wick_shadow(self, base, as_of_ts=None):
+    def _maybe_wick_shadow(self, base, as_of_ts=None, preloaded_kl=None):
         """现役没信号时用候选影线比再扫一次；命中只记影子，绝不下单/不占冷却。"""
         if not config.SCAN_EVOLVE_ENABLED:
             return
@@ -1231,7 +1235,8 @@ class SignalScanMixin:
             if not cand:
                 return
             sig = self.scan_signal(
-                base, wick_ratio=cand["wick"], as_of_ts=as_of_ts)
+                base, wick_ratio=cand["wick"], as_of_ts=as_of_ts,
+                preloaded_kl=preloaded_kl)
             if not sig:
                 return
             if record_shadow(base, config.SCAN_EVOLVE_STRATEGY, sig,
