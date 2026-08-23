@@ -46,9 +46,14 @@
 
 ```bash
 cd crypto-agent
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python -m service.main
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python -m service.main --port 8091
 ```
+
+运行基线为 Python 3.12（见 `.python-version`）。旧 `lib/` 是 Python 3.9 构建产物，
+不得与新解释器混用；新环境统一使用隔离 `.venv`。
 
 不要省略 `CRYPTO_AGENT_MODE=paper`：当前代码的模式默认值不是 AI 操作授权。涉及 live
 实例时必须先回到 AGENTS.md 核对权限；文档与代码冲突时停止操作并向用户确认。
@@ -135,14 +140,14 @@ crypto-agent/
 ## 测试
 
 ```bash
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_exchange_layers.py   # FakeAdapter 离线
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_service_api.py       # TestClient 离线
-python3 tools/ai_repo_check.py                         # AI 入口/链接/索引守卫
-python3 tools/code_graph.py --check                    # 分层检查
-python3 tools/params_lint.py                           # 参数集中化
-python3 tools/test_isolation_lint.py                   # 测试副作用隔离
-python3 tools/fix_guard.py                             # 修复护栏
-PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc python3 -m py_compile <改动的文件>
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_exchange_layers.py
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_service_api.py
+.venv/bin/python tools/ai_repo_check.py
+.venv/bin/python tools/code_graph.py --check
+.venv/bin/python tools/params_lint.py
+.venv/bin/python tools/test_isolation_lint.py
+.venv/bin/python tools/fix_guard.py
+PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc .venv/bin/python -m py_compile <改动的文件>
 ```
 
 CI 自动发现全部 `tests/test_*.py`，每个脚本使用独立数据库、事件文件和

@@ -108,9 +108,14 @@ factors/data/strategy/risk/backtest/tools/tests/docs/legacy）各自维护 `AGEN
 
 ```bash
 cd crypto-agent
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python -m service.main
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python -m service.main --port 8091
 ```
+
+运行基线是 Python 3.12（见 `.python-version`）；旧 `lib/` 是 Python 3.9 构建产物，
+不得覆盖或混入 `.venv`。
 
 一个进程承载全部功能：
 - 方向性引擎：1s 风控监控 + 5min 轮询已收线 15m 主信号 + 1H/4H 环境 + 新交易最长 4h
@@ -130,20 +135,20 @@ HTTP 接口（127.0.0.1；`GET /docs` 的 OpenAPI schema 是完整接口事实�
 `x-api-token`。HTTP 永远不是下单入口，禁止新增手动下单、撤单或绕过策略/风控的接口。
 
 独立调试模式仍可用（不改交易逻辑）：
-`CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 engines/directional_trader.py --once`。
+`CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python engines/directional_trader.py --once`。
 
 ## 4. 测试
 
 ```bash
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_exchange_layers.py   # FakeAdapter 离线全链路
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_service_api.py       # TestClient 离线接口
-python3 tests/test_ai_repo_check.py                    # AI 入口/链接/索引守卫
-python3 tools/ai_repo_check.py                         # 同一守卫的命令行入口
-python3 tools/code_graph.py --check                    # 分层/循环依赖/共享状态检查
-python3 tools/params_lint.py                           # 策略参数集中化
-python3 tools/test_isolation_lint.py                   # DB/事件/运行目录隔离
-python3 tools/fix_guard.py                             # 已修问题回归护栏
-PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc python3 -m py_compile <改动的文件>  # 改动后必跑
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_exchange_layers.py
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_service_api.py
+.venv/bin/python tests/test_ai_repo_check.py
+.venv/bin/python tools/ai_repo_check.py
+.venv/bin/python tools/code_graph.py --check
+.venv/bin/python tools/params_lint.py
+.venv/bin/python tools/test_isolation_lint.py
+.venv/bin/python tools/fix_guard.py
+PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc .venv/bin/python -m py_compile <改动的文件>
 ```
 CI 自动发现全部 `tests/test_*.py`，逐脚本使用独立 DB、事件文件与运行目录；
 不得维护会漏新测试的固定白名单。完整命令以 `.github/workflows/ci.yml` 为准。

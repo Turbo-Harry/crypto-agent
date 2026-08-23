@@ -1,6 +1,6 @@
-# Crypto Agent 运行时依赖（pip install -r requirements.txt --target ./lib）
-# 说明：lib/ 目录不入库（体积大+版本随环境漂移），按本清单现场安装。
-# 网络安装：pip install -r requirements.txt --target ./lib
+# Crypto Agent Python 3.12 运行时依赖（安装到隔离 .venv）
+# 初始化：python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# 旧 lib/ 是 Python 3.9 构建产物；升级期间不覆盖，避免影响仍在运行的旧进程。
 
 # 服务端框架
 fastapi>=0.110
@@ -15,6 +15,10 @@ ccxt>=4.5,<5
 
 # 数值/机器学习（决策层与因子研究）
 numpy>=1.26
+
+# Agent Harness（LangChain 结构化输出 + LangGraph 唯一编排运行时）
+langchain>=1.0,<2
+langgraph>=1.0,<2
 
 # 回测/因子研究（可选：仅研究脚本需要）
 scipy>=1.11

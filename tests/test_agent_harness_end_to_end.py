@@ -156,7 +156,7 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         with mock.patch.object(agent_judge, "_read_key", return_value=None):
             self.assertIs(agent_judge.harness_model_available(), False)
 
-    def test_production_constructor_wires_only_real_okx_paper(self):
+    def test_production_constructor_wires_shared_harness_for_real_okx(self):
         callback = lambda prompt: {"verdict": "approve",
                                    "risk_probability": 0.1,
                                    "confidence": 0.8}
@@ -173,6 +173,21 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
                                        db_path=self.path)
         self.assertIs(trader.agent_model_call, callback)
         self.assertIs(trader.agent_proposal_model_call, callback)
+
+        live = FakeAdapter()
+        live.name = "okx-ccxt"
+        with mock.patch.object(config, "LIVE_MODE", True), \
+                mock.patch("os.path.exists", return_value=True), \
+                mock.patch.object(agent_judge, "harness_model_available",
+                                  return_value=True), \
+                mock.patch.object(agent_judge, "production_harness_model_call",
+                                  callback):
+            live_trader = DirectionalTrader(exchange=live, rt=object(),
+                                            db_path=self.path)
+        self.assertTrue(live_trader.live_mode)
+        self.assertIs(live_trader.agent_model_call, callback)
+        # C 主动提案保持独立 paper-only 研究线。
+        self.assertIsNone(live_trader.agent_proposal_model_call)
 
         offline = DirectionalTrader(exchange=FakeAdapter(), rt=object(),
                                     db_path=self.path)

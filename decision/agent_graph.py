@@ -1,0 +1,434 @@
+"""Single LangGraph/LangChain runtime for the constrained trading Harness.
+
+LangGraph owns orchestration only. Immutable contracts, the read-only tool
+router, deterministic policy kernel and SQLite trace store remain authoritative.
+This module cannot accept an exchange or produce an order instruction.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Callable, Mapping, TypedDict
+
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.runnables import RunnableLambda
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
+
+from decision.agent_context import build_context, serialize_context
+from decision.agent_contracts import (
+    AgentDecision, AgentInput, AgentStep, FinalAction, HarnessConfig, HarnessRun,
+    RuntimeStatus, StepStatus, StepType, Verdict, strict_parse_model_output,
+    stable_hash,
+)
+from decision.agent_memory import retrieve_for_input
+from decision.agent_policy import PolicyKernel, PolicyResult
+from decision.agent_tools import ReadOnlyToolRouter, ToolRouterError, tool_trace_payload
+from storage import agent_harness as trace_store
+
+
+def _stamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class HarnessResult:
+    run: HarnessRun
+    decision: AgentDecision | None
+    policy: PolicyResult
+    prompt: str
+    memory: tuple[dict[str, Any], ...]
+
+
+class _DecisionPayload(BaseModel):
+    """LangChain parser boundary; domain validation is applied afterwards."""
+
+    verdict: str
+    risk_probability: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason_codes: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    abstain_reason: str | None = None
+    reason: str = ""
+
+
+class _GraphState(TypedDict, total=False):
+    agent_input: AgentInput
+    baseline_passed: bool
+    runtime_status: RuntimeStatus
+    serialized_context: str
+    memory: tuple[dict[str, Any], ...]
+    tool_payload: list[dict[str, Any]]
+    prompt: str
+    raw_response: Any
+    response_hash: str | None
+    decision: AgentDecision | None
+    policy: PolicyResult
+    run: HarnessRun
+    steps: tuple[AgentStep, ...]
+    model_step_no: int
+    policy_step_no: int
+    model_outcome: str
+    model_error_type: str | None
+    model_started_at: str
+    model_latency_ms: int | None
+    started_monotonic: float
+
+
+def _runtime_error(exc: Exception) -> RuntimeStatus:
+    if isinstance(exc, ValueError):
+        return RuntimeStatus.SCHEMA_ERROR
+    if isinstance(exc, TimeoutError):
+        return RuntimeStatus.TIMEOUT
+    if isinstance(exc, (ConnectionError, OSError)):
+        return RuntimeStatus.HTTP_ERROR
+    if exc.__class__.__name__.lower().endswith("toolerror"):
+        return RuntimeStatus.TOOL_ERROR
+    return RuntimeStatus.HTTP_ERROR
+
+
+def _durable_result(agent_input: AgentInput, *, db_path: str | None) -> HarnessResult | None:
+    """Return an existing completed attempt without calling the model again."""
+
+    try:
+        row = trace_store.get_run(agent_input.run_id, db_path=db_path)
+    except Exception:
+        return None
+    if not row:
+        return None
+    runtime = RuntimeStatus(str(row["runtime_status"]))
+    action = FinalAction(str(row["final_action"]))
+    verdict = (Verdict(str(row["model_verdict"]))
+               if row.get("model_verdict") else None)
+    try:
+        reason_codes = tuple(json.loads(row.get("reason_codes") or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        reason_codes = ()
+    run = HarnessRun(
+        run_id=str(row["run_id"]), signal_id=str(row["signal_id"]),
+        runtime_status=runtime, final_action=action, model_verdict=verdict,
+        input_hash=row.get("input_hash"), response_hash=row.get("response_hash"),
+        latency_ms=row.get("latency_ms"),
+        model_latency_ms=row.get("model_latency_ms"),
+        input_tokens=row.get("input_tokens"), output_tokens=row.get("output_tokens"),
+        estimated_cost=row.get("estimated_cost"), error_type=row.get("error_type"),
+        risk_probability=row.get("risk_probability"), reason_codes=reason_codes)
+    policy = PolicyResult(
+        final_action=action, veto=action is FinalAction.AGENT_REJECT,
+        reason="idempotent durable result")
+    return HarnessResult(run=run, decision=None, policy=policy, prompt="", memory=())
+
+
+def _domain_decision(raw: Any) -> AgentDecision:
+    """Use LangChain structured parsing without weakening strict JSON rules."""
+
+    if isinstance(raw, Mapping):
+        payload = dict(raw)
+    else:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("model output must be a JSON object") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("model output must be a JSON object")
+    parser = PydanticOutputParser(pydantic_object=_DecisionPayload)
+    parsed = parser.invoke(json.dumps(payload, ensure_ascii=False))
+    return strict_parse_model_output(parsed.model_dump(exclude_none=True))
+
+
+class _Nodes:
+    """Graph nodes with runtime collaborators captured outside graph state."""
+
+    def __init__(self, *, model_call: Callable[[str], Any] | None,
+                 config: HarnessConfig, policy_kernel: PolicyKernel,
+                 enabled: bool, db_path: str | None, memory_limit: int,
+                 tool_router: ReadOnlyToolRouter | None,
+                 tool_calls: list[tuple[str, dict[str, Any]]] | None):
+        self.model_call = model_call
+        self.config = config
+        self.policy_kernel = policy_kernel
+        self.enabled = enabled
+        self.db_path = db_path
+        self.memory_limit = memory_limit
+        self.tool_router = tool_router
+        self.tool_calls = tool_calls
+
+    def append(self, state: _GraphState, item: AgentStep) -> tuple[AgentStep, ...]:
+        try:
+            trace_store.record_step(item, db_path=self.db_path)
+        except Exception:
+            # Trace persistence must not change the baseline trading action.
+            pass
+        return tuple(state.get("steps", ())) + (item,)
+
+    def context(self, state: _GraphState) -> dict[str, Any]:
+        if not state["baseline_passed"]:
+            return {"runtime_status": RuntimeStatus.DISABLED,
+                    "serialized_context": ""}
+        started = _stamp()
+        try:
+            context = build_context(state["agent_input"])
+            serialized = serialize_context(
+                state["agent_input"], max_chars=self.config.max_context_chars)
+            item = AgentStep(
+                run_id=state["agent_input"].run_id, step_no=1,
+                step_type=StepType.CONTEXT, status=StepStatus.COMPLETED,
+                started_at=started, finished_at=_stamp(),
+                input_hash=state["agent_input"].input_hash,
+                output_hash=stable_hash(context))
+            return {"serialized_context": serialized,
+                    "steps": self.append(state, item)}
+        except Exception as exc:
+            item = AgentStep(
+                run_id=state["agent_input"].run_id, step_no=1,
+                step_type=StepType.CONTEXT, status=StepStatus.FAILED,
+                started_at=started, finished_at=_stamp(),
+                error_type=type(exc).__name__, fallback_action="baseline_pass")
+            return {"runtime_status": RuntimeStatus.SCHEMA_ERROR,
+                    "serialized_context": "", "steps": self.append(state, item)}
+
+    def retrieve(self, state: _GraphState) -> dict[str, Any]:
+        if state["runtime_status"] is not RuntimeStatus.COMPLETED:
+            return {}
+        started = _stamp()
+        try:
+            memory = tuple(retrieve_for_input(
+                state["agent_input"], limit=self.memory_limit,
+                db_path=self.db_path))
+            item = AgentStep(
+                run_id=state["agent_input"].run_id, step_no=2,
+                step_type=StepType.RETRIEVE, status=StepStatus.COMPLETED,
+                started_at=started, finished_at=_stamp(),
+                output_hash=stable_hash(memory),
+                evidence_ids=tuple(str(row.get("evidence_id")) for row in memory))
+            return {"memory": memory, "steps": self.append(state, item)}
+        except Exception as exc:
+            item = AgentStep(
+                run_id=state["agent_input"].run_id, step_no=2,
+                step_type=StepType.RETRIEVE, status=StepStatus.FAILED,
+                started_at=started, finished_at=_stamp(),
+                error_type=type(exc).__name__, fallback_action="baseline_pass")
+            return {"runtime_status": RuntimeStatus.TOOL_ERROR,
+                    "steps": self.append(state, item)}
+
+    def tools(self, state: _GraphState) -> dict[str, Any]:
+        if state["runtime_status"] is not RuntimeStatus.COMPLETED:
+            return {}
+        if self.tool_router is None or not self.tool_calls:
+            return {"model_step_no": 3, "policy_step_no": 4}
+        started = _stamp()
+        try:
+            if len(self.tool_calls) > self.config.max_tools:
+                raise ToolRouterError("harness tool budget exceeded")
+            self.tool_router.call_many(self.tool_calls)
+            payload = tool_trace_payload(self.tool_router)
+            if any(not row["ok"] for row in payload):
+                raise ToolRouterError("tool call failed")
+            item = AgentStep(
+                run_id=state["agent_input"].run_id, step_no=3,
+                step_type=StepType.TOOL, status=StepStatus.COMPLETED,
+                started_at=started, finished_at=_stamp(),
+                output_hash=stable_hash(payload),
+                evidence_ids=tuple(str(row.get("output_hash")) for row in payload))
+            return {"tool_payload": payload, "model_step_no": 4,
+                    "policy_step_no": 5, "steps": self.append(state, item)}
+        except Exception as exc:
+            payload = tool_trace_payload(self.tool_router)
+            item = AgentStep(
+                run_id=state["agent_input"].run_id, step_no=3,
+                step_type=StepType.TOOL, status=StepStatus.FAILED,
+                started_at=started, finished_at=_stamp(),
+                output_hash=stable_hash(payload), error_type=type(exc).__name__,
+                fallback_action="baseline_pass")
+            return {"runtime_status": RuntimeStatus.TOOL_ERROR,
+                    "tool_payload": payload, "model_step_no": 4,
+                    "policy_step_no": 5, "steps": self.append(state, item)}
+
+    def model(self, state: _GraphState) -> dict[str, Any]:
+        if state["runtime_status"] is not RuntimeStatus.COMPLETED:
+            return {}
+        payload: dict[str, Any] = {
+            "context": json.loads(state["serialized_context"]),
+            "memory": list(state.get("memory", ())),
+        }
+        if state.get("tool_payload"):
+            payload["tools"] = state["tool_payload"]
+        prompt = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                            separators=(",", ":"))
+        started_at = _stamp()
+        started = time.monotonic()
+        common = {"prompt": prompt, "model_started_at": started_at}
+        if not self.enabled or self.model_call is None:
+            return {**common,
+                    "runtime_status": (RuntimeStatus.DISABLED if not self.enabled
+                                       else RuntimeStatus.NO_KEY),
+                    "model_outcome": "skipped"}
+        try:
+            runnable = RunnableLambda(self.model_call).with_config(
+                {"run_name": "trading_risk_critic"})
+            raw = runnable.invoke(prompt)
+            return {**common, "raw_response": raw,
+                    "response_hash": stable_hash(raw),
+                    "model_latency_ms": round((time.monotonic() - started) * 1000),
+                    "model_outcome": "completed"}
+        except Exception as exc:
+            return {**common, "runtime_status": _runtime_error(exc),
+                    "model_error_type": type(exc).__name__,
+                    "model_latency_ms": round((time.monotonic() - started) * 1000),
+                    "model_outcome": "failed"}
+
+    def validate(self, state: _GraphState) -> dict[str, Any]:
+        outcome = state.get("model_outcome")
+        if not outcome:
+            return {}
+        step_no = int(state.get("model_step_no", 3))
+        input_hash = stable_hash(state.get("prompt", ""))
+        base = dict(run_id=state["agent_input"].run_id, step_no=step_no,
+                    step_type=StepType.MODEL,
+                    started_at=state["model_started_at"], finished_at=_stamp(),
+                    input_hash=input_hash)
+        if outcome == "skipped":
+            item = AgentStep(**base, status=StepStatus.SKIPPED,
+                             fallback_action="baseline_pass")
+            return {"steps": self.append(state, item)}
+        if outcome == "failed":
+            item = AgentStep(**base, status=StepStatus.FAILED,
+                             error_type=state.get("model_error_type"),
+                             fallback_action="baseline_pass")
+            return {"steps": self.append(state, item)}
+        try:
+            decision = _domain_decision(state.get("raw_response"))
+            item = AgentStep(**base, status=StepStatus.COMPLETED,
+                             output_hash=state.get("response_hash"))
+            return {"decision": decision, "steps": self.append(state, item)}
+        except Exception as exc:
+            item = AgentStep(**base, status=StepStatus.FAILED,
+                             error_type=type(exc).__name__,
+                             fallback_action="baseline_pass")
+            return {"runtime_status": RuntimeStatus.SCHEMA_ERROR,
+                    "decision": None, "steps": self.append(state, item)}
+
+    def policy(self, state: _GraphState) -> dict[str, Any]:
+        policy = self.policy_kernel.evaluate(
+            baseline_passed=state["baseline_passed"],
+            runtime_status=state["runtime_status"],
+            decision=state.get("decision"))
+        if not state["baseline_passed"]:
+            return {"policy": policy}
+        started = _stamp()
+        item = AgentStep(
+            run_id=state["agent_input"].run_id,
+            step_no=int(state.get("policy_step_no", 4)),
+            step_type=StepType.POLICY, status=StepStatus.COMPLETED,
+            started_at=started, finished_at=_stamp(),
+            output_hash=stable_hash(policy.final_action.value),
+            fallback_action="baseline_pass" if not policy.veto else None)
+        return {"policy": policy, "steps": self.append(state, item)}
+
+    def record(self, state: _GraphState) -> dict[str, Any]:
+        decision = state.get("decision")
+        if not state["baseline_passed"]:
+            run = HarnessRun(
+                state["agent_input"].run_id, state["agent_input"].signal_id,
+                state["runtime_status"], state["policy"].final_action,
+                error_type="baseline_reject",
+                input_hash=state["agent_input"].input_hash)
+        else:
+            runtime = state["runtime_status"]
+            run = HarnessRun(
+                run_id=state["agent_input"].run_id,
+                signal_id=state["agent_input"].signal_id,
+                runtime_status=runtime, final_action=state["policy"].final_action,
+                model_verdict=decision.verdict if decision else None,
+                input_hash=state["agent_input"].input_hash,
+                response_hash=state.get("response_hash"),
+                latency_ms=round(
+                    (time.monotonic() - state["started_monotonic"]) * 1000),
+                model_latency_ms=state.get("model_latency_ms"),
+                risk_probability=decision.risk_probability if decision else None,
+                reason_codes=decision.reason_codes if decision else (),
+                error_type=(None if runtime in (
+                    RuntimeStatus.COMPLETED, RuntimeStatus.DISABLED,
+                    RuntimeStatus.NO_KEY) else runtime.value))
+        try:
+            trace_store.record_run(run, state["agent_input"], db_path=self.db_path)
+            if state["baseline_passed"]:
+                trace_store.record_evaluation(run.run_id, db_path=self.db_path)
+        except Exception:
+            pass
+        return {"run": run}
+
+
+def build_harness_graph(*, model_call: Callable[[str], Any] | None,
+                        config: HarnessConfig, policy_kernel: PolicyKernel,
+                        enabled: bool, db_path: str | None, memory_limit: int,
+                        tool_router: ReadOnlyToolRouter | None,
+                        tool_calls: list[tuple[str, dict[str, Any]]] | None):
+    """Compile the one shared paper/live Harness graph."""
+
+    nodes = _Nodes(
+        model_call=model_call, config=config, policy_kernel=policy_kernel,
+        enabled=enabled, db_path=db_path, memory_limit=memory_limit,
+        tool_router=tool_router, tool_calls=tool_calls)
+    graph = StateGraph(_GraphState)
+    graph.add_node("context", nodes.context)
+    graph.add_node("retrieve", nodes.retrieve)
+    graph.add_node("tools", nodes.tools)
+    graph.add_node("model", nodes.model)
+    graph.add_node("validate", nodes.validate)
+    graph.add_node("policy", nodes.policy)
+    graph.add_node("record", nodes.record)
+    graph.add_edge(START, "context")
+    graph.add_edge("context", "retrieve")
+    graph.add_edge("retrieve", "tools")
+    graph.add_edge("tools", "model")
+    graph.add_edge("model", "validate")
+    graph.add_edge("validate", "policy")
+    graph.add_edge("policy", "record")
+    graph.add_edge("record", END)
+    return graph.compile()
+
+
+def run_graph_harness(agent_input: AgentInput, *, baseline_passed: bool,
+                      model_call: Callable[[str], Any] | None,
+                      config: HarnessConfig | None = None,
+                      policy_kernel: PolicyKernel | None = None,
+                      enabled: bool = True, db_path: str | None = None,
+                      memory_limit: int = 5,
+                      tool_router: ReadOnlyToolRouter | None = None,
+                      tool_calls: list[tuple[str, dict[str, Any]]] | None = None) -> HarnessResult:
+    """Run the only Harness implementation; default policy remains shadow."""
+
+    # A later baseline rejection must never be replaced by an earlier Agent
+    # result that happened to share the same stable run id. Baseline remains
+    # the higher-authority gate and also avoids a second model call below.
+    if baseline_passed:
+        existing = _durable_result(agent_input, db_path=db_path)
+        if existing is not None:
+            return existing
+    cfg = config or HarnessConfig()
+    kernel = policy_kernel or PolicyKernel(veto_enabled=False, shadow=True)
+    graph = build_harness_graph(
+        model_call=model_call, config=cfg, policy_kernel=kernel,
+        enabled=enabled, db_path=db_path, memory_limit=memory_limit,
+        tool_router=tool_router, tool_calls=tool_calls)
+    final = graph.invoke({
+        "agent_input": agent_input, "baseline_passed": bool(baseline_passed),
+        "runtime_status": RuntimeStatus.COMPLETED,
+        "serialized_context": "", "memory": (), "tool_payload": [],
+        "prompt": "", "decision": None, "steps": (),
+        "model_step_no": 3, "policy_step_no": 4,
+        "started_monotonic": time.monotonic()})
+    return HarnessResult(
+        run=final["run"], decision=final.get("decision"),
+        policy=final["policy"], prompt=final.get("prompt", ""),
+        memory=tuple(final.get("memory", ())))
+
+
+__all__ = ["HarnessResult", "build_harness_graph", "run_graph_harness"]

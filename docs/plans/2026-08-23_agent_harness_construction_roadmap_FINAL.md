@@ -57,8 +57,9 @@ Harness 的目标不是让 LLM 直接成为交易员，而是建设两个受约�
 ## 3.1 技术选型修订：P0 提前引入 LangGraph
 
 用户于 2026-08-23 决定提前采用 LangChain 体系，避免未来随着节点、持久化和人工审批增加
-后再做高成本迁移。本路线图将其收敛为：**现在引入独立 LangGraph 作为 Harness 编排运行时，
-暂不引入高层 LangChain Agent，也不使用预置的自由工具调用循环。**
+后再做高成本迁移；随后明确要求 paper/live 共用同一套并移除旧流程。本路线图收敛为：
+**LangGraph 是唯一 Harness 编排运行时，LangChain 负责模型 Runnable 与结构化输出；
+paper/live 共用该实现，不保留手写编排分支。**
 
 选择 LangGraph 而不是整套 LangChain Agent 的理由：
 
@@ -92,21 +93,57 @@ Harness 的目标不是让 LLM 直接成为交易员，而是建设两个受约�
 - `storage.agent_harness` 继续是业务审计事实源；LangGraph checkpoint 只保存编排状态，
   不替代成熟结果和增量评价表。
 - `ReadOnlyToolRouter` 继续维护工具白名单；首版不使用可以自动发现工具的高层 Agent。
-- 图运行只接入 paper shadow；FakeAdapter、研究重放和 live 均默认不装配生产图运行时。
+- 真实 OKX 的 paper/live 都装配同一个风险评审 Harness provider；两边仍固定 shadow。
+- FakeAdapter 和离线测试只使用显式注入 callback，永不自行访问外部模型。
+- 主动候选 `C_agent_proposal` 仍是独立 paper-only 研究线，不随风险 Harness 进入 live。
 
-迁移必须使用双轨和回退开关：
+一次性替换规则：
 
-1. 先在离线固定输入上让现有 `run_harness` 与 LangGraph 适配器共享同一模型原始输出，
-   比较 runtime status、decision、final action、Trace 顺序和 hash。
-2. 达到逐项等价后，LangGraph 进入 paper shadow；每个候选只调用模型一次，禁止为了双跑
-   重复计费或产生两份有效 run。
-3. 原有 `run_harness` 在至少一个完整观察批次内保留为回退实现。
-4. 任何行为漂移、重复副作用、checkpoint 污染、延迟超限或故障降级语义变化，都立即切回
-   原实现。
+1. `decision/agent_harness.py` 只保留稳定 API 门面，内部唯一调用 LangGraph，不保存旧循环。
+2. 每个候选只调用模型一次，禁止双跑、重复计费或产生两份有效 run。
+3. 正常、reject、abstain、no-key、timeout、畸形 JSON、schema error 和 tool error
+   全部用离线固定输入回归既有安全语义。
+4. 任何行为漂移、重复副作用、checkpoint 污染、延迟超限或故障降级语义变化都 fail-safe
+   回量化基线；不以恢复旧编排掩盖问题。
+
+运行基线同步升级为 Python 3.12、LangChain 1.x 和 LangGraph 1.x。新环境统一使用 `.venv`；
+旧 Python 3.9 `lib/` 只作末级兼容路径，不能覆盖虚拟环境依赖。
 
 首版暂不使用 `interrupt()` 处理交易许可。官方说明 interrupt 恢复时会从节点开头重新执行，
 因此 interrupt 前的副作用必须幂等；在本仓库完成重复副作用专项验证前，人工批准仍采用现有
 离线生命周期流程，不能通过图恢复触发任何交易动作。
+
+### 3.2 第一批实施状态（2026-08-23）
+
+已落地：
+
+- Python 运行基线升级到 3.12，新增 `.python-version`，本地统一使用隔离 `.venv`，CI 同步
+  从 3.9 升到 3.12。
+- `requirements.txt` 加入 LangChain 1.x 与 LangGraph 1.x；本地验证版本为 LangChain
+  1.3.16、LangGraph 1.2.11。
+- `decision/agent_graph.py` 实现唯一 `StateGraph`：context、retrieve、tools、model、
+  validate、policy、record 七个显式节点。
+- 模型调用通过 LangChain `RunnableLambda`，结构化结果通过 `PydanticOutputParser` 后，
+  再进入仓库原有严格领域校验，框架解析不能放宽 JSON 和 evidence 约束。
+- `decision/agent_harness.py` 的旧手写编排已删除，只保留 `run_harness` 兼容门面并委托
+  LangGraph；不存在 paper/live 分支或旧 runtime 开关。
+- 真实 OKX paper/live 均装配同一个风险 Harness provider，两边固定 shadow；主动候选 C
+  仍保持 paper-only。
+- 同一 `run_id` 命中 durable run 时直接返回，不再次调用模型；从“数据库一行”升级为
+  “账本与模型计费同时幂等”。
+- 旧 Python 3.9 `lib/` 从强制优先改为末级兼容路径，防止覆盖 Python 3.12 `.venv` 的
+  NumPy/Pydantic 等二进制依赖。
+
+离线证据：
+
+- LangGraph 专项 9 项通过：显式节点、唯一运行时、严格结构化输出、只读工具、单次模型
+  调用、durable 幂等、量化基线优先、故障状态分离、显式 veto 权限。
+- 现有 Harness 端到端 10 项通过，Agent 增量评价 9 项通过。
+- Python 3.12 临时隔离副本自动发现全部 53 个 `tests/test_*.py`，全绿、失败 0。
+- `code_graph --check`、`params_lint`、`test_isolation_lint`、`fix_guard`、`ai_repo_check`
+  与 AI 入口变异测试全部通过。
+- 未启动、切换或重启 paper/live 实例；未改变 `AGENT_HARNESS_VETO_ENABLED=False`，未进行
+  真实模型调用或交易操作。
 
 ## 4. 目标证据链
 
@@ -139,12 +176,12 @@ Harness 的目标不是让 LLM 直接成为交易员，而是建设两个受约�
 
 建设内容：
 
-- 新增 LangGraph `StateGraph` 影子编排适配器，节点只包装既有 Context、Memory、Tool、
+- 新增唯一 LangGraph `StateGraph` 编排，节点只包装既有 Context、Memory、Tool、
   Model、Validator、Policy 和 Recorder。
-- 增加旧编排与 LangGraph 的冻结输入等价测试，覆盖正常、reject、abstain、no-key、
+- 增加冻结输入安全语义回归，覆盖正常、reject、abstain、no-key、
   timeout、畸形 JSON、schema error 和 tool error。
-- 以集中配置选择 Harness runtime；默认先保持旧实现，等价门通过后才把 paper shadow
-  默认切换为 LangGraph，live 永不随该开关启用。
+- `run_harness` 稳定入口直接委托唯一 LangGraph 实现，不存在模式分支或旧运行时开关。
+- 真实 OKX paper/live 共用风险 Harness provider；两边均保持 shadow。
 - 保持 Harness 在所有额度、分数和严格 2:1 拒绝门之前采样。
 - 每根已收线 15m K 使用稳定候选身份，禁止五分钟重试产生重复有效运行。
 - 保证 worker 持续推进 signal outcome、mature evaluation 和 scoped memory 回流。
@@ -154,10 +191,10 @@ Harness 的目标不是让 LLM 直接成为交易员，而是建设两个受约�
 
 验收证据：
 
-- 旧编排与 LangGraph 在固定输入和固定模型输出下的 decision、runtime status、final action、
-  Trace 顺序和稳定 hash 全部一致。
+- 固定输入和固定模型输出下的 decision、runtime status、final action、Trace 顺序和稳定
+  hash 均满足既有契约。
 - LangGraph 节点无法取得 exchange、订单、配置写入或风控修改对象。
-- 切换 LangGraph 前后每个候选仍只产生一次模型调用和一个有效 run。
+- 每个候选只产生一次模型调用和一个有效 run。
 - 候选运行留痕覆盖率 100%。
 - 同一候选和 Harness 版本最多一个有效运行。
 - 任意一条 run 能定位输入 hash、版本、步骤、输出、最终动作和成熟结果。
@@ -344,12 +381,13 @@ Harness 的目标不是让 LLM 直接成为交易员，而是建设两个受约�
 
 ### P0：立即建设
 
-1. 建立 LangGraph 薄适配层和旧编排等价测试，不改变模型、策略核和执行结果。
-2. 等价门通过后只在 paper shadow 切换，保留旧编排一键回退。
-3. 保证 shadow 采样和成熟结果链持续运行。
-4. 增加连续无样本、pending 积压、成熟链断裂和高故障率告警。
-5. 建立每日候选/run/evaluation/memory 自动核账。
-6. 积累 100 条有效成熟结果和 30 条 reject。
+1. 完成唯一 LangGraph/LangChain 编排和冻结输入安全语义测试。
+2. 升级 Python 3.12 隔离运行基线，移除旧编排实现。
+3. 让真实 OKX paper/live 共用风险评审 Harness，保持 shadow 和零执行权限。
+4. 保证 shadow 采样和成熟结果链持续运行。
+5. 增加连续无样本、pending 积压、成熟链断裂和高故障率告警。
+6. 建立每日候选/run/evaluation/memory 自动核账。
+7. 积累 100 条有效成熟结果和 30 条 reject。
 
 ### P1：样本达到门槛前并行建设
 

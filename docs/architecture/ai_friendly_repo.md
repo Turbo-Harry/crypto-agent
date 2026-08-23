@@ -173,24 +173,24 @@ service → engines → decision/execution/risk/strategy
 
 ```bash
 # 文档入口、链接、索引和护栏
-python3 tools/ai_repo_check.py
-python3 tests/test_ai_repo_check.py
+.venv/bin/python tools/ai_repo_check.py
+.venv/bin/python tests/test_ai_repo_check.py
 
 # 改动 Python 文件（显式把字节码缓存留在可写临时目录，兼容 macOS 沙箱）
-PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc python3 -m py_compile <改动文件...>
+PYTHONPYCACHEPREFIX=/tmp/crypto-agent-pyc .venv/bin/python -m py_compile <改动文件...>
 
 # import、跨层契约或共享状态
-python3 tools/code_graph.py --check
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_interface_boundaries.py
+.venv/bin/python tools/code_graph.py --check
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_interface_boundaries.py
 
 # 参数、运行目录和历史修复护栏
-python3 tools/params_lint.py
-python3 tools/test_isolation_lint.py
-python3 tools/fix_guard.py
+.venv/bin/python tools/params_lint.py
+.venv/bin/python tools/test_isolation_lint.py
+.venv/bin/python tools/fix_guard.py
 
 # 服务与交易所离线主链
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_service_api.py
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_exchange_layers.py
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_service_api.py
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_exchange_layers.py
 ```
 
 全量回归以 `.github/workflows/ci.yml` 为唯一命令事实源：它自动发现 `tests/test_*.py`，并为
@@ -200,7 +200,7 @@ CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_exchange_layers.py
 D3 不能用离线测试代替沙盘证据。只有用户明确要求运行操作时，才可用显式 paper 模式：
 
 ```bash
-CRYPTO_AGENT_MODE=paper PYTHONPATH=lib python3 -m service.main --port 8091
+CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python -m service.main --port 8091
 ```
 
 启动成功不等于完成；还需按任务核验 `/health`、`/status`、`/reconcile`、`/error`、持仓所有权

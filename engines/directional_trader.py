@@ -184,8 +184,8 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 print("❌ LIVE_MODE=True 但无实盘凭证文件,退回模拟盘")
                 self.live_mode = False
         # AI provider 只允许真实 OKX 适配器使用，FakeAdapter/离线测试永不访问
-        # 外部模型。新 Harness 仅在 paper 注入，并固定 shadow；live 仍保持既有
-        # legacy AI 把关，不因研究接线扩大模型权限。
+        # 外部模型。用户要求 paper/live 共用唯一 LangGraph Harness；两实例均
+        # 固定 shadow，不因运行时统一而扩大 veto 或交易权限。
         _real_okx = _ad_name in ("okx", "okx-ccxt")
         self.ai_judge_enabled = bool(_c.AGENT_JUDGE_ENABLED and _real_okx)
         # 用户明确要求“固定 2:1，先预测再开仓”。先在真实 OKX 模拟盘
@@ -195,20 +195,23 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
             _c.PAPER_REQUIRE_VALIDATED_2TO1_PREDICTION)
         self.agent_model_call = None
         self.agent_proposal_model_call = None
-        if (_real_okx and not self.live_mode
-                and getattr(_c, "AGENT_HARNESS_ENABLED", False)):
+        if (_real_okx and getattr(_c, "AGENT_HARNESS_ENABLED", False)):
             try:
                 from decision.agent_judge import (
                     harness_model_available, production_harness_model_call,
                 )
                 if harness_model_available():
                     self.agent_model_call = production_harness_model_call
-                    if getattr(_c, "AGENT_PROPOSAL_SHADOW_ENABLED", False):
+                    # 主动候选 C 仍是独立 paper-only 研究线；这里只统一
+                    # 风险评审 Harness，不把主动提案接入 live。
+                    if (not self.live_mode and
+                            getattr(_c, "AGENT_PROPOSAL_SHADOW_ENABLED", False)):
                         from decision.agent_proposals import \
                             production_proposal_model_call
                         self.agent_proposal_model_call = \
                             production_proposal_model_call
-                    print("Agent Harness: paper shadow provider ready")
+                    _mode = "live" if self.live_mode else "paper"
+                    print(f"Agent Harness: {_mode} shared shadow provider ready")
                 else:
                     print("Agent Harness: no provider key, shadow fallback only")
             except Exception as e:

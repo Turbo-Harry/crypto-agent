@@ -160,7 +160,9 @@ AGENT_JUDGE_LESSONS_TOP = 3             # 回喂的该币 trusted/discarded 教�
 AGENT_HARNESS_ENABLED = True
 AGENT_HARNESS_VETO_ENABLED = False
 AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v1"
-AGENT_HARNESS_CONTEXT_VERSION = "context-v1"
+# LangGraph/LangChain 唯一运行时切换会生成新的可审计 Harness 身份；
+# paper/live 共用同一编排实现，但模型仍固定 shadow、无执行权限。
+AGENT_HARNESS_CONTEXT_VERSION = "context-v2-langgraph"
 AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
 AGENT_HARNESS_MAX_TOOL_CALLS = 3
 AGENT_HARNESS_MAX_STEPS = 8

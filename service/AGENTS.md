@@ -17,6 +17,6 @@
 
 ## 最小验证
 
-- `CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_service_api.py`
-- `CRYPTO_AGENT_MODE=paper PYTHONPATH=lib:. python3 tests/test_interface_boundaries.py`
-- `python3 tools/code_graph.py --check`
+- `CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_service_api.py`
+- `CRYPTO_AGENT_MODE=paper PYTHONPATH=. .venv/bin/python tests/test_interface_boundaries.py`
+- `.venv/bin/python tools/code_graph.py --check`

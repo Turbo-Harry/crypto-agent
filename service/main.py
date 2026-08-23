@@ -22,7 +22,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
+# 旧 Python 3.9 lib 只作末级兼容路径，不能覆盖 Python 3.12 .venv。
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 
 import uvicorn
 from fastapi import FastAPI
