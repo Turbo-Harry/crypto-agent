@@ -1339,3 +1339,18 @@
   为 `harness-risk-v5-forecast-loss-prior`。abstain 风险概率须在先验 ±0.02，超出触发既有一次 semantic
   repair；approve/reject 仍须当前证据，全部量化基线、Veto 生命周期、100/30、费用后 EV 与人工授权门
   不变。此变更先只在现有 shadow Harness 积累独立成熟结果，不预先宣称胜率提高。
+
+## 2026-08-24 Harness v5 模拟盘部署与自然运行证据
+
+- 实现提交 `0c614cb`；forecast、Prompt、语义校验和三组回归测试同时落地。全量隔离套件当场
+  `57/57 PASS`，`test_isolation_lint`、`fix_guard`、AI 仓库自检、代码图、参数集中化、diff check 与
+  改动文件 py_compile 全绿。
+- 只重启 paper：PID `37966 → 39510`、端口 8091；live 端口 8090 的 PID `90574` 未变化。重启后
+  `/health=ok`、心跳年龄 8.2 秒、无持仓、未熔断、`/reconcile balanced=true`、`/error` 为空。
+- 新 15m K 线触发两条自然 shadow run：ETH `agent-e37922fbdce636c7e5f90b1c` 的冻结先验/输出均为
+  `0.5726`；BTC `agent-60c8e0dd3f1c23f85a87e11b` 的先验为 `0.6203`、输出为 `0.6200`，最大偏差
+  0.0003。两条均使用 prompt v5 + tool policy v2，四步 trace 全部 completed、retry=0、error 为空，
+  证明自然路径不再机械返回 0.55。
+- 两次 verdict 均为 abstain，policy 保持 `baseline_pass`，账户订单和持仓均为 0。`/models/entry`
+  仍为空且成熟 Harness 版本仍是 shadow，说明本轮只修复可校准的风险排序输入，没有绕过生命周期门，
+  更没有把回顾性 Brier 改善冒充样本外胜率提高。
