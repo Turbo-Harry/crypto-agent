@@ -16,7 +16,8 @@ from tools.replay_15m_research import (BAR_MS, MarketReader,
                                       backfill_swap_market, inventory,
                                       replay_market)
 from tools.evaluate_15m_research import (
-    _calibration_summary, _outcome_summary, _passive_entry_summary,
+    _calibration_summary, _forecast_risk_prior_summary, _outcome_summary,
+    _passive_entry_summary,
     evaluate_research,
 )
 
@@ -489,6 +490,35 @@ class Replay15mResearchTest(unittest.TestCase):
             recovery["policy"],
             "roundtrip_cost_recovery_limit_one_15m_bar")
         self.assertGreater(recovery["net_ev_r_per_fill"], 1.84)
+
+    def test_forecast_risk_prior_uses_frozen_probability_and_full_cost(self):
+        rows = []
+        start = 1_700_000_000
+        for index in range(100):
+            rejected = index % 2 == 0
+            rows.append({
+                "signal_id": f"sig-{index}",
+                "event_ts": start + index * 900,
+                "symbol": "BTC" if index % 4 < 2 else "ETH",
+                "direction": "long", "entry": 100, "stop": 99,
+                "horizon_hours": 4, "funding_rate": 0,
+                "features": json.dumps({
+                    "forecast": {"p_hit_sl": .8 if rejected else .2}}),
+                "pnl_r": -1 if rejected else 2,
+                "tp_first": 0 if rejected else 1,
+                "sl_first": 1 if rejected else 0,
+                "timeout": 0,
+            })
+        result = _forecast_risk_prior_summary(rows)
+        self.assertEqual(result["usable"], 100)
+        self.assertEqual(result["reject_n"], 50)
+        self.assertEqual(result["accepted_n"], 50)
+        self.assertEqual(result["blocked_loss_precision"], 1.0)
+        self.assertGreater(result["incremental_ev_r_per_candidate"], 0)
+        self.assertGreater(result["accepted_net_ev_lower_95"], 0)
+        self.assertGreater(result["brier_skill"], 0)
+        self.assertEqual(result["positive_folds"], 5)
+        self.assertEqual(result["status"], "stop_no_promotion")
 
 
 if __name__ == "__main__":

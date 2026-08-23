@@ -411,6 +411,164 @@ def _passive_entry_summary(rows: list[dict[str, Any]],
     return result
 
 
+def _forecast_risk_prior_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Evaluate the frozen first-passage SL probability as a veto prior.
+
+    This is deliberately a fixed-threshold, research-only policy.  Rejected
+    candidates contribute zero policy return; accepted candidates retain their
+    full conservative net return.  No labels are used to change the threshold.
+    """
+    threshold = float(config.AGENT_HARNESS_REJECT_MIN_RISK)
+    result: dict[str, Any] = {
+        "policy": "frozen_first_passage_sl_risk_prior",
+        "threshold": threshold, "candidates": len(rows), "usable": 0,
+        "missing_forecast": 0, "reject_n": 0, "accepted_n": 0,
+        "reject_coverage": None, "blocked_loss_precision": None,
+        "rejected_net_ev_r": None, "accepted_net_ev_r": None,
+        "baseline_net_ev_r": None, "policy_net_ev_r_per_candidate": None,
+        "incremental_ev_r_per_candidate": None,
+        "accepted_clustered_event_net_ev_r": None,
+        "accepted_net_ev_lower_95": None, "brier": None,
+        "baseline_brier": None, "brier_skill": None,
+        "positive_folds": 0, "folds": [], "symbols": {},
+        "symbol_concentration": None, "status": "unavailable",
+        "budget_expansion_allowed": False,
+    }
+    usable = []
+    for row in rows:
+        try:
+            snapshot = json.loads(row.get("features") or "{}")
+            forecast = snapshot.get("forecast") or {}
+            probability = float(forecast["p_hit_sl"])
+            if not 0 <= probability <= 1:
+                raise ValueError("probability outside [0,1]")
+            net_r = float(row["pnl_r"]) - _cost_r(row)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            result["missing_forecast"] += 1
+            continue
+        usable.append({
+            "event_ts": float(row["event_ts"]),
+            "symbol": str(row["symbol"]),
+            "probability": probability,
+            "sl_first": bool(row.get("sl_first")),
+            "net_r": net_r,
+            "rejected": probability >= threshold,
+        })
+    result["usable"] = len(usable)
+    if not usable:
+        result["reason"] = "no_frozen_forecast"
+        return result
+    rejected = [row for row in usable if row["rejected"]]
+    accepted = [row for row in usable if not row["rejected"]]
+    result["reject_n"] = len(rejected)
+    result["accepted_n"] = len(accepted)
+    result["reject_coverage"] = round(len(rejected) / len(usable), 6)
+    if rejected:
+        result["blocked_loss_precision"] = round(
+            sum(row["net_r"] < 0 for row in rejected) / len(rejected), 6)
+        result["rejected_net_ev_r"] = round(
+            sum(row["net_r"] for row in rejected) / len(rejected), 6)
+    if accepted:
+        result["accepted_net_ev_r"] = round(
+            sum(row["net_r"] for row in accepted) / len(accepted), 6)
+    baseline_ev = sum(row["net_r"] for row in usable) / len(usable)
+    policy_ev = sum(row["net_r"] for row in accepted) / len(usable)
+    result["baseline_net_ev_r"] = round(baseline_ev, 6)
+    result["policy_net_ev_r_per_candidate"] = round(policy_ev, 6)
+    result["incremental_ev_r_per_candidate"] = round(
+        policy_ev - baseline_ev, 6)
+
+    actual_rate = sum(row["sl_first"] for row in usable) / len(usable)
+    model_brier = sum(
+        (row["probability"] - float(row["sl_first"])) ** 2
+        for row in usable) / len(usable)
+    base_brier = sum(
+        (actual_rate - float(row["sl_first"])) ** 2
+        for row in usable) / len(usable)
+    result["brier"] = round(model_brier, 6)
+    result["baseline_brier"] = round(base_brier, 6)
+    result["brier_skill"] = round(
+        1 - model_brier / base_brier if base_brier > 0 else 0.0, 6)
+
+    if accepted:
+        event_values: dict[float, list[float]] = defaultdict(list)
+        for row in accepted:
+            event_values[row["event_ts"]].append(row["net_r"])
+        clusters = [sum(values) / len(values)
+                    for _, values in sorted(event_values.items())]
+        cluster_mean = sum(clusters) / len(clusters)
+        variance = (sum((value - cluster_mean) ** 2 for value in clusters) /
+                    (len(clusters) - 1) if len(clusters) > 1 else 0.0)
+        lower = cluster_mean - config.AGENT_EVAL_EV_Z * math.sqrt(
+            variance / len(clusters))
+        result["accepted_clustered_event_net_ev_r"] = round(cluster_mean, 6)
+        result["accepted_net_ev_lower_95"] = round(lower, 6)
+    else:
+        lower = float("-inf")
+
+    symbol_rows: dict[str, list[float]] = defaultdict(list)
+    for row in accepted:
+        symbol_rows[row["symbol"]].append(row["net_r"])
+    result["symbols"] = {
+        symbol: {"n": len(values),
+                 "net_ev_r": round(sum(values) / len(values), 6)}
+        for symbol, values in sorted(symbol_rows.items())}
+    positive = [sum(values) for values in symbol_rows.values()
+                if sum(values) > 0]
+    concentration = max(positive) / sum(positive) if positive else 1.0
+    result["symbol_concentration"] = round(concentration, 6)
+
+    event_groups: list[list[dict[str, Any]]] = []
+    for row in sorted(usable, key=lambda item: (
+            item["event_ts"], item["symbol"])):
+        if (not event_groups or
+                event_groups[-1][0]["event_ts"] != row["event_ts"]):
+            event_groups.append([])
+        event_groups[-1].append(row)
+    fold_n = int(config.FACTOR_WALK_FORWARD_FOLDS)
+    block = len(event_groups) // fold_n
+    if block:
+        for fold in range(fold_n):
+            lo = fold * block
+            hi = ((fold + 1) * block if fold < fold_n - 1
+                  else len(event_groups))
+            material = [row for group in event_groups[lo:hi] for row in group]
+            fold_accepted = [row for row in material if not row["rejected"]]
+            fold_rejected = [row for row in material if row["rejected"]]
+            fold_baseline = sum(row["net_r"] for row in material) / len(material)
+            fold_policy = sum(row["net_r"] for row in fold_accepted) / len(material)
+            accepted_ev = (sum(row["net_r"] for row in fold_accepted) /
+                           len(fold_accepted) if fold_accepted else -99.0)
+            result["folds"].append({
+                "fold": fold, "n": len(material),
+                "reject_n": len(fold_rejected),
+                "accepted_n": len(fold_accepted),
+                "accepted_net_ev_r": round(accepted_ev, 6),
+                "incremental_ev_r_per_candidate": round(
+                    fold_policy - fold_baseline, 6),
+                "blocked_loss_precision": (round(
+                    sum(row["net_r"] < 0 for row in fold_rejected) /
+                    len(fold_rejected), 6) if fold_rejected else None),
+            })
+    result["positive_folds"] = sum(
+        fold["incremental_ev_r_per_candidate"] > 0 and
+        fold["accepted_net_ev_r"] > 0 for fold in result["folds"])
+    eligible = (
+        len(usable) >= config.FACTOR_MIN_SAMPLES and
+        len(rejected) >= config.AGENT_EVAL_MIN_REJECT and
+        len(accepted) >= config.AGENT_EVAL_MIN_VALID and
+        result["brier_skill"] > 0 and
+        len(result["folds"]) == fold_n and
+        result["positive_folds"] >= config.FACTOR_MIN_CONSISTENT_FOLDS and
+        result["blocked_loss_precision"] is not None and
+        result["blocked_loss_precision"] >= threshold and
+        lower > 0 and
+        concentration <= config.FACTOR_MAX_SYMBOL_CONCENTRATION)
+    result["status"] = ("eligible_for_harness_shadow_context_review"
+                        if eligible else "stop_no_promotion")
+    return result
+
+
 def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str, Any]:
     """执行因子挖掘与官方模型门，并输出不会授权预算扩大的研究裁决。"""
     replay = _research_metadata(db_path)
@@ -469,6 +627,7 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
             rows, market_db,
             entry_offset_pct=2 * (config.FEE_RATE_TAKER + config.SLIPPAGE)),
     }
+    forecast_risk_prior = _forecast_risk_prior_summary(rows)
     calibration = _calibration_summary(calibration_rows)
     validated = [result["name"] for result in factor_results
                  if result["status"] == "validated"]
@@ -493,6 +652,7 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
         "outcomes": outcomes,
         "segments": segments,
         "passive_entry": passive_entry,
+        "forecast_risk_prior": forecast_risk_prior,
         "factors": {"tested": len(factor_results),
                     "status_counts": dict(sorted(factor_status.items())),
                     "validated": validated},
