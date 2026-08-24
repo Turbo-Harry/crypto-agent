@@ -1646,3 +1646,8 @@
 - 离线证据：LangGraph 25/25、全部 Agent 测试 92/92、最终自动发现套件 57/57，红 0；AI 仓库与
   入口契约、依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile`、`diff --check` 全绿。
   依赖影响面仍限定在 decision 内部既有 `_evidence_ids → model repair` 路径，不新增跨层调用。
+- 实现与部署：提交 `aa7391d`。重启前 paper PID `22707`，空仓、今日零交易、未熔断、对账一致、
+  `/error` 为空；只 kickstart paper 到 PID `27319`，live PID `90574` 未变化。重启后 `/health=ok`、
+  心跳年龄 5.1 秒且继续推进，空仓、对账一致、无错误，configured=v8/v5、旧自然 latest run 仍是
+  v8/v4 schema_error、Veto=false、`/models/entry` 仍为空。必须等新的自然候选才能验证 v5 修复载荷；
+  不用离线调用或旧 v4 失败记录冒充自然部署成效。
