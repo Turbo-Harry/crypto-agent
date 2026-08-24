@@ -368,7 +368,10 @@ def main():
 
     print("== 日内研究生产调度 ==")
     from unittest.mock import patch
-    from service.worker import (run_intraday_research_cycle,
+    from service.worker import (_research_milestone,
+                                _research_should_run,
+                                intraday_research_progress,
+                                run_intraday_research_cycle,
                                 _intraday_research_retry_marker,
                                 _record_background_failure)
     calls = []
@@ -404,6 +407,10 @@ def main():
                   direction in ("long", "short")) == 2
               for model_type in ("entry", "extrema")
               for sid in expected_strategies))
+    progress = intraday_research_progress(os.path.join(tmp, "research.db"))
+    check("研究里程碑只读覆盖 A/B/C 三个隔离证据域",
+          {row[0] for row in progress} == expected_strategies and
+          all(row[1][0] == -1 for row in progress))
     error_db = os.path.join(tmp, "research-error.db")
     error_trader = type("ErrorTrader", (), {
         "_db_path": error_db, "last_error": ""})()
@@ -421,6 +428,36 @@ def main():
     next_due = retry_marker + config.FACTOR_MINING_INTERVAL_HOURS * 3600
     check("日内研究失败按配置退避 15 分钟而非等待下一天",
           next_due - 1_000_000 == config.FACTOR_MINING_RETRY_SECONDS)
+    before_gate = _research_milestone(299, {
+        "long": {"n": 299, "tp": 100, "sl": 100},
+        "short": {"n": 0, "tp": 0, "sl": 0}})
+    factor_gate = _research_milestone(300, {
+        "long": {"n": 299, "tp": 100, "sl": 100},
+        "short": {"n": 1, "tp": 0, "sl": 1}})
+    entry_gate = _research_milestone(330, {
+        "long": {"n": 300, "tp": 60, "sl": 60},
+        "short": {"n": 30, "tp": 5, "sl": 20}})
+    class_short = _research_milestone(330, {
+        "long": {"n": 300, "tp": 59, "sl": 100},
+        "short": {"n": 30, "tp": 5, "sl": 20}})
+    check("门前新增成熟样本不触发研究里程碑",
+          before_gate[0] == -1 and
+          all(item[1:] == (-1, -1) for item in before_gate[1]))
+    check("总成熟首次达到 300 立即跨过因子门",
+          factor_gate[0] == 0)
+    check("分方向 300/60/60 全满足才跨过入场模型门",
+          entry_gate[1][0][1] == 0 and class_short[1][0][1] == -1)
+    check("统计门跨越提前触发且相同里程碑幂等",
+          _research_should_run(
+              now=100, last_run=99, last_progress=("before",),
+              current_progress=("after",), retry_not_before=0) and
+          not _research_should_run(
+              now=100, last_run=99, last_progress=("same",),
+              current_progress=("same",), retry_not_before=0))
+    check("研究失败退避期间即使新里程碑也不抢跑",
+          not _research_should_run(
+              now=100, last_run=0, last_progress=("before",),
+              current_progress=("after",), retry_not_before=101))
 
     client.__exit__(None, None, None)
     check("lifespan 退出仅停止 worker 一次", worker.stop_calls == 1)

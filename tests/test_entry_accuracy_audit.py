@@ -61,6 +61,10 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         result = audit_status(self.path)
         self.assertFalse(result["statistically_complete"])
         self.assertEqual(result["counts"]["raw_candidate_snapshots"], 0)
+        self.assertEqual(result["counts"]["directions"], {
+            "long": {"n": 0, "tp_first": 0, "sl_first": 0, "timeout": 0},
+            "short": {"n": 0, "tp_first": 0, "sl_first": 0, "timeout": 0},
+        })
         self.assertEqual(result["counts"]["duplicate_version_snapshots"], 0)
         self.assertEqual(result["counts"]["paper_closed"], 0)
         self.assertFalse(result["gates"]["candidate_training_sample"]["passed"])
@@ -94,6 +98,12 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         self.assertTrue(result["gates"]["tp_class_sample"]["passed"])
         self.assertTrue(result["gates"]["sl_class_sample"]["passed"])
         self.assertEqual(result["counts"]["six_dim_outcomes"], 300)
+        self.assertEqual(result["counts"]["directions"], {
+            "long": {"n": 150, "tp_first": 50, "sl_first": 50,
+                     "timeout": 50},
+            "short": {"n": 150, "tp_first": 50, "sl_first": 50,
+                      "timeout": 50},
+        })
         self.assertEqual(result["counts"]["paper_closed"], 0)
         self.assertFalse(result["gates"]["paper_closed"]["passed"])
         self.assertFalse(result["statistically_complete"])

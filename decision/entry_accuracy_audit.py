@@ -123,6 +123,25 @@ def audit_status(db_path: str | None = None,
             "AND s.wick IS NOT NULL AND s.depth IS NOT NULL "
             "AND s.trend IS NOT NULL AND s.volume IS NOT NULL "
             "AND s.funding IS NOT NULL AND s.book IS NOT NULL", scope)
+        direction_rows = _rows(
+            conn, "SELECT s.direction,COUNT(*) n,SUM(o.tp_first) tp_first,"
+            "SUM(o.sl_first) sl_first,SUM(o.timeout) timeout "
+            "FROM signal_outcomes o JOIN signal_samples_canonical s "
+            "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
+            " GROUP BY s.direction", scope)
+        directions = {
+            direction: {"n": 0, "tp_first": 0, "sl_first": 0, "timeout": 0}
+            for direction in ("long", "short")}
+        for row in direction_rows:
+            direction = str(row.get("direction") or "")
+            if direction in directions:
+                directions[direction] = {
+                    "n": int(row.get("n") or 0),
+                    "tp_first": int(row.get("tp_first") or 0),
+                    "sl_first": int(row.get("sl_first") or 0),
+                    "timeout": int(row.get("timeout") or 0),
+                }
 
         closed_rows = _rows(
             conn, "SELECT id,shadow_dims FROM trades WHERE status='closed' "
@@ -283,6 +302,7 @@ def audit_status(db_path: str | None = None,
                 "candidates": candidates, "outcomes": outcomes,
                 "six_dim_outcomes": six_dim_outcomes,
                 "tp_first": tp, "sl_first": sl, "timeout": timeout,
+                "directions": directions,
                 "forecast_calibration": calibration_n,
                 "validated_factors": validated_factors,
                 "legacy_agent_valid": len(legacy_rows),

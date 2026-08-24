@@ -107,6 +107,24 @@ def list_factor_trials(db_path: str | None, strategy_id: str,
          max(1, min(200, limit))], db_path=db_path)
 
 
+def research_outcome_counts(db_path: str | None, strategy_id: str, *,
+                            strategy_version: str | None = None
+                            ) -> list[dict[str, Any]]:
+    """按方向返回当前研究 scope 的成熟路径类别计数。"""
+    _ready(db_path)
+    scope_sql = " AND s.strategy_version=?" if strategy_version else ""
+    return db.q(
+        "SELECT s.direction,COUNT(*) n,SUM(o.tp_first) tp,SUM(o.sl_first) sl "
+        "FROM signal_outcomes o JOIN signal_samples_canonical s "
+        "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
+        "AND s.timeframe=? AND s.horizon_hours=?" + scope_sql +
+        " GROUP BY s.direction",
+        [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
+         config.SIGNAL_OUTCOME_HORIZON_HOURS,
+         *([strategy_version] if strategy_version else [])],
+        db_path=db_path)
+
+
 def latest_analysis(db_path: str | None) -> dict[str, Any] | None:
     _ready(db_path)
     row = db.q1("SELECT * FROM analyses ORDER BY id DESC LIMIT 1",

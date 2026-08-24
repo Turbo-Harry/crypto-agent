@@ -30,6 +30,72 @@ from storage.runtime_repository import (
     record_engine_error_prefix,
     save_position_snapshot,
 )
+from storage.query_api import research_outcome_counts
+
+
+def _research_strategy_ids():
+    strategy_ids = [config.ENTRY_SIGNAL_STRATEGY_ID]
+    if (config.STRATEGY_B_SHADOW_ENABLED and
+            config.BREAKOUT_SIGNAL_STRATEGY_ID not in strategy_ids):
+        strategy_ids.append(config.BREAKOUT_SIGNAL_STRATEGY_ID)
+    if (config.AGENT_PROPOSAL_SHADOW_ENABLED and
+            config.AGENT_PROPOSAL_STRATEGY_ID not in strategy_ids):
+        strategy_ids.append(config.AGENT_PROPOSAL_STRATEGY_ID)
+    return strategy_ids
+
+
+def _research_milestone(total, by_direction):
+    """把连续样本数压成门槛里程碑；门前增长不会触发重研究。"""
+    step = config.FACTOR_MINING_PROGRESS_STEP
+
+    def bucket(value, threshold):
+        return -1 if value < threshold else (value - threshold) // step
+
+    directions = []
+    for direction in ("long", "short"):
+        row = by_direction.get(direction) or {}
+        n = int(row.get("n") or 0)
+        tp = int(row.get("tp") or 0)
+        sl = int(row.get("sl") or 0)
+        entry_ready = (n >= config.ENTRY_MODEL_MIN_SAMPLES and
+                       tp >= config.ENTRY_MODEL_MIN_TP and
+                       sl >= config.ENTRY_MODEL_MIN_SL)
+        directions.append((
+            direction,
+            ((n - config.ENTRY_MODEL_MIN_SAMPLES) // step
+             if entry_ready else -1),
+            bucket(n, config.EXTREMA_MIN_MODEL_SAMPLES),
+        ))
+    return (bucket(int(total), config.FACTOR_MIN_SAMPLES), tuple(directions))
+
+
+def intraday_research_progress(db_path=None):
+    """只读返回各策略训练门里程碑；C 只计算当前协议样本。"""
+    from decision.signal_identity import research_scope_version
+
+    progress = []
+    for strategy_id in _research_strategy_ids():
+        strategy_version = research_scope_version(strategy_id)
+        rows = research_outcome_counts(
+            db_path, strategy_id, strategy_version=strategy_version)
+        by_direction = {str(row["direction"]): row for row in rows}
+        total = sum(int(row.get("n") or 0) for row in rows)
+        progress.append((strategy_id, _research_milestone(
+            total, by_direction)))
+    return tuple(progress)
+
+
+def _research_should_run(*, now, last_run, last_progress, current_progress,
+                         retry_not_before):
+    """统一墙钟兜底、里程碑变化与失败退避的调度裁决。"""
+    interval_due = (
+        float(now) - float(last_run) >=
+        config.FACTOR_MINING_INTERVAL_HOURS * 3600)
+    progress_due = (last_progress is not None and
+                    current_progress is not None and
+                    current_progress != last_progress)
+    return bool((interval_due or progress_due) and
+                float(now) >= float(retry_not_before))
 
 
 def run_intraday_research_cycle(db_path=None):
@@ -39,13 +105,7 @@ def run_intraday_research_cycle(db_path=None):
     from factors.extrema_model_training import train_extrema_model
     from decision.model_lifecycle import advance
 
-    strategy_ids = [config.ENTRY_SIGNAL_STRATEGY_ID]
-    if (config.STRATEGY_B_SHADOW_ENABLED and
-            config.BREAKOUT_SIGNAL_STRATEGY_ID not in strategy_ids):
-        strategy_ids.append(config.BREAKOUT_SIGNAL_STRATEGY_ID)
-    if (config.AGENT_PROPOSAL_SHADOW_ENABLED and
-            config.AGENT_PROPOSAL_STRATEGY_ID not in strategy_ids):
-        strategy_ids.append(config.AGENT_PROPOSAL_STRATEGY_ID)
+    strategy_ids = _research_strategy_ids()
     results = []
     errors = []
     for strategy_id in strategy_ids:
@@ -183,6 +243,9 @@ class TraderWorker:
         t.signal_cool = {}
         self._last_snapshot = 0
         self._last_analysis = 0
+        self._last_research_progress_check = 0
+        self._last_research_progress = None
+        self._research_retry_not_before = 0
         # 2026-08-16 结构性修复: 独立心跳线程——扫描/每日刷新等长阻塞期间
         # 心跳不断更(激进档首轮 20 币扫描 + 全市场初筛需数分钟,曾两次触发
         # watchdog 误杀崩溃循环)。心跳与 tick 彻底解耦。
@@ -373,22 +436,42 @@ class TraderWorker:
                                 print(f"[候选结算] {_settle}")
                         except Exception:
                             pass
-                    # T4-T6: 离线研究链每日自动消费已结算候选。所有结果先
-                    # candidate/validated/shadow，样本不足或不过 OOS 门绝不生效。
-                    if time.time() - getattr(self, "_last_factor_mining", 0) >= \
-                            config.FACTOR_MINING_INTERVAL_HOURS * 3600:
-                        self._last_factor_mining = time.time()
+                    # T4-T6: 24h 兜底；成熟证据跨过因子/分方向模型统计门时
+                    # 提前运行同一幂等研究链，避免满足 300/60/60 后空等一天。
+                    _now = time.time()
+                    _progress = None
+                    if (_now - self._last_research_progress_check >=
+                            config.FACTOR_MINING_PROGRESS_CHECK_SECONDS):
+                        self._last_research_progress_check = _now
+                        try:
+                            _progress = intraday_research_progress(t._db_path)
+                        except Exception:
+                            _progress = None
+                    if _research_should_run(
+                            now=_now,
+                            last_run=getattr(self, "_last_factor_mining", 0),
+                            last_progress=self._last_research_progress,
+                            current_progress=_progress,
+                            retry_not_before=self._research_retry_not_before):
+                        self._last_factor_mining = _now
+                        if _progress is not None:
+                            self._last_research_progress = _progress
                         try:
                             _research = run_intraday_research_cycle(t._db_path)
                             print(f"[日内研究] {_research}")
                             if _research["errors"]:
                                 raise RuntimeError(json.dumps(
                                     _research["errors"], ensure_ascii=False))
+                            self._research_retry_not_before = 0
+                            self._last_research_progress = \
+                                intraday_research_progress(t._db_path)
                         except Exception as e:
                             # 成功周期仍为 24h；失败只退避 15min。试验键和模型
                             # 制品均幂等，重试不会制造重复证据或重置生命周期。
                             self._last_factor_mining = \
                                 _intraday_research_retry_marker()
+                            self._research_retry_not_before = (
+                                _now + config.FACTOR_MINING_RETRY_SECONDS)
                             _record_background_failure(t, "intraday_research", e)
                     # 2026-08-21 每小时对账巡查: 交易所故障期成交回报丢失会
                     # 产生无台账持仓(HBAR 幽灵仓案例),不必等重启才发现。

@@ -26,6 +26,7 @@ from factors.entry_model_training import (_load_rows as load_entry_rows,
 from factors.extrema_model_training import (_load_rows as load_extrema_rows,
                                             _validated_features as extrema_features)
 from factors.intraday_factor_mining import load_observations
+from service.worker import intraday_research_progress
 from storage.query_api import list_factor_trials
 
 
@@ -489,6 +490,9 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(audit["counts"]["forecast_calibration"], 1)
         self.assertEqual(audit["counts"]["validated_factors"], 1)
         self.assertEqual(audit["scope"]["strategy_version"], current_version)
+        with mock.patch.object(config, "FACTOR_MIN_SAMPLES", 2):
+            progress = dict(intraday_research_progress(self.db_path))
+        self.assertEqual(progress[strategy_id][0], -1)
 
 
 if __name__ == "__main__":
