@@ -157,9 +157,39 @@ def main():
     check("/scan/evolve 含 effective_wick 且 needs_approval=false",
           r.status_code == 200 and "effective_wick" in r.json()
           and r.json()["needs_approval"] is False)
-    check("/agent/status 返回运行健康字段",
-          client.get("/agent/status").status_code == 200
-          and "failure_rate" in client.get("/agent/status").json())
+    sdb.x(
+        "INSERT INTO agent_runs "
+        "(run_id,signal_id,idempotency_key,created_ts,runtime_status,"
+        "final_action,prompt_version,tool_policy_version) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ["status-run", "status-signal", "status-key", time.time(),
+         "completed", "agent_abstain", config.AGENT_HARNESS_PROMPT_VERSION,
+         config.AGENT_HARNESS_TOOL_POLICY_VERSION], db_path=trader._db_path)
+    sdb.x(
+        "INSERT INTO agent_evaluations (run_id,lifecycle_status) VALUES (?,?)",
+        ["status-run", "pending"], db_path=trader._db_path)
+    sdb.x(
+        "INSERT INTO agent_versions "
+        "(version,strategy_id,role,status,created_ts) VALUES (?,?,?,?,?)",
+        ["mature-version", config.ENTRY_SIGNAL_STRATEGY_ID, "champion",
+         "observing", time.time()], db_path=trader._db_path)
+    agent_status = client.get("/agent/status")
+    agent_body = agent_status.json()
+    check("/agent/status 分开返回配置、最新 run 与成熟生命周期身份",
+          agent_status.status_code == 200
+          and agent_body["failure_rate"] == 0.0
+          and agent_body["configured_prompt_version"] ==
+              config.AGENT_HARNESS_PROMPT_VERSION
+          and agent_body["configured_tool_policy_version"] ==
+              config.AGENT_HARNESS_TOOL_POLICY_VERSION
+          and agent_body["latest_run_prompt_version"] ==
+              config.AGENT_HARNESS_PROMPT_VERSION
+          and agent_body["latest_run_tool_policy_version"] ==
+              config.AGENT_HARNESS_TOOL_POLICY_VERSION
+          and agent_body["latest_run_lifecycle_status"] == "pending"
+          and agent_body["lifecycle_version"] == "mature-version"
+          and agent_body["lifecycle_status"] == "observing"
+          and agent_body["veto_enabled"] is True)
     check("/agent/runs 只读查询返回 runs",
           client.get("/agent/runs").status_code == 200
           and "runs" in client.get("/agent/runs").json())

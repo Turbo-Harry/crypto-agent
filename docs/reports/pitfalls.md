@@ -1099,3 +1099,16 @@
   100/30 证据不混计；空 content、字段缺失和语义错误仍走既有一次修复后失败关闭。
 - 预防：结构化输出必须同时验证请求参数、响应 JSON 和领域语义三层；provider 模式变化属于运行身份，
   不能只改 HTTP body 却沿用旧版本成熟度。自然验收还要比较修复次数、模型延迟和错误率，不能只看最终成功。
+
+### 2026-08-24 最近成熟版本不等于当前进程配置或最近运行身份
+
+- 现象：paper 已自然写入 v6 + `tool-policy-v3-provider-json-output` 的 4 条 run，`/agent/status` 仍把
+  v5 + tool-policy-v2 显示为 `current_version`；新 run 尚未满 4h，没有生命周期行，用户容易误判部署失败。
+- 根因：状态查询只读 `agent_versions` 最新行，该表表达“已有成熟评价的生命周期身份”，不表达进程当前
+  config 或最近一次 run；三个不同时间语义被压成 current。`veto_enabled` 还只识别 active-veto，漏了
+  仍具否决权的 observing/kept。
+- 修复：保持旧 `current_*` 字段兼容，同时新增 configured prompt/tool policy、latest run prompt/tool policy/
+  runtime/evaluation 状态与显式 lifecycle version/status；Veto 展示与执行端一致识别 active-veto、observing、
+  kept。全部字段只读，不新增控制或权限。
+- 预防：Agent 状态接口必须分别展示“进程配置、最近运行、成熟生命周期”三层身份；pending 新版本不能
+  被旧成熟行覆盖，成熟旧版本也不能被最新 pending run 冒充已验证。契约测试同时覆盖两者并核对 Veto 集合。

@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import config
 from engines.runtime_api import DirectionalRuntimeAPI
 from exchange.models import BalanceInfo, PositionInfo
 from interfaces.trading import TradingRuntimePort
@@ -148,7 +149,14 @@ def main():
     assert latest_analysis(db_path) is None
     assert list_factor_trials(db_path, "A_pullback") == []
     assert list_risk_events(db_path) == []
-    assert agent_status_summary(db_path)["total_runs"] == 0
+    agent_status = agent_status_summary(db_path)
+    assert agent_status["total_runs"] == 0
+    assert agent_status["configured_prompt_version"] == \
+        config.AGENT_HARNESS_PROMPT_VERSION
+    assert agent_status["configured_tool_policy_version"] == \
+        config.AGENT_HARNESS_TOOL_POLICY_VERSION
+    assert agent_status["latest_run_prompt_version"] is None
+    assert agent_status["lifecycle_version"] is None
     _assert_service_uses_boundary()
     print("interface boundaries: 17 passed, 0 failed")
 

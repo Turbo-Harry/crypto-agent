@@ -1533,3 +1533,16 @@
   均为 pending、零 Veto、零订单；部署后健康心跳正常、空仓、今日零交易、未熔断、对账一致、无错误、
   `/models/entry` 为空。`/agent/status` 在新身份尚无成熟生命周期行时仍显示最近 v5 shadow，不能把该
   展示值误解为进程未加载 v3 JSON Output；实际 run/step 的工具策略身份和 Trace 是部署事实源。
+
+## 2026-08-24 Agent 状态三层身份拆分
+
+- 活体触发：v6 + `tool-policy-v3-provider-json-output` 已有 4 条自然 pending run，`/agent/status` 的
+  `current_version/current_status` 仍来自最近成熟的 v5 shadow 生命周期行。旧字段没有错读数据库，却把
+  配置身份、最近运行身份和成熟评价身份混为一谈，无法直接证明新部署是否在处理候选。
+- 实现：保留旧 current 字段兼容，新增 `configured_prompt_version/configured_tool_policy_version`、
+  `latest_run_prompt_version/latest_run_tool_policy_version/latest_run_runtime_status/`
+  `latest_run_lifecycle_status/latest_run_created_ts`，以及显式 `lifecycle_version/lifecycle_status`。
+  `veto_enabled` 同步执行语义，active-veto、observing、kept 才为 true；接口仍只读，不改变任何状态。
+- 验收要求：空库应返回当前配置但 latest/lifecycle 为空；同库存在 pending 新 run 和 observing 旧版本时，
+  两层身份必须同时准确返回且 Veto=true。随后运行 service、接口边界、全量套件和静态护栏，只部署
+  paper，并核对配置=v6/v3、latest run=v6/v3 pending、lifecycle=v5 shadow、Veto=false 四项并存。

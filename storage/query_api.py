@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import config
 from storage import db
 
 
@@ -51,16 +52,33 @@ def agent_status_summary(db_path: str | None) -> dict[str, Any]:
     versions = db.q("SELECT version,status FROM agent_versions "
                     "ORDER BY created_ts DESC LIMIT 1", db_path=db_path)
     current = versions[0] if versions else {}
+    latest_runs = db.q(
+        "SELECT r.prompt_version,r.tool_policy_version,r.runtime_status,"
+        "r.created_ts,e.lifecycle_status FROM agent_runs r "
+        "LEFT JOIN agent_evaluations e ON e.run_id=r.run_id "
+        "ORDER BY r.created_ts DESC LIMIT 1", db_path=db_path)
+    latest = latest_runs[0] if latest_runs else {}
     return {
         "current_version": current.get("version"),
         "current_status": current.get("status"),
+        "lifecycle_version": current.get("version"),
+        "lifecycle_status": current.get("status"),
+        "configured_prompt_version": config.AGENT_HARNESS_PROMPT_VERSION,
+        "configured_tool_policy_version":
+            config.AGENT_HARNESS_TOOL_POLICY_VERSION,
+        "latest_run_prompt_version": latest.get("prompt_version"),
+        "latest_run_tool_policy_version": latest.get("tool_policy_version"),
+        "latest_run_runtime_status": latest.get("runtime_status"),
+        "latest_run_lifecycle_status": latest.get("lifecycle_status"),
+        "latest_run_created_ts": latest.get("created_ts"),
         "total_runs": len(rows),
         "completed_runs": sum(row["runtime_status"] == "completed"
                               for row in rows),
         "failed_runs": failed,
         "failure_rate": round(failed / len(rows), 4) if rows else 0.0,
-        "shadow_enabled": True,
-        "veto_enabled": current.get("status") == "active-veto",
+        "shadow_enabled": bool(config.AGENT_HARNESS_ENABLED),
+        "veto_enabled": current.get("status") in
+            {"active-veto", "observing", "kept"},
     }
 
 

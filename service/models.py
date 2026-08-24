@@ -180,9 +180,18 @@ class ScanEvolveOut(BaseModel):
 
 
 class AgentStatusOut(BaseModel):
-    """Agent Harness runtime health; observation only."""
+    """Agent Harness runtime, latest run and mature lifecycle; read-only."""
     current_version: Optional[str] = None
     current_status: Optional[str] = None
+    lifecycle_version: Optional[str] = None
+    lifecycle_status: Optional[str] = None
+    configured_prompt_version: str
+    configured_tool_policy_version: str
+    latest_run_prompt_version: Optional[str] = None
+    latest_run_tool_policy_version: Optional[str] = None
+    latest_run_runtime_status: Optional[str] = None
+    latest_run_lifecycle_status: Optional[str] = None
+    latest_run_created_ts: Optional[float] = None
     total_runs: int
     completed_runs: int
     failed_runs: int
