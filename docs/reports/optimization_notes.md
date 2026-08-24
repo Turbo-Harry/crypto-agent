@@ -2130,5 +2130,13 @@
   决策闭环和全部 Agent 共 18 个相关脚本通过。按 CI 独立数据库、事件文件和运行目录自动发现并通过
   58/58 个测试脚本，失败 0；参数集中、测试隔离、23 条修复护栏、code graph、AI repo、py_compile
   与 diff check 全绿。
+- 部署证据：实现提交 `7ccc3b5`。先暂停 8091 paper 并确认空仓、未熔断、对账 balanced；仅通过
+  `com.crypto.paper` 完整重启 `8722→12112`，8090 live PID `90574` 未变化。重启后
+  `/health=ok`、心跳 4.4s、未暂停、空仓、对账 balanced、`/error` 为空，模型列表仍为空、预算扩张
+  false、Harness `veto_enabled=false`。
+- 自然连续性：重启扫描后同一 identity 的 A 从 8 增至 9、B 从 0 增至 7、C 从 4 增至 5，三者
+  outcome 仍为 0；没有因加载新代码产生新哈希或丢失旧 v5 进度。当前 v5 Harness 中 A 为 6 abstain、
+  2 shadow reject、1 schema fail-closed，B 为 5 abstain、1 shadow reject、1 timeout fail-closed，全部
+  evaluation pending、零 Veto、零订单，必须等待各自真实 4h 标签。
 - 安全边界：不改变 300/60/60、Harness 100/30、Brier、费用后 EV、稳定性、固定 2:1、风险预算、Veto
   或订单权限。该变更只避免未来无关身份清零，不能把当前空模型或 0 个成熟 outcome 说成已可下单。
