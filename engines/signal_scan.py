@@ -316,6 +316,20 @@ def _cancellation_imbalance(current, previous):
 # 参数别名（统一维护于 config.py,本模块不私藏数值）
 
 
+def dynamic_tp_net_ev(selected, entry, stop):
+    """预测位期望净盈利(USDT 口径,2026-08-25 用户指示):
+    触TP盈利×P(触TP) − 触SL亏损×P(触SL) − 手续费(cost_r×risk)。
+    返回 None 表示数据不足(不可评估)。"""
+    try:
+        risk = abs(float(entry) - float(stop))
+        tp_profit = abs(float(selected["tp"]) - float(entry))
+        fees = float(selected.get("cost_r") or 0) * risk
+        return (tp_profit * float(selected.get("p_hit_tp") or 0)
+                - risk * float(selected.get("p_hit_sl") or 0) - fees)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _cai_live_enabled():
     """实盘 C_AI 权限(2026-08-25 用户指示'把AI提案并下单的功能也在实盘上线'):
     launchd 环境变量 CRYPTO_C_AI_LIVE=1 保底——并行编辑反复把 config 开关
@@ -953,7 +967,21 @@ class SignalScanMixin:
                 if (_dynamic_tp.get("passed") and
                         _paper_dynamic_tp_enabled(self)):
                     selected = _dynamic_tp["selected"]
-                    _stop = selected["stop"]
+                    _tp = selected["tp"]
+                    _forecast = selected["forecast"]
+                # 2026-08-25 用户指示: 实盘也执行预测止盈位;
+                # 预测位期望盈利−手续费 < 门槛 → 拒单不开仓
+                if (_dynamic_tp.get("passed") and
+                        getattr(self, "live_mode", False) and
+                        getattr(config, "DYNAMIC_TP_LIVE_EXECUTION_ENABLED",
+                                False)):
+                    selected = _dynamic_tp["selected"]
+                    _net = dynamic_tp_net_ev(selected, entry_ref, _stop)
+                    if _net is None or _net <= getattr(
+                            config, "DYNAMIC_TP_LIVE_MIN_NET_EV_USDT", 0.0):
+                        print(f"⛔ 拒单 {base}: 预测止盈位期望净盈利 {_net} USDT "
+                              f"≤ 手续费,不接")
+                        return None
                     _tp = selected["tp"]
                     _forecast = selected["forecast"]
             except Exception as exc:
