@@ -42,7 +42,7 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                 config.SIGNAL_FEATURE_SCHEMA_VERSION,
                 100.0, 99.0, 102.0, 1.0,
                 config.SIGNAL_OUTCOME_HORIZON_HOURS,
-                .5, .5, .5, .5, .5, .5, "{}", event_ts, event_ts))
+                .5, .5, .5, .5, .5, .5, "{}", "pass", event_ts, event_ts))
             label = idx % 3
             outcomes.append((
                 signal_id, config.SIGNAL_OUTCOME_HORIZON_HOURS,
@@ -54,8 +54,8 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                 "INSERT INTO signal_samples (signal_id,symbol,direction,event_ts,"
                 "kline_ts,timeframe,venue,strategy_version,config_hash,"
                 "feature_schema_version,entry,stop,tp,atr,horizon_hours,wick,depth,"
-                "trend,volume,funding,book,features,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", samples)
+                "trend,volume,funding,book,features,rule_decision,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", samples)
             conn.executemany(
                 "INSERT INTO signal_outcomes (signal_id,horizon_hours,tp_first,"
                 "sl_first,timeout,ambiguous,pnl_r,mfe_r,mae_r,high_ret_h,low_ret_h,"
@@ -65,6 +65,8 @@ class EntryAccuracyAuditTest(unittest.TestCase):
     def _harness_version(self, strategy_id=None):
         return version_for_identity(
             strategy_id=strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID,
+            strategy_version=config_identity(
+                strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)[0],
             model_version=config.AGENT_HARNESS_MODEL,
             prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
             context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
@@ -219,6 +221,7 @@ class EntryAccuracyAuditTest(unittest.TestCase):
             "reject_n": config.AGENT_EVAL_MIN_REJECT,
             "incremental_ev_lower_bound": .1,
             "max_segment_share": .5,
+            "max_direction_share": .5,
             "model_cost_data_complete": True,
             "trace_coverage": 1.0,
             "probability_coverage": 1.0,
@@ -295,6 +298,39 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         self.assertIsNone(result["agent_version"])
         self.assertFalse(result["gates"]["agent_sample"]["passed"])
 
+    def test_harness_progress_counts_only_baseline_eligible_candidates(self):
+        self._insert_candidates(3)
+        with db.tx(db_path=self.path) as conn:
+            conn.execute(
+                "UPDATE signal_samples SET rule_decision='reject',"
+                "final_decision='rejected' WHERE signal_id='sig-0000'")
+            conn.execute(
+                "UPDATE signal_samples SET rule_decision='pass',"
+                "final_decision='rejected',reject_reason='ai_reject: fixture' "
+                "WHERE signal_id='sig-0001'")
+            conn.execute(
+                "UPDATE signal_samples SET rule_decision='pass',"
+                "final_decision='opened' WHERE signal_id='sig-0002'")
+            for idx in range(3):
+                conn.execute(
+                    "INSERT INTO agent_runs (run_id,signal_id,idempotency_key,"
+                    "created_ts,runtime_status,final_action,model_verdict) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (f"eligible-run-{idx}", f"sig-{idx:04d}",
+                     f"eligible-idem-{idx}", idx, "completed",
+                     "shadow_reject" if idx < 2 else "baseline_pass",
+                     "reject" if idx < 2 else "approve"))
+                conn.execute(
+                    "INSERT INTO agent_evaluations "
+                    "(run_id,lifecycle_status,pnl_r) VALUES (?,?,?)",
+                    (f"eligible-run-{idx}", "mature", -1.0))
+
+        result = audit_status(self.path)
+        self.assertEqual(
+            result["counts"]["harness_all_version_distinct_signals"], 1)
+        self.assertEqual(
+            result["counts"]["harness_all_version_reject_distinct_signals"], 0)
+
     def test_all_statistical_gates_can_be_proven_without_writes(self):
         self._insert_candidates()
         strategy_version = config_identity(
@@ -351,6 +387,7 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                              "reject_n": config.AGENT_EVAL_MIN_REJECT,
                              "incremental_ev_lower_bound": .1,
                              "max_segment_share": .5,
+                             "max_direction_share": .5,
                              "model_cost_data_complete": True,
                              "trace_coverage": 1.0,
                              "probability_coverage": 1.0,

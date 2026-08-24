@@ -326,8 +326,13 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
             sample = {}
     timeframe = (sample.get("timeframe") or sig.get("timeframe") or
                  config.SIGNAL_SAMPLE_TIMEFRAME)
-    strategy_version = (sample.get("strategy_version") or
-                        config.ENTRY_STRATEGY_VERSION)
+    strategy_id = str(sample.get("strategy_id") or sig.get("strategy_id") or
+                      config.ENTRY_SIGNAL_STRATEGY_ID)
+    if sample.get("strategy_version"):
+        strategy_version = str(sample["strategy_version"])
+    else:
+        from decision.signal_identity import config_identity
+        strategy_version = config_identity(strategy_id)[0]
     schema_version = (sample.get("feature_schema_version") or
                       config.SIGNAL_FEATURE_SCHEMA_VERSION)
     event_ts = sample.get("event_ts") or time.time()
@@ -351,11 +356,10 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
         "retrieval_version": HARNESS_RETRIEVAL_VERSION,
         "tool_policy_version": tool_policy_version,
     }
-    strategy_id = str(sample.get("strategy_id") or sig.get("strategy_id") or
-                      config.ENTRY_SIGNAL_STRATEGY_ID)
     from decision.agent_lifecycle import version_for_identity, veto_effective
     lifecycle_version = version_for_identity(
-        strategy_id=strategy_id, model_version=model_version,
+        strategy_id=strategy_id, strategy_version=strategy_version,
+        model_version=model_version,
         prompt_version=HARNESS_PROMPT_VERSION,
         context_version=HARNESS_CONTEXT_VERSION,
         schema_version=str(schema_version),

@@ -10,7 +10,8 @@ from storage.agent_lifecycle import (
 )
 
 
-def version_for_identity(*, strategy_id: str, model_version: str,
+def version_for_identity(*, strategy_id: str, strategy_version: str,
+                         model_version: str,
                          prompt_version: str, context_version: str,
                          schema_version: str, retrieval_version: str,
                          tool_policy_version: str,
@@ -18,9 +19,25 @@ def version_for_identity(*, strategy_id: str, model_version: str,
     """Return the one auditable identity used by evaluation and execution."""
     return config.AGENT_EVALUATION_VERSION + ":harness:" + ":".join(
         str(value or "unknown") for value in (
-            strategy_id, model_version, prompt_version, context_version,
+            strategy_id, strategy_version, model_version,
+            prompt_version, context_version,
             schema_version, retrieval_version, tool_policy_version,
             pricing_version))
+
+
+def configured_version(strategy_id: str) -> str:
+    """Return the exact evaluator/runtime identity configured for a strategy."""
+    from decision.signal_identity import config_identity
+    return version_for_identity(
+        strategy_id=strategy_id,
+        strategy_version=config_identity(strategy_id)[0],
+        model_version=config.AGENT_HARNESS_MODEL,
+        prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
+        context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
+        schema_version=config.SIGNAL_FEATURE_SCHEMA_VERSION,
+        retrieval_version=config.AGENT_HARNESS_RETRIEVAL_VERSION,
+        tool_policy_version=config.AGENT_HARNESS_TOOL_POLICY_VERSION,
+        pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
 
 
 def veto_effective(version: str, *, strategy_id: str | None = None,
@@ -60,6 +77,6 @@ def observe(version: str, metrics: Mapping[str, Any], *,
 
 
 __all__ = [
-    "activate", "get", "observe", "promotion_ready", "register", "validate",
-    "version_for_identity", "veto_effective",
+    "activate", "configured_version", "get", "observe", "promotion_ready",
+    "register", "validate", "version_for_identity", "veto_effective",
 ]

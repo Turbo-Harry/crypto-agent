@@ -2140,3 +2140,24 @@
   evaluation pending、零 Veto、零订单，必须等待各自真实 4h 标签。
 - 安全边界：不改变 300/60/60、Harness 100/30、Brier、费用后 EV、稳定性、固定 2:1、风险预算、Veto
   或订单权限。该变更只避免未来无关身份清零，不能把当前空模型或 0 个成熟 outcome 说成已可下单。
+
+## 2026-08-24 Harness 增量评价与真实消费集合对齐
+
+- 触发审计：当前 v5 A 9 条全部为 `rule_decision=reject`、原因均是无 validated active 入场模型；B 7 条
+  为独立 shadow。旧评价会在这些路径成熟后照常累计 100/30，但 runtime 只有量化、2:1、入场模型和经验
+  门全过时才消费 Veto，属于评价/执行分布错位。
+- 固定反例：用旧 v4 的 190 个去重成熟自然机会、59 个 15m 事件复算现役零阈值新闻符号和方向因子，
+  `news+signal` 拒绝 29 条、亏损 26 条、表面精度 89.66%、聚类增量下界 +0.0811R；但冻结 news_score
+  全在 0.5714～0.8333，29 条全部是 short，实质是单边上涨期的方向过滤，保留候选绝对 EV 仍为
+  -0.4743R。该结果只用于证伪旧集中门，不进入当前 v5 晋升。
+- 冻结变更：评价版本升 v4，Harness 身份加入采样时精确 `strategy_version`；评价直接绑定物理样本，
+  不再读跨版本 canonical view。A 仅消费真正到达 Harness 执行点的量化 baseline pass，legacy AI 本就
+  会拒绝的候选退出增量归因；B 保留自身 shadow baseline 研究口径。接口同时报告成熟 Trace 总数、
+  eligible 数和排除数，不删除任何 run/outcome。
+- 稳定门：新增按方向聚合的最大 reject 占比并集中维护 0.80 上限；原 symbol×direction×regime 门继续
+  保留。低于 0.70 风险或信心的 model reject 不再错误进入 blocked-loss precision 分子。当前 100/30、
+  Brier、概率分辨率、费用后增量下界、模型成本、Trace/evidence 覆盖和零恢复权限全部不降低。
+- 离线证据：增量评价专项 13/13，直接构造量化 reject、legacy AI reject、同 schema 旧策略身份和低阈值
+  model reject 反例；生命周期 9/9、readiness 11/11，全部 Agent、评价、决策闭环、服务和接口边界相关
+  18/18 脚本通过。按 CI 独立数据库、事件文件和运行目录自动发现并通过 58/58 个测试脚本，失败 0；
+  参数集中、测试隔离、23 条修复护栏、code graph、AI repo 9/9、py_compile 与 diff check 全绿。

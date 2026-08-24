@@ -113,8 +113,12 @@ def promotion_ready(metrics: Mapping[str, Any]) -> tuple[bool, str]:
     lower = metrics.get("incremental_ev_lower_bound")
     if lower is None or float(lower) <= 0:
         return False, "incremental_ev_lower_bound<=0"
-    if float(metrics.get("max_segment_share", 1.0)) > 0.8:
+    if float(metrics.get("max_segment_share", 1.0)) > \
+            config.AGENT_EVAL_MAX_SEGMENT_SHARE:
         return False, "single_segment_dominates"
+    if float(metrics.get("max_direction_share", 1.0)) > \
+            config.AGENT_EVAL_MAX_SEGMENT_SHARE:
+        return False, "single_direction_dominates"
     return True, "sample_gate_passed"
 
 
@@ -124,8 +128,12 @@ def rollback_needed(metrics: Mapping[str, Any]) -> tuple[bool, str]:
         return True, "incremental_ev_negative"
     if float(metrics.get("missed_profit", 0)) > float(metrics.get("saved_loss", 0)):
         return True, "missed_profit_exceeds_saved_loss"
-    if float(metrics.get("max_segment_share", 0)) > 0.8:
+    if float(metrics.get("max_segment_share", 0)) > \
+            config.AGENT_EVAL_MAX_SEGMENT_SHARE:
         return True, "segment_concentration"
+    if float(metrics.get("max_direction_share", 0)) > \
+            config.AGENT_EVAL_MAX_SEGMENT_SHARE:
+        return True, "direction_concentration"
     if float(metrics.get("brier_skill", -1)) < 0:
         return True, "brier_worse_than_frequency_baseline"
     if float(metrics.get("probability_std", 0)) < \

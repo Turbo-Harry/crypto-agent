@@ -224,6 +224,7 @@ def _harness_version(row: Mapping[str, object]) -> str:
     from decision.agent_lifecycle import version_for_identity
     return version_for_identity(
         strategy_id=str(row.get("strategy_id") or "unknown"),
+        strategy_version=str(row.get("strategy_version") or "unknown"),
         model_version=str(row.get("model_version") or "unknown"),
         prompt_version=str(row.get("prompt_version") or "unknown"),
         context_version=str(row.get("context_version") or "unknown"),
@@ -231,6 +232,28 @@ def _harness_version(row: Mapping[str, object]) -> str:
         retrieval_version=str(row.get("retrieval_version") or "unknown"),
         tool_policy_version=str(row.get("tool_policy_version") or "unknown"),
         pricing_version=str(row.get("pricing_version") or "unknown"))
+
+
+def _baseline_eligible_for_harness(row: Mapping[str, object]) -> bool:
+    """Mirror the candidate set on which Harness can change the decision.
+
+    A reaches Harness consumption only after the quantitative, 2:1, entry
+    model and evolver gates have all passed.  B is an explicitly shadow-only
+    baseline, so its ``shadow`` decision is its research eligibility marker.
+    A legacy AI rejection happens after Harness and would reject the order
+    anyway; it therefore cannot be credited as Harness incremental value.
+    A real Harness veto remains eligible because its reject reason is recorded
+    separately as ``harness_reject`` while ``rule_decision`` stays ``pass``.
+    """
+    strategy_id = str(row.get("strategy_id") or "")
+    rule_decision = str(row.get("rule_decision") or "")
+    if strategy_id == config.ENTRY_SIGNAL_STRATEGY_ID:
+        if rule_decision != "pass":
+            return False
+    elif rule_decision not in {"pass", "shadow"}:
+        return False
+    reject_reason = str(row.get("reject_reason") or "")
+    return not reject_reason.startswith("ai_reject:")
 
 
 def _qualified_harness_reject(row: Mapping[str, object]) -> bool:
@@ -318,15 +341,20 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
     """按成熟的 15m/4h 路径评价 Harness；费用后、分版本、带 EV 下界。"""
     import storage.db as sdb
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    if version is None:
+        from decision.agent_lifecycle import configured_version
+        version = configured_version(strategy_id)
     rows = sdb.q(
         "SELECT r.model_version,r.prompt_version,r.context_version,r.schema_version,"
         "r.retrieval_version,r.tool_policy_version,r.model_verdict,r.final_action,"
         "r.risk_probability,r.confidence,r.reason_codes,r.evidence_ids,"
         "r.missing_information,r.input_hash,r.input_snapshot,r.estimated_cost,"
-        "r.pricing_version,r.created_ts,s.strategy_id,s.symbol,s.direction,s.entry,"
-        "s.stop,s.features,s.event_ts,s.horizon_hours,"
+        "r.pricing_version,r.created_ts,s.strategy_id,s.strategy_version,"
+        "s.symbol,s.direction,s.entry,s.stop,s.features,s.event_ts,s.kline_ts,"
+        "s.horizon_hours,s.rule_decision,s.ai_verdict,s.final_decision,"
+        "s.reject_reason,"
         "e.pnl_r FROM agent_runs r JOIN agent_evaluations e ON e.run_id=r.run_id "
-        "JOIN signal_samples_canonical s ON s.signal_id=r.signal_id "
+        "JOIN signal_samples s ON s.signal_id=r.signal_id "
         "WHERE e.lifecycle_status='mature' AND r.runtime_status='completed' "
         "AND r.model_verdict IS NOT NULL AND s.strategy_id=? "
         "AND s.timeframe=? AND s.horizon_hours=?",
@@ -340,16 +368,20 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
         return {"status": "insufficient_data", "version": version,
                 "strategy_id": strategy_id,
                 "n": 0, "reject_n": 0, "incremental_ev": None,
-                "incremental_ev_lower_bound": None}
-    if version is None:
-        version = max(groups, key=lambda key: max(
-            float(row.get("created_ts") or 0) for row in groups[key]))
-    material = groups.get(version, [])
+                "incremental_ev_lower_bound": None,
+                "observed_mature_n": 0, "baseline_eligible_n": 0,
+                "excluded_nonbaseline_n": 0}
+    observed = groups.get(version, [])
+    material = [row for row in observed
+                if _baseline_eligible_for_harness(row)]
     if not material:
         return {"status": "insufficient_data", "version": version,
                 "strategy_id": strategy_id,
                 "n": 0, "reject_n": 0, "incremental_ev": None,
-                "incremental_ev_lower_bound": None}
+                "incremental_ev_lower_bound": None,
+                "observed_mature_n": len(observed),
+                "baseline_eligible_n": 0,
+                "excluded_nonbaseline_n": len(observed)}
     trade_impacts, net_returns, rejects = [], [], []
     effective_rejects: list[bool] = []
     model_cost_r_values: list[float] = []
@@ -357,6 +389,7 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
     missing_cost_n = 0
     brier_pairs: list[tuple[float, bool]] = []
     segments = defaultdict(int)
+    direction_segments = defaultdict(int)
     reason_counts = defaultdict(int)
     stability_groups: dict[str, list[tuple[bool, float, float]]] = defaultdict(list)
     replayable_n = 0
@@ -398,6 +431,7 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
         if rejected:
             rejects.append(row)
             segments[(row.get("symbol"), row.get("direction"), regime)] += 1
+            direction_segments[str(row.get("direction") or "unknown")] += 1
             try:
                 codes = json.loads(row.get("reason_codes") or "[]")
             except (TypeError, ValueError, json.JSONDecodeError):
@@ -474,12 +508,15 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
     return {
         "status": "evaluated" if evaluated else "insufficient_data",
         "version": version, "strategy_id": strategy_id,
+        "observed_mature_n": len(observed),
+        "baseline_eligible_n": n,
+        "excluded_nonbaseline_n": len(observed) - n,
         "n": n, "reject_n": reject_n,
         "reject_coverage": round(reject_n / n, 6),
         "saved_loss": round(saved, 6), "missed_profit": round(missed, 6),
         "blocked_loss_precision": (round(sum(
-            1 for value, row in zip(net_returns, material)
-            if row.get("model_verdict") == "reject" and value < 0) / reject_n, 6)
+            1 for value, rejected in zip(net_returns, effective_rejects)
+            if rejected and value < 0) / reject_n, 6)
             if reject_n else None),
         "model_cost_usd": round(model_cost_usd, 8),
         "model_cost_r": (round(sum(model_cost_r_values), 8)
@@ -512,6 +549,9 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
                               zip(net_returns, effective_rejects)),
         "max_segment_share": (round(max(segments.values()) / reject_n, 6)
                               if reject_n else 0.0),
+        "max_direction_share": (
+            round(max(direction_segments.values()) / reject_n, 6)
+            if reject_n else 0.0),
         "reason_counts": dict(sorted(reason_counts.items())),
         "stability": stability,
     }
@@ -523,8 +563,10 @@ def sync_harness_lifecycle(db_path=None, strategy_id=None, *,
     from decision import agent_lifecycle
     from storage.agent_lifecycle import refresh_metrics, transition
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
-    metrics = evaluate_harness(db_path=db_path, strategy_id=strategy_id)
-    if not metrics.get("version"):
+    current_version = agent_lifecycle.configured_version(strategy_id)
+    metrics = evaluate_harness(
+        db_path=db_path, strategy_id=strategy_id, version=current_version)
+    if not metrics.get("version") or int(metrics.get("n", 0)) <= 0:
         return {"status": "no_mature_samples", "metrics": metrics}
     version = metrics["version"]
     row = agent_lifecycle.get(version, strategy_id=strategy_id, db_path=db_path)

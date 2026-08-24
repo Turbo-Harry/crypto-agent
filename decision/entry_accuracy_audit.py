@@ -63,16 +63,8 @@ def _gate(passed: bool, actual: Any, required: Any, reason: str) -> dict[str, An
 
 def _configured_harness_version(strategy_id: str) -> str:
     """Return the exact configured Harness identity whose gate is reported."""
-    from decision.agent_lifecycle import version_for_identity
-    return version_for_identity(
-        strategy_id=strategy_id,
-        model_version=config.AGENT_HARNESS_MODEL,
-        prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
-        context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
-        schema_version=config.SIGNAL_FEATURE_SCHEMA_VERSION,
-        retrieval_version=config.AGENT_HARNESS_RETRIEVAL_VERSION,
-        tool_policy_version=config.AGENT_HARNESS_TOOL_POLICY_VERSION,
-        pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
+    from decision.agent_lifecycle import configured_version
+    return configured_version(strategy_id)
 
 
 def audit_status(db_path: str | None = None,
@@ -95,6 +87,11 @@ def audit_status(db_path: str | None = None,
     harness_version = _configured_harness_version(strategy_id)
     plain_scope_sql = " AND strategy_version=?" if research_version else ""
     joined_scope_sql = " AND s.strategy_version=?" if research_version else ""
+    harness_eligibility_sql = (
+        " AND s.rule_decision='pass'"
+        if strategy_id == config.ENTRY_SIGNAL_STRATEGY_ID else
+        " AND s.rule_decision IN ('pass','shadow')"
+    ) + " AND (s.reject_reason IS NULL OR s.reject_reason NOT LIKE 'ai_reject:%')"
     conn = _connect_read_only(db_path)
     try:
         scope = [strategy_id, timeframe, horizon,
@@ -218,7 +215,8 @@ def audit_status(db_path: str | None = None,
             "JOIN signal_samples s ON s.signal_id=r.signal_id "
             "WHERE e.lifecycle_status='mature' AND r.runtime_status='completed' "
             "AND r.model_verdict IS NOT NULL AND s.strategy_id=? "
-            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql, scope)
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
+            harness_eligibility_sql, scope)
         harness_all_signal_ids = {row["signal_id"] for row in harness_rows}
         harness_all_reject_ids = {
             row["signal_id"] for row in harness_rows
@@ -242,7 +240,10 @@ def audit_status(db_path: str | None = None,
             int(agent_metrics.get("n", 0)) >= config.AGENT_EVAL_MIN_VALID and
             int(agent_metrics.get("reject_n", 0)) >= config.AGENT_EVAL_MIN_REJECT and
             float(agent_metrics.get("incremental_ev_lower_bound") or 0) > 0 and
-            float(agent_metrics.get("max_segment_share", 1.0) or 1.0) <= 0.8 and
+            float(agent_metrics.get("max_segment_share", 1.0) or 1.0) <=
+            config.AGENT_EVAL_MAX_SEGMENT_SHARE and
+            float(agent_metrics.get("max_direction_share", 1.0) or 1.0) <=
+            config.AGENT_EVAL_MAX_SEGMENT_SHARE and
             bool(agent_metrics.get("model_cost_data_complete", False)) and
             float(agent_metrics.get("trace_coverage", 0)) >= 1.0 and
             float(agent_metrics.get("probability_coverage", 0)) >= 1.0 and

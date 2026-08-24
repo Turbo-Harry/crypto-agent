@@ -390,7 +390,11 @@ AGENT_EVAL_MIN_VALID = 100               # 有真实路径结果的有效判断�
 AGENT_EVAL_MIN_REJECT = 30               # reject 拦截能力最少样本
 AGENT_HARNESS_MIN_PROBABILITY_STD = 0.03 # 防止常数概率碰巧贴近基准率而假通过校准门
 AGENT_EVAL_EV_Z = 1.645                  # Agent 增量 EV 单侧 95% 保守下界
-AGENT_EVALUATION_VERSION = "agent-net-ev-v3-replay-cost"  # v3: 可重放证据 + provider 成本 + 校准门
+# reject 不能由同一方向或同一 symbol×direction×regime 组合贡献超过 80%。
+AGENT_EVAL_MAX_SEGMENT_SHARE = 0.80
+# v4 只评价真正到达 Harness 消费点的量化基线候选，并把完整策略配置
+# identity 纳入版本；旧“所有结构候选”增量不得继续取得 Veto 权限。
+AGENT_EVALUATION_VERSION = "agent-net-ev-v4-baseline-eligible"
 # 预测机制：15m OHLC 移动区块 bootstrap，预测未来 16 根（4h）
 # 价格分布 + 触达概率；与同一 15m/4h 标签口径的历史实证率混合。
 FORECAST_ENABLED = True                 # 开关

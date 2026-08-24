@@ -25,7 +25,8 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         transition("h2", "shadow", db_path=self.path)
         metrics = {
             "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
-            "max_segment_share": .5, "model_cost_data_complete": True,
+            "max_segment_share": .5, "max_direction_share": .5,
+            "model_cost_data_complete": True,
             "trace_coverage": 1.0, "probability_coverage": 1.0,
             "probability_std": .1,
             "reject_evidence_coverage": 1.0, "brier_skill": .1,
@@ -51,7 +52,8 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
     def test_promotion_requires_cost_trace_calibration_and_evidence(self):
         base = {
             "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
-            "max_segment_share": .5, "trace_coverage": 1.0,
+            "max_segment_share": .5, "max_direction_share": .5,
+            "trace_coverage": 1.0,
             "probability_coverage": 1.0, "reject_evidence_coverage": 1.0,
             "probability_std": .1,
             "brier_skill": .1, "saved_loss": 2.0,
@@ -70,6 +72,9 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         constant = dict(costed, probability_std=0.0)
         self.assertEqual(agent_lifecycle.promotion_ready(constant)[1],
                          "probability_resolution_too_low")
+        concentrated = dict(costed, max_direction_share=1.0)
+        self.assertEqual(agent_lifecycle.promotion_ready(concentrated)[1],
+                         "single_direction_dominates")
 
     def test_versions_are_strategy_scoped(self):
         agent_lifecycle.register(
@@ -85,7 +90,8 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
     def test_veto_effective_only_for_promoted_matching_version(self):
         metrics = {
             "n": 100, "reject_n": 30, "incremental_ev_lower_bound": .1,
-            "max_segment_share": .5, "model_cost_data_complete": True,
+            "max_segment_share": .5, "max_direction_share": .5,
+            "model_cost_data_complete": True,
             "trace_coverage": 1.0, "probability_coverage": 1.0,
             "probability_std": .1,
             "reject_evidence_coverage": 1.0, "brier_skill": .1,
@@ -140,7 +146,7 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
             "reject_evidence_coverage": 1.0, "brier_skill": .1,
             "saved_loss": 2.0, "missed_profit": .5,
             "model_cost_r": .01, "incremental_ev_lower_bound": .1,
-            "max_segment_share": .5,
+            "max_segment_share": .5, "max_direction_share": .5,
         }
         degraded = dict(ready, brier_skill=-.01)
         with patch.object(config, "AGENT_HARNESS_VETO_ENABLED", False), \
@@ -169,7 +175,7 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
             "reject_evidence_coverage": 1.0, "brier_skill": .1,
             "saved_loss": 2.0, "missed_profit": .5,
             "model_cost_r": .01, "incremental_ev_lower_bound": .1,
-            "max_segment_share": .5,
+            "max_segment_share": .5, "max_direction_share": .5,
         }
         with patch("decision.agent_evaluation.evaluate_harness",
                    return_value=ready):

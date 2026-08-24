@@ -612,15 +612,8 @@ def test_harness_shadow_keeps_legacy_authority(tmp):
         dt.agent_model_call = reject_shadow
         from decision import agent_lifecycle
         from storage.agent_lifecycle import transition
-        version = agent_lifecycle.version_for_identity(
-            strategy_id=config.ENTRY_SIGNAL_STRATEGY_ID,
-            model_version=config.AGENT_HARNESS_MODEL,
-            prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
-            context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
-            schema_version=config.SIGNAL_FEATURE_SCHEMA_VERSION,
-            retrieval_version=config.AGENT_HARNESS_RETRIEVAL_VERSION,
-            tool_policy_version=config.AGENT_HARNESS_TOOL_POLICY_VERSION,
-            pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
+        version = agent_lifecycle.configured_version(
+            config.ENTRY_SIGNAL_STRATEGY_ID)
         agent_lifecycle.register(version, db_path=dt._db_path)
         transition(version, "shadow", db_path=dt._db_path)
         transition(version, "validated", db_path=dt._db_path)

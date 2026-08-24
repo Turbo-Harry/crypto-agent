@@ -1360,3 +1360,22 @@
   字段任一变化都只改变 C，不改变 A/B；不合并旧 schema，也不改写任何自然样本。
 - 预防：多策略共享身份算法时，配置字段必须按“实际影响的策略”做投影测试；新增字段至少验证
   目标策略会换身份、无关策略不会换身份、当前部署哈希保持连续三项，不能只检查配置被写进某个哈希。
+
+### 2026-08-24 Harness 留样集合不等于 Harness 可影响的执行集合
+
+- 现象：Harness 为避免选择偏差会在所有结构候选上先留 shadow Trace，但真正的 Veto 只在量化、2:1、
+  入场模型和经验门全部放行后消费。旧评价却把所有成熟 Trace 都计入 100/30 和增量 EV；当前 A v5
+  9 条实际全因无 active 入场模型被量化基线拒绝，仍会在 4h 后给 Harness 累计“有效样本”。旧 v4
+  固定复算又显示 `news conflict + signal conflict` 的 29 个 reject 全部是 short，因为该时段全局新闻分
+  始终为正；只按 `(symbol,direction,regime)` 最大组合计集中度会让 100% 方向集中通过。
+- 根因：把“调用时点的无偏研究全集”误当成“策略可产生增量的消费子集”；Harness 完整版本又缺少
+  `strategy_version`，评价读取跨版本 canonical view，方向集中度只埋在更细组合中。旧 AI 本来就会
+  拒绝的候选也未退出增量归因。
+- 修复：评价版本升为 `agent-net-ev-v4-baseline-eligible`，完整版本加入精确策略配置身份并直接绑定物理
+  样本。A 只统计 `rule_decision=pass` 且非 legacy `ai_reject` 的成熟候选；B 按其独立 shadow baseline
+  统计。全部 Trace 继续保留，另报 observed/eligible/excluded；100/30、Brier、费用后 EV 和生命周期只
+  消费 eligible 子集。新增 `max_direction_share≤0.80` 硬门，低概率/低信心 model reject 也不得进入
+  reject precision 分子。
+- 预防：任何增量组件必须画清“在哪调用、在哪有权改变结果、评价基线是什么”；无偏留样可以更宽，
+  但晋升分母必须与真实消费点一致。身份、样本筛选、贡献归因和集中度都要有负例，不能用全量 Trace
+  数或细粒度组合分散证明可执行增量。

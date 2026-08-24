@@ -31,8 +31,8 @@
   `execution_authority=0`。HBAR 的单族高摩擦样本两次重复同一 evidence ID 后被确定性校验失败关闭为
   `baseline_pass`；该 Trace 不计作 reject，也不因为格式完成率而修改风险门。
 - 入场概率与极值模型按 long/short 分开训练；300/60/60 是每个拟训练方向的门，不是把双方向总数相加。
-  研究链现已按完整 `config_identity` 隔离：当前 v5 为 A 8 条 pending（long 6、short 2）、B 0 条、
-  C 4 条 pending，outcome 均为 0。旧 A 的 179 个 outcome 与旧 v7/v4 Harness 的 3 条成熟判断只保留
+  研究链现已按完整 `config_identity` 隔离：本轮部署审计时 v5 为 A 9 条、B 7 条、C 5 条 pending，
+  outcome 均为 0。旧 A 的 179 个 outcome 与旧 v7/v4 Harness 的 3 条成熟判断只保留
   审计，不再补当前训练、校准或 100/30 门。
 
 ## 目标
@@ -45,7 +45,7 @@
 
 ## 步骤
 
-1. 冻结完整身份：策略配置、Prompt v13、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v11
+1. 冻结完整身份：精确 `strategy_version`、Prompt v13、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v11
    和价格口径任一变化都重新计样本，旧版本只保留审计。采样、因子试验、概率/极值训练、经验预测、
    校准、模型生命周期与 readiness 必须逐层使用同一 `config_identity`，不得只在接口展示层隔离。
 2. 按方向解释动量和资金费：long 的负动量、short 的正动量才是逆向；正资金费不是 short 成本，
@@ -73,6 +73,10 @@
    B 无自动执行权限。A/B 都必须在自然候选形成的同一轮冻结盘口、点差、预期滑点和可用订单流；交易所
    提供盘口时不得以空字段进入 Harness，取数失败必须显式保留缺失并继续 shadow，不能用默认值制造证据。
    依赖相邻快照的盘口、OI 或缓存状态必须按策略隔离，B 不得改写 A 的采样历史。
+   无偏 Trace 可以在量化门前留样，但 Harness 100/30、Brier 和增量 EV 的晋升集合必须与真实消费点一致：
+   A 只统计量化、2:1、active 入场模型和经验门全部通过的 `rule_decision=pass` 候选；legacy AI 本来就会
+   拒绝的候选不得给 Harness 记功。B 只按自己的 shadow baseline 独立研究。接口必须同时报告全部成熟
+   Trace、baseline eligible 和 excluded 数，不得删除排除样本或把结构候选总量冒充可执行增量样本。
 7. 对 C v5 每个批次逐字冻结 `aligned_direction`、`eligible_candidates`、微观结构、input hash 和
    implementation identity；每条只回传 15m 与 microstructure 两个必要锚，模型只能选择确定性合格方向，
    JSON/Schema/证据/方向任一错误都失败关闭。
@@ -83,7 +87,8 @@
 
 ## 验收标准
 
-- 当前完整 v13/v11 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
+- 当前完整 v13/v11/策略配置身份下，每策略 baseline-eligible 自然成熟样本至少 100，合格 reject 至少
+  30；Trace、概率和 evidence 覆盖 100%。量化基线已拒或 legacy AI 已拒的成熟 Trace 只作审计，不补门。
 - 所有 `liquidity_failure` 都满足冻结点差或预期滑点门；方向失衡不得冒充绝对深度不足。
 - 当前样本必须是 `signal-features-v5`；旧 v4 的深度利用率 proxy 不得与逐档 VWAP 语义混入同一验收。
 - A/B/C 当前候选、outcome、因子试验、模型制品、校准和生命周期的 strategy identity 必须逐项相同；
@@ -94,7 +99,8 @@
 - 总延迟不超过 4 秒；迟到、超时、Schema、网络或 Trace 错误均为零 Veto。
 - Brier skill 不低于频率基线，风险概率标准差至少 0.03，校准不得系统性反向。
 - saved loss 大于 missed profit 加模型成本，费用后增量 EV 单侧 95% 下界大于 0。
-- reject 不得由单一币种、方向、regime 或月份贡献超过 80%。
+- reject 不得由单一币种、方向、regime 或月份贡献超过 80%；方向占比必须作为独立机器字段和硬门，
+  不能用多个 symbol×direction×regime 组合稀释同一方向的集中度。
 - C 当前完整身份在每个拟训练方向分别至少取得 300 条自然成熟提案，且该方向 TP-first/SL-first 各至少
   60；5 折中至少 4 折通过，Brier skill 至少 0.05，费用后 EV 单侧 95% 下界大于 0，且 DSR/PBO 与
   币种、regime、月份稳定性全部通过，才允许为该方向生成 shadow 入场模型。另一方向不得借样本晋升。
@@ -108,6 +114,8 @@
 ## 停止规则
 
 - 样本不足继续 shadow，不把 long/short 合计冒充单方向 300/60/60，也不降低 Harness 100/30。
+- 全量结构 Trace 达到 100/30、但 baseline-eligible 子集不足时仍继续 shadow；不得靠拦住本来不会下的
+  候选取得增量 EV 或 Veto 权限。
 - Brier、绝对费用后 EV、增量下界或分段稳定任一失败，停止晋升。
 - A/B/C 的独立 90 天或自然 paper 费用后 EV 下界非正时，模型列表保持为空；不得用降低样本门、删亏损、
   换费用口径、增加同一行情的重叠候选或只报胜率来制造通过。
