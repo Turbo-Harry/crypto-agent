@@ -138,7 +138,7 @@ def merge_sample_features(signal_id: str, patch: Dict[str, Any],
 
 def record_agent_proposal_sample(*, proposal, snapshot, geometry, run_id: str,
                                  event_ts: float, db_path=None) -> Tuple[str, dict]:
-    """把已验证几何的 AI 提案接入共同标签链；始终标 shadow/rejected。"""
+    """把已验证几何的 AI 提案接入共同标签链；执行前仍标 shadow/rejected。"""
     from decision.entry_probability import preopen_2to1_decision
 
     sig = {

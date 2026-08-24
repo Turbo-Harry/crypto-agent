@@ -12,7 +12,8 @@ import config
 from decision.signal_identity import research_scope_version
 from decision.entry_probability import (execution_cost_r, fit_logistic,
                                         fit_temperature,
-                                        predict_from_artifact)
+                                        predict_from_artifact,
+                                        raw_probability)
 from factors.feature_registry import extract_features
 from factors.intraday_factor_gate import purged_walk_forward_splits
 
@@ -38,6 +39,121 @@ def multiclass_log_loss(actual, predicted):
     eps = 1e-9
     return -sum(math.log(max(eps, min(1.0, prob[truth])))
                 for truth, prob in zip(actual, predicted)) / len(actual)
+
+
+def _mean_lower_bound(values):
+    """单侧均值下界；research policy 与正式 EV 门复用同一保守系数。"""
+    if not values:
+        return None
+    mean = sum(values) / len(values)
+    if len(values) < 2:
+        return mean
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    return mean - config.ENTRY_MODEL_EV_Z * math.sqrt(variance / len(values))
+
+
+def evaluate_cost_aware_meta_rows(rows: List[dict], feature_names: List[str]):
+    """研究用费用后 meta-label；阈值只在独立校准段冻结且不生成制品。"""
+    folds = []
+    selected_net, baseline_net = [], []
+    all_truth, all_probability, all_baseline = [], [], []
+    for fold, (train_idx, test_idx) in enumerate(
+            purged_walk_forward_splits(rows)):
+        train = [rows[idx] for idx in train_idx]
+        test = [rows[idx] for idx in test_idx]
+        fit_rows, calibration_rows = _independent_calibration_split(train)
+        train_x, holdout_x = _impute(
+            fit_rows, calibration_rows + test, feature_names)
+        if train_x is None or not calibration_rows:
+            continue
+        calibration_x = holdout_x[:len(calibration_rows)]
+        test_x = holdout_x[len(calibration_rows):]
+        labels = [int(row["net_pnl_r"] > 0) for row in fit_rows]
+        model = fit_logistic(train_x, labels)
+        if model is None:
+            continue
+        calibration_probabilities = [raw_probability(model, values)
+                                     for values in calibration_x]
+        if any(value is None for value in calibration_probabilities):
+            continue
+        policies = []
+        for threshold in sorted(set(float(value)
+                                    for value in calibration_probabilities)):
+            returns = [row["net_pnl_r"] for row, probability in zip(
+                calibration_rows, calibration_probabilities)
+                       if float(probability) >= threshold]
+            if len(returns) < config.MODEL_MIN_SELECTED_EVALUATIONS:
+                continue
+            lower = _mean_lower_bound(returns)
+            if lower is not None and lower > 0:
+                policies.append((lower, len(returns), threshold))
+        policy = max(policies, key=lambda item: (item[0], item[1])) \
+            if policies else None
+        threshold = policy[2] if policy else None
+        probabilities = [raw_probability(model, values) for values in test_x]
+        if any(value is None for value in probabilities):
+            continue
+        truth = [int(row["net_pnl_r"] > 0) for row in test]
+        base_rate = sum(labels) / len(labels)
+        selected = [row for row, probability in zip(test, probabilities)
+                    if threshold is not None and
+                    float(probability) >= threshold]
+        selected_returns = [row["net_pnl_r"] for row in selected]
+        baseline_ranked = sorted(
+            test, key=lambda row: (
+                float(row.get("baseline_score"))
+                if row.get("baseline_score") is not None else float("-inf"),
+                str(row.get("signal_id") or "")), reverse=True)[:len(selected)]
+        baseline_returns = [row["net_pnl_r"] for row in baseline_ranked]
+        model_brier = brier(truth, probabilities)
+        base_brier = brier(truth, [base_rate] * len(test))
+        folds.append({
+            "fold": fold, "n": len(test), "threshold": threshold,
+            "calibration_n": len(calibration_rows),
+            "calibration_policy_n": policy[1] if policy else 0,
+            "selected_n": len(selected_returns),
+            "net_ev": (sum(selected_returns) / len(selected_returns)
+                       if selected_returns else None),
+            "net_ev_lower_bound": _mean_lower_bound(selected_returns),
+            "baseline_ev": (sum(baseline_returns) / len(baseline_returns)
+                            if baseline_returns else None),
+            "brier": model_brier, "baseline_brier": base_brier,
+        })
+        all_truth.extend(truth)
+        all_probability.extend(probabilities)
+        all_baseline.extend([base_rate] * len(test))
+        selected_net.extend(selected_returns)
+        baseline_net.extend(baseline_returns)
+    if not all_truth:
+        return {"status": "insufficient_data", "folds": folds,
+                "selected_n": 0, "eligible_for_shadow": False}
+    base_score = brier(all_truth, all_baseline)
+    skill = 1 - brier(all_truth, all_probability) / base_score if base_score else 0.0
+    good_brier = sum(item["brier"] <= item["baseline_brier"] for item in folds)
+    good_ev = sum(item["net_ev"] is not None and item["net_ev"] > 0 and
+                  item["baseline_ev"] is not None and
+                  item["net_ev"] >= item["baseline_ev"] for item in folds)
+    lower = _mean_lower_bound(selected_net)
+    eligible = (len(folds) >= config.FACTOR_WALK_FORWARD_FOLDS and
+                skill > 0 and
+                good_brier >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
+                good_ev >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
+                len(selected_net) >= config.MODEL_MIN_SELECTED_EVALUATIONS and
+                lower is not None and lower > 0)
+    return {
+        "status": ("eligible_for_shadow_review" if eligible
+                   else "stop_no_promotion"),
+        "target": "net_pnl_r_positive", "feature_names": list(feature_names),
+        "folds": folds, "brier_skill": skill,
+        "good_brier_folds": good_brier, "good_ev_folds": good_ev,
+        "selected_n": len(selected_net),
+        "oos_net_ev": (sum(selected_net) / len(selected_net)
+                       if selected_net else None),
+        "oos_net_ev_lower_bound": lower,
+        "baseline_oos_net_ev": (sum(baseline_net) / len(baseline_net)
+                                if baseline_net else None),
+        "eligible_for_shadow": eligible, "research_only": True,
+    }
 
 
 def _impute(train_rows, test_rows, feature_names):
@@ -387,20 +503,33 @@ def _validated_features(db_path=None, strategy_id=None):
     return [row["name"] for row in rows[:config.ENTRY_MODEL_MAX_FEATURES]]
 
 
-def load_entry_rows(direction, feature_names, db_path=None, strategy_id=None):
+def load_entry_rows(direction, feature_names, db_path=None, strategy_id=None,
+                    strategy_version=None):
     import storage.db as sdb
+    # 研究副本先执行 schema migration；旧库的 ratio 字段保持 NULL，随后被
+    # 版本/比率过滤隔离，不会混入新版训练。
+    sdb.init_db(db_path)
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
-    scope_version = research_scope_version(strategy_id)
+    # 历史重放必须保留生成样本时的冻结身份；显式版本只改变研究读取范围，
+    # 不会把旧样本重标成当前策略，也不会绕过制品中的身份约束。
+    scope_version = (str(strategy_version) if strategy_version is not None
+                     else research_scope_version(strategy_id))
     scope_sql = " AND s.strategy_version=?" if scope_version else ""
     samples = sdb.q(
-        "SELECT s.*,o.pnl_r,o.tp_first,o.sl_first,o.timeout "
+        "SELECT s.*,o.pnl_r,o.tp_first,o.sl_first,o.timeout,o.mfe_r,o.mae_r,"
+        "o.qty AS outcome_qty,o.ctVal AS outcome_ctVal,"
+        "o.gross_profit_usdt,o.gross_loss_usdt,o.total_cost_usdt,"
+        "o.net_profit_usdt,o.net_loss_usdt,o.net_reward_risk,o.ratio_version,"
+        "o.time_to_tp_sec,o.time_to_sl_sec,o.time_to_high_sec,o.time_to_low_sec "
         "FROM signal_samples s "
         "JOIN signal_outcomes o ON o.signal_id=s.signal_id WHERE s.direction=? "
-        "AND s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?" +
+        "AND s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? "
+        "AND o.ratio_version=? AND o.net_reward_risk>=?" +
         scope_sql + " ORDER BY s.event_ts",
         [direction, strategy_id,
          config.SIGNAL_SAMPLE_TIMEFRAME,
          config.SIGNAL_OUTCOME_HORIZON_HOURS,
+         "net-usdt-ratio-v1", 2.0,
          *([scope_version] if scope_version else [])], db_path=db_path)
     rows = []
     for sample in samples:
@@ -421,6 +550,22 @@ def load_entry_rows(direction, feature_names, db_path=None, strategy_id=None):
                      "sl_first": int(sample["sl_first"]),
                      "timeout": int(sample["timeout"]),
                      "pnl_r": float(sample["pnl_r"]), "cost_r": cost_r,
+                     "qty": sample.get("outcome_qty") or sample.get("qty"),
+                     "ctVal": sample.get("outcome_ctVal") or sample.get("ctVal"),
+                     "gross_profit_usdt": sample.get("gross_profit_usdt"),
+                     "gross_loss_usdt": sample.get("gross_loss_usdt"),
+                     "total_cost_usdt": sample.get("total_cost_usdt"),
+                     "net_profit_usdt": sample.get("net_profit_usdt"),
+                     "net_loss_usdt": sample.get("net_loss_usdt"),
+                     "net_reward_risk": sample.get("net_reward_risk"),
+                     "ratio_version": sample.get("ratio_version"),
+                     "net_pnl_r": float(sample["pnl_r"]) - cost_r,
+                     "mfe_r": sample.get("mfe_r"),
+                     "mae_r": sample.get("mae_r"),
+                     "time_to_tp_sec": sample.get("time_to_tp_sec"),
+                     "time_to_sl_sec": sample.get("time_to_sl_sec"),
+                     "time_to_high_sec": sample.get("time_to_high_sec"),
+                     "time_to_low_sec": sample.get("time_to_low_sec"),
                      "baseline_score": baseline_score})
     return rows
 
@@ -430,17 +575,19 @@ _load_rows = load_entry_rows
 
 
 def train_entry_model(direction, db_path=None, feature_names=None,
-                      strategy_id=None):
+                      strategy_id=None, strategy_version=None):
     """训练候选制品；不足门槛返回 insufficient，不写可用模型。"""
     import storage.db as sdb
     sdb.init_db(db_path)
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
-    strategy_version = research_scope_version(strategy_id)
+    strategy_version = (str(strategy_version) if strategy_version is not None
+                        else research_scope_version(strategy_id))
     names = list(feature_names or _validated_features(db_path, strategy_id))
     names = names[:config.ENTRY_MODEL_MAX_FEATURES]
     # 即使尚无 validated 特征也要读取标签样本，报告真实 n/tp_n/sl_n；
     # “不能训练”和“没有数据”是两个不同阻塞原因，不能都伪装成 n=0。
-    rows = load_entry_rows(direction, names, db_path, strategy_id)
+    rows = load_entry_rows(direction, names, db_path, strategy_id,
+                           strategy_version=strategy_version)
     tp_n = sum(row["tp_first"] for row in rows)
     sl_n = sum(row["sl_first"] for row in rows)
     if (len(rows) < config.ENTRY_MODEL_MIN_SAMPLES or

@@ -1,4 +1,4 @@
-"""Agent 主动提案：严格契约、证据门、2:1 几何与无执行权限。"""
+"""Agent 主动提案：AI方向、证据门、2:1几何与paper-only执行。"""
 
 import json
 import os
@@ -103,6 +103,64 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(sample["final_decision"], "rejected")
         self.assertIn("agent_proposal_shadow", sample["reject_reason"])
 
+    def test_valid_ai_proposal_can_open_only_through_paper_hard_gates(self):
+        snap = snapshot()
+        result = run_proposal_cycle(
+            [snap], model_call=lambda _prompt: valid_output(snap),
+            sample_recorder=recorder(self.db_path), db_path=self.db_path)
+        opened = []
+        holder = type("PaperAIExecutor", (), {})()
+        holder.live_mode = False
+        holder.exchange = type("Exchange", (), {"name": "okx-ccxt"})()
+        holder.journal = type("Journal", (), {"trades": []})()
+        holder.paper_bootstrap_orders_enabled = True
+        holder._db_path = self.db_path
+        holder._ticker_last = lambda _base, prefer_swap=False: snap.reference_entry
+        holder._paper_intraday_entry_confirmation = lambda _base, _sig: {
+            "passed": True, "size_factor": 1.0, "reason": "test_ready"}
+
+        def open_position(base, sig, score=None, size_factor=1.0):
+            opened.append((base, sig, score, size_factor))
+            return "txn-c-ai"
+
+        holder.open_position = open_position
+        SignalScanMixin._execute_agent_proposals(holder, result, {})
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(opened[0][1]["strategy_id"],
+                         config.AGENT_PROPOSAL_STRATEGY_ID)
+        row = sdb.q1(
+            "SELECT final_decision,trade_id FROM signal_samples WHERE signal_id=?",
+            [result["proposals"][0]["signal_id"]], db_path=self.db_path)
+        self.assertEqual(row, {"final_decision": "opened",
+                               "trade_id": "txn-c-ai"})
+        proposal = sdb.q1(
+            "SELECT execution_authority FROM agent_proposals WHERE signal_id=?",
+            [result["proposals"][0]["signal_id"]], db_path=self.db_path)
+        self.assertEqual(proposal["execution_authority"], 1)
+
+    def test_ai_proposal_never_executes_in_live_mode(self):
+        self.assertIs(config.AI_LIVE_ORDER_EXECUTION_ENABLED, False)
+        holder = type("LiveAIExecutor", (), {})()
+        holder.live_mode = True
+        holder.exchange = type("Exchange", (), {"name": "okx-ccxt"})()
+        holder.journal = type("Journal", (), {"trades": []})()
+        holder.open_position = lambda *args, **kwargs: self.fail("live must not open")
+        SignalScanMixin._execute_agent_proposals(
+            holder, {"deduplicated": False, "proposals": [{
+                "geometry_valid": 1, "signal_id": "x"}]}, {})
+
+    def test_ai_proposal_paper_execution_is_limited_to_major_symbols(self):
+        holder = type("PaperAIExecutor", (), {})()
+        holder.live_mode = False
+        holder.exchange = type("Exchange", (), {"name": "okx-ccxt"})()
+        holder.journal = type("Journal", (), {"trades": []})()
+        holder.open_position = lambda *args, **kwargs: self.fail(
+            "non-major proposal must not open")
+        SignalScanMixin._execute_agent_proposals(
+            holder, {"deduplicated": False, "proposals": [{
+                "base": "ZAMA", "geometry_valid": 1,
+                "signal_id": "non-major"}]}, {})
+
     def test_snapshot_freezes_deterministic_aligned_direction(self):
         long_snap = snapshot()
         short_snap = replace(
@@ -194,7 +252,7 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(proposal["geometry_valid"], 0)
         self.assertIsNone(proposal["signal_id"])
 
-    def test_direction_conflict_is_rejected_before_geometry_and_sampling(self):
+    def test_ai_direction_is_not_preselected_by_deterministic_trend(self):
         snap = snapshot()
         output = valid_output(snap)
         output["proposals"][0]["direction"] = "short"
@@ -202,13 +260,11 @@ class AgentProposalTest(unittest.TestCase):
             [snap], model_call=lambda _prompt: output,
             sample_recorder=recorder(self.db_path), db_path=self.db_path)
         proposal = result["proposals"][0]
-        self.assertEqual(proposal["validation_status"], "rejected")
-        self.assertEqual(proposal["validation_reason"],
-                         "direction_evidence_conflict")
-        self.assertEqual(proposal["geometry_valid"], 0)
-        self.assertIsNone(proposal["signal_id"])
+        self.assertEqual(proposal["validation_status"], "shadow_geometry_valid")
+        self.assertEqual(proposal["geometry_valid"], 1)
+        self.assertIsNotNone(proposal["signal_id"])
         self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
-                                db_path=self.db_path)["n"], 0)
+                                db_path=self.db_path)["n"], 1)
 
     def test_schema_error_records_run_without_proposal(self):
         result = run_proposal_cycle(
@@ -242,8 +298,8 @@ class AgentProposalTest(unittest.TestCase):
                          config.AGENT_PROPOSAL_TEMPERATURE)
         self.assertEqual(captured["timeout"],
                          config.AGENT_HARNESS_TIMEOUT_MS / 1000.0)
-        self.assertIn("aligned_direction", captured["system_prompt"])
-        self.assertIn("恰好两个必要锚", captured["system_prompt"])
+        self.assertIn("自主选择", captured["system_prompt"])
+        self.assertIn("microstructure证据ID", captured["system_prompt"])
         self.assertIn('"proposals":[]', raw)
 
     def test_empty_proposal_requires_reason_and_freezes_exact_input(self):
@@ -271,9 +327,8 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(audit["snapshot_count"], 1)
         self.assertGreater(audit["microstructure_coverage"], 0)
         frozen = audit["input_snapshot"]["snapshots"][0]
-        self.assertEqual(frozen["aligned_direction"], "long")
-        self.assertEqual(audit["input_snapshot"]["eligible_candidates"], [
-            {"base": "BTC", "direction": "long"}])
+        self.assertNotIn("aligned_direction", frozen)
+        self.assertNotIn("eligible_candidates", audit["input_snapshot"])
         self.assertIn("microstructure", frozen)
         self.assertTrue(any(value.endswith(":microstructure")
                             for value in frozen["evidence_ids"]))
@@ -290,12 +345,10 @@ class AgentProposalTest(unittest.TestCase):
             [snapshot()], model_call=lambda _prompt: {
                 "proposals": [], "abstain_reason": "no_aligned_candidate"},
             db_path=self.db_path)
-        self.assertEqual(result["run"]["runtime_status"], "schema_error")
+        self.assertEqual(result["run"]["runtime_status"], "completed")
         self.assertEqual(result["proposals"], [])
         audit = list_proposals(db_path=self.db_path)["runs"][0]["audit"]
-        self.assertEqual(
-            audit["output"]["error_detail"],
-            "no_aligned_candidate conflicts with deterministic eligibility")
+        self.assertIsNone(audit["output"]["error_detail"])
         self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
                                 db_path=self.db_path)["n"], 0)
 
@@ -313,7 +366,7 @@ class AgentProposalTest(unittest.TestCase):
             [unaligned], model_call=lambda _prompt: {
                 "proposals": [], "abstain_reason": "no_clear_edge"},
             db_path=other_db)
-        self.assertEqual(invalid["run"]["runtime_status"], "schema_error")
+        self.assertEqual(invalid["run"]["runtime_status"], "completed")
 
     def test_scanner_hook_is_paper_shadow_and_never_places_order(self):
         snap_rows = {
@@ -385,7 +438,9 @@ class AgentProposalTest(unittest.TestCase):
             return snap_rows[tf]
 
         holder._fetch_klines_any = fetch
-        result = SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"])
+        with mock.patch.object(config, "AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED",
+                               False):
+            result = SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"])
         self.assertIsNotNone(result)
         self.assertEqual(requested_limits, [
             config.AGENT_PROPOSAL_MIN_BARS + 2,
@@ -403,9 +458,8 @@ class AgentProposalTest(unittest.TestCase):
         self.assertGreater(micro["spread_bps"], 0)
         self.assertIsInstance(
             captured["snapshots"][0]["microstructure_as_of_ms"], int)
-        self.assertEqual(captured["snapshots"][0]["aligned_direction"], "long")
-        self.assertEqual(captured["eligible_candidates"], [
-            {"base": "BTC", "direction": "long"}])
+        self.assertNotIn("aligned_direction", captured["snapshots"][0])
+        self.assertNotIn("eligible_candidates", captured)
         self.assertTrue(captured["snapshots"][0]["evidence_ids"][-1].endswith(
             ":microstructure"))
         sample = sdb.q1(
@@ -415,8 +469,8 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(features["funding_rate"], 0.0001)
         self.assertEqual(features["ofi_event_count"], 12.0)
         view = list_proposals(db_path=self.db_path)
-        self.assertTrue(view["shadow_only"])
-        self.assertFalse(view["execution_authority"])
+        self.assertFalse(view["shadow_only"])
+        self.assertTrue(view["execution_authority"])
         self.assertEqual(view["current_protocol_run_count"], 1)
         self.assertEqual(view["current_protocol_proposal_count"], 1)
         self.assertEqual(view["current_protocol_proposal_coverage"], 1.0)
@@ -437,7 +491,9 @@ class AgentProposalTest(unittest.TestCase):
 
         # 同一根已收线 K 的 proposal cycle 幂等返回；不能重复计费 Harness，
         # 更不能拿当前上下文补跑历史 C 候选。
-        repeated = SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"])
+        with mock.patch.object(config, "AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED",
+                               False):
+            repeated = SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"])
         self.assertTrue(repeated["deduplicated"])
         self.assertEqual(harness_calls, [1])
 
@@ -498,8 +554,12 @@ class AgentProposalTest(unittest.TestCase):
             conn.executemany(
                 "INSERT INTO signal_outcomes (signal_id,horizon_hours,tp_first,"
                 "sl_first,timeout,ambiguous,pnl_r,mfe_r,mae_r,high_ret_h,low_ret_h,"
-                "settled_at,bar_resolution,label_version) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", outcome_rows)
+                "settled_at,bar_resolution,label_version,qty,ctVal,"
+                "gross_profit_usdt,gross_loss_usdt,total_cost_usdt,"
+                "net_profit_usdt,net_loss_usdt,net_reward_risk,ratio_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [row + (1.0, 1.0, 2.0, 1.0, 0.0, 2.0, 1.0, 2.0,
+                        "net-usdt-ratio-v1") for row in outcome_rows])
             conn.executemany(
                 "INSERT INTO forecast_calibration (trade_id,ts,p_hit_tp,p_hit_sl,"
                 "hit_tp,hit_sl,pnl,signal_id,p_timeout,timeout,label_version) "

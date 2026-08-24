@@ -12,6 +12,8 @@ import decision.agent_judge as agent_judge
 import decision.agent_proposals as agent_proposals
 from decision.agent_judge import harness_judge
 from engines.signal_sampling import record_signal_sample
+from engines.signal_scan import (_ai_feature_collection_enabled,
+                                 _ai_feature_payload)
 from engines.directional_trader import DirectionalTrader
 from exchange.fake_adapter import FakeAdapter
 from storage import db
@@ -47,6 +49,37 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
     def tearDown(self):
         import os
         os.unlink(self.path)
+
+    def test_ai_prediction_feature_switches_are_mode_scoped_and_bounded(self):
+        switch_names = (
+            "AI_FEATURES_ENABLED", "AI_FEATURES_PAPER_ENABLED",
+            "AI_FEATURES_LIVE_ENABLED", "AI_FEATURES_MARKET_KLINE_ENABLED",
+            "AI_FEATURES_MULTI_TIMEFRAME_ENABLED",
+            "AI_FEATURES_FORECAST_ENABLED", "AI_FEATURES_COST_EV_ENABLED",
+            "AI_FEATURES_MICROSTRUCTURE_ENABLED",
+            "AI_FEATURES_DERIVATIVES_ENABLED",
+            "AI_FEATURES_NEWS_SENTIMENT_ENABLED",
+            "AI_FEATURES_ACCOUNT_RISK_ENABLED", "AI_FEATURES_HEALTH_ENABLED",
+            "AI_FEATURES_MEMORY_ENABLED", "AI_FEATURES_PERSISTENCE_ENABLED",
+        )
+        self.assertTrue(all(isinstance(getattr(config, name), bool)
+                            for name in switch_names))
+        self.assertTrue(_ai_feature_collection_enabled(False))
+        self.assertTrue(_ai_feature_collection_enabled(True))
+        with mock.patch.object(config, "AI_FEATURES_LIVE_ENABLED", False):
+            self.assertFalse(_ai_feature_collection_enabled(True))
+            self.assertTrue(_ai_feature_collection_enabled(False))
+        payload = _ai_feature_payload({
+            "runtime_status": "completed", "model_verdict": "abstain",
+            "risk_probability": 0.55, "confidence": 0.6,
+            "unexpected": "must-not-persist",
+        }, {"forecast": {"expected_take_profit": 102.0,
+                           "p_hit_tp": 0.4, "p_hit_sl": 0.3}},
+            live_mode=True)
+        self.assertEqual(payload["mode"], "live")
+        self.assertFalse(payload["execution_authority"])
+        self.assertEqual(payload["forecast"]["expected_take_profit"], 102.0)
+        self.assertNotIn("unexpected", payload)
 
     def test_valid_reject_is_shadow_only_and_traceable(self):
         result = run_harness(

@@ -254,6 +254,10 @@ class DirectionalRuntimeAPI(TradingRuntimePort):
         from decision.analyst import run_daily
         return run_daily(db_path=self.db_path, notifier=self._trader._notify)
 
+    def record_browser_page_event(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        from storage.news_event_repository import record_browser_page_event
+        return record_browser_page_event(dict(payload), db_path=self.db_path)
+
     def pause(self) -> None:
         self._trader.pause()
 

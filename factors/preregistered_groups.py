@@ -3,7 +3,9 @@ from dataclasses import asdict, dataclass
 
 import config
 from factors.entry_model_training import (evaluate_rows, load_entry_rows,
+                                          evaluate_cost_aware_meta_rows,
                                           select_model_family)
+from factors.group_weight_training import evaluate_group_weight_model
 
 
 @dataclass(frozen=True)
@@ -39,14 +41,16 @@ PREREGISTERED_GROUPS = (
 )
 
 
-def evaluate_preregistered_groups(db_path=None, strategy_id=None):
+def evaluate_preregistered_groups(db_path=None, strategy_id=None,
+                                  strategy_version=None):
     """同折比较 Logistic/CatBoost；结果只给证伪权，不写模型生命周期。"""
     output = []
     for group in PREREGISTERED_GROUPS:
         directions = {}
         for direction in ("long", "short"):
             rows = load_entry_rows(
-                direction, list(group.features), db_path, strategy_id)
+                direction, list(group.features), db_path, strategy_id,
+                strategy_version=strategy_version)
             complete = [row for row in rows if all(
                 row["features"].get(name) is not None
                 for name in group.features)]
@@ -66,6 +70,8 @@ def evaluate_preregistered_groups(db_path=None, strategy_id=None):
                 complete, list(group.features), "catboost_multiclass")
             family, relative_gain = select_model_family(logistic, catboost)
             selected = catboost if family == "catboost_multiclass" else logistic
+            cost_aware_meta = evaluate_cost_aware_meta_rows(
+                complete, list(group.features))
             directions[direction] = {
                 "status": ("eligible_for_shadow_review"
                            if selected["eligible_for_shadow"]
@@ -75,8 +81,49 @@ def evaluate_preregistered_groups(db_path=None, strategy_id=None):
                 "relative_multiclass_brier_gain": relative_gain,
                 "eligible_for_shadow": selected["eligible_for_shadow"],
                 "selected": selected, "logistic": logistic,
-                "catboost": catboost,
+                "catboost": catboost, "cost_aware_meta": cost_aware_meta,
             }
         output.append({**asdict(group), "directions": directions,
                        "research_only": True})
+    return output
+
+
+def evaluate_preregistered_group_weights(db_path=None, strategy_id=None,
+                                         strategy_version=None):
+    """只组合数据完整的预注册机制组；不因缺 execution 而中位数伪造。"""
+    output = {}
+    for direction in ("long", "short"):
+        available = []
+        for group in PREREGISTERED_GROUPS:
+            rows = load_entry_rows(
+                direction, list(group.features), db_path, strategy_id,
+                strategy_version=strategy_version)
+            complete_n = sum(all(row["features"].get(name) is not None
+                                 for name in group.features) for row in rows)
+            missing_rate = 1 - complete_n / len(rows) if rows else 1.0
+            if (complete_n >= config.ENTRY_MODEL_MIN_SAMPLES and
+                    missing_rate <= config.FACTOR_MAX_MISSING_RATE):
+                available.append((group.name, list(group.features)))
+        if len(available) < 2:
+            output[direction] = {
+                "status": "insufficient_group_data", "groups": available,
+                "eligible_for_shadow": False, "research_only": True}
+            continue
+        union = list(dict.fromkeys(
+            feature for _, features in available for feature in features))
+        rows = load_entry_rows(
+            direction, union, db_path, strategy_id,
+            strategy_version=strategy_version)
+        complete = [row for row in rows if all(
+            row["features"].get(name) is not None for name in union)]
+        if len(complete) < config.ENTRY_MODEL_MIN_SAMPLES:
+            output[direction] = {
+                "status": "insufficient_joint_group_data",
+                "n": len(rows), "complete_n": len(complete),
+                "groups": [name for name, _ in available],
+                "eligible_for_shadow": False, "research_only": True}
+            continue
+        result = evaluate_group_weight_model(complete, available)
+        result.update({"n": len(rows), "complete_n": len(complete)})
+        output[direction] = result
     return output

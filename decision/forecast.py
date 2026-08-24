@@ -231,6 +231,10 @@ def forecast(entry, atr, direction, stop, tp, hourly_returns,
         "median": round(terminal["median"], 6),
         "q05": round(terminal["q05"], 6),
         "q95": round(terminal["q95"], 6),
+        # 这是候选既有、受风控约束的 2R 止盈障碍，不是模型根据终值
+        # 分布临时生成的新目标；显式携带可避免 AI 只看到命中概率却
+        # 不知道该概率对应哪个价位。
+        "expected_take_profit": round(float(tp), 6),
         "p_hit_tp": p_hit_tp,
         "p_hit_sl": p_hit_sl,
         "p_timeout": p_timeout,
@@ -348,10 +352,14 @@ def describe(fc):
     minutes = fc.get("horizon_minutes")
     if minutes is None:
         minutes = int(float(fc.get("horizon_hours") or 0) * 60)
-    return (f"{minutes}min: 中位 {fc['median']} · "
-            f"5-95% [{fc['q05']}, {fc['q95']}] · "
-            f"P(触止盈)={fc['p_hit_tp']*100:.0f}% · "
-            f"P(触止损)={fc['p_hit_sl']*100:.0f}% · {status}")
+    target = fc.get("expected_take_profit")
+    parts = [f"{minutes}min: 中位 {fc['median']}",
+             f"5-95% [{fc['q05']}, {fc['q95']}]"]
+    if target is not None:
+        parts.append(f"预计止盈位 {target}")
+    parts.extend([f"P(触止盈)={fc['p_hit_tp']*100:.0f}%",
+                  f"P(触止损)={fc['p_hit_sl']*100:.0f}%", status])
+    return " · ".join(parts)
 
 
 def sync_calibration_for_signal(signal_id, db_path=None):

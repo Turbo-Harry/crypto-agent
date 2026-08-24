@@ -113,6 +113,24 @@ CREATE TABLE IF NOT EXISTS sentiment_snapshots (
     ts REAL, composite REAL, fng_value REAL, news_score REAL, detail TEXT
 );
 
+-- 用户主动启用的 OKX Chrome 标签页可见内容；research-only，无执行权限。
+CREATE TABLE IF NOT EXISTS browser_page_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_hash TEXT NOT NULL UNIQUE,
+    captured_ts REAL NOT NULL,
+    received_ts REAL NOT NULL,
+    url TEXT NOT NULL,
+    page_title TEXT NOT NULL,
+    visible_text TEXT NOT NULL,
+    source TEXT NOT NULL,
+    tab_id INTEGER,
+    metadata TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_browser_page_events_ts
+    ON browser_page_events(captured_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_browser_page_events_source
+    ON browser_page_events(source, captured_ts DESC);
+
 CREATE TABLE IF NOT EXISTS thresholds (
     key TEXT PRIMARY KEY,          -- "dir" / "arb"
     threshold REAL, records TEXT,  -- records: JSON 数组（score→pnl 样本）
@@ -455,6 +473,7 @@ CREATE TABLE IF NOT EXISTS signal_samples (
     feature_schema_version TEXT NOT NULL,
     entry REAL NOT NULL, stop REAL NOT NULL, tp REAL NOT NULL,
     atr REAL NOT NULL, horizon_hours INTEGER NOT NULL,
+    qty REAL, ctVal REAL,
     wick REAL, depth REAL, trend REAL, volume REAL, funding REAL, book REAL,
     features TEXT NOT NULL DEFAULT '{}',
     rule_decision TEXT NOT NULL DEFAULT 'pending',
@@ -496,6 +515,10 @@ CREATE TABLE IF NOT EXISTS signal_outcomes (
     time_to_high_sec REAL, time_to_low_sec REAL,
     settled_at REAL NOT NULL, bar_resolution TEXT NOT NULL,
     label_version TEXT NOT NULL,
+    qty REAL, ctVal REAL,
+    gross_profit_usdt REAL, gross_loss_usdt REAL, total_cost_usdt REAL,
+    net_profit_usdt REAL, net_loss_usdt REAL, net_reward_risk REAL,
+    ratio_version TEXT,
     FOREIGN KEY(signal_id) REFERENCES signal_samples(signal_id)
 );
 CREATE INDEX IF NOT EXISTS idx_signal_outcomes_settled ON signal_outcomes(settled_at);
@@ -1130,6 +1153,43 @@ def _migrate_v23_merged_lineages(conn):
         migrate(conn)
 
 
+def _migrate_v36_browser_page_events(conn):
+    """v36: 用户主动启用的 OKX 页面可见内容，研究证据专用。"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS browser_page_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_hash TEXT NOT NULL UNIQUE,
+            captured_ts REAL NOT NULL,
+            received_ts REAL NOT NULL,
+            url TEXT NOT NULL,
+            page_title TEXT NOT NULL,
+            visible_text TEXT NOT NULL,
+            source TEXT NOT NULL,
+            tab_id INTEGER,
+            metadata TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS idx_browser_page_events_ts
+            ON browser_page_events(captured_ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_browser_page_events_source
+            ON browser_page_events(source, captured_ts DESC);
+    """)
+
+
+def _migrate_v37_net_usdt_labels(conn):
+    """v37: 成本后 USDT 盈亏比标签；旧 ATR 标签保持 NULL 隔离。"""
+    for table, fields in {
+        "signal_samples": (("qty", "REAL"), ("ctVal", "REAL")),
+        "signal_outcomes": (
+            ("qty", "REAL"), ("ctVal", "REAL"),
+            ("gross_profit_usdt", "REAL"), ("gross_loss_usdt", "REAL"),
+            ("total_cost_usdt", "REAL"), ("net_profit_usdt", "REAL"),
+            ("net_loss_usdt", "REAL"), ("net_reward_risk", "REAL"),
+            ("ratio_version", "TEXT"),),
+    }.items():
+        for name, decl in fields:
+            _add_column_if_missing(conn, table, name, decl)
+
+
 # 版本号 → 迁移函数。只追加,不改已落地版本的语义。
 MIGRATIONS = (
     (1, _migrate_v1_lessons_columns),
@@ -1167,6 +1227,8 @@ MIGRATIONS = (
     (33, _migrate_v33_agent_replay_evidence),
     (34, _migrate_v34_reconcile_agent_replay_evidence),
     (35, _migrate_v35_research_strategy_version),
+    (36, _migrate_v36_browser_page_events),
+    (37, _migrate_v37_net_usdt_labels),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

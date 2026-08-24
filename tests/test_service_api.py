@@ -224,10 +224,10 @@ def main():
           and "runs" in client.get("/agent/runs").json())
     proposal_response = client.get("/agent/proposals")
     proposal_body = proposal_response.json()
-    check("/agent/proposals 明确只读 shadow、协议覆盖率且无执行权限",
+    check("/agent/proposals 明确 paper 硬门后权限与协议覆盖率",
           proposal_response.status_code == 200
-          and proposal_body["shadow_only"] is True
-          and proposal_body["execution_authority"] is False
+          and proposal_body["shadow_only"] is False
+          and proposal_body["execution_authority"] is True
           and proposal_body["current_protocol_version"] ==
               config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION
           and proposal_body["auditable_run_count"] == 0

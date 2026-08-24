@@ -159,6 +159,31 @@ AGENT_JUDGE_LESSONS_TOP = 3             # 回喂的该币 trusted/discarded 教�
 # Agent Harness（2026-08-23）：先统一走可审计 shadow runtime；只有版本生命周期
 # 进入 active-veto 且人工/验证门明确开启时，模型 reject 才能影响开仓。
 AGENT_HARNESS_ENABLED = True
+# AI 预测信息特征层：每个能力均在这里显式开关。paper/live 可独立采集，
+# 但这些开关只控制只读上下文与落库，不产生任何执行权限；live 永远 shadow。
+AI_FEATURES_ENABLED = True
+AI_FEATURES_PAPER_ENABLED = True
+AI_FEATURES_LIVE_ENABLED = True
+AI_FEATURES_MARKET_KLINE_ENABLED = True
+AI_FEATURES_MULTI_TIMEFRAME_ENABLED = True
+AI_FEATURES_FORECAST_ENABLED = True
+AI_FEATURES_COST_EV_ENABLED = True
+AI_FEATURES_MICROSTRUCTURE_ENABLED = True
+AI_FEATURES_DERIVATIVES_ENABLED = True
+AI_FEATURES_NEWS_SENTIMENT_ENABLED = True
+AI_FEATURES_ACCOUNT_RISK_ENABLED = True
+AI_FEATURES_HEALTH_ENABLED = True
+AI_FEATURES_MEMORY_ENABLED = True
+AI_FEATURES_PERSISTENCE_ENABLED = True
+AI_FEATURES_VERSION = "ai-prediction-features-v1"
+# 实盘 AI 下单授权位（安全保留项）：当前仓库治理只授权 OKX 模拟盘，必须保持 False。
+# 它与 AI_FEATURES_LIVE_ENABLED（实盘只读信息采集）是两个完全独立的权限面。
+AI_LIVE_ORDER_EXECUTION_ENABLED = False
+AI_FEATURES_OUTPUT_FIELDS = (
+    "runtime_status", "final_action", "model_verdict",
+    "risk_probability", "confidence", "reason_codes",
+    "missing_information", "abstain_reason", "latency_ms",
+)
 # 2026-08-23 用户明确授权 Harness 直接接入下单前否决链。该开关只是授权意图；
 # 版本仍必须先通过 100/30 自然反事实、费用后增量 EV 下界、校准与分段稳定门，
 # 且仅 paper 实例显式传入执行授权后才会真正否决；live 永远保持 shadow。

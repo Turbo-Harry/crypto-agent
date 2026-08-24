@@ -2384,3 +2384,131 @@
 - 模型仍只有候选过滤/否决权，最终确认纯函数没有交易所与执行权限；止损、止盈和 4h 强制退出保持
   原链路。相关回归：日内因子 33/33、交易所与完整开平仓 51/51、决策链 73/73；全仓自动发现
   59/59 个测试脚本通过，失败 0。
+
+## 2026-08-25 90 天数据 2:1 冻结训练首轮
+
+- 90 天十币样本先校准为 11,058 条互斥完整标签，再按时间前 2/3、后 1/3 切分；边界 purge 4h 后，
+  训练 7,391 条、封存验证 3,658 条、边界剔除 9 条。训练库独立复制到
+  `/private/tmp/crypto-agent-train60d-v1.db`，后 30 天没有进入训练、温度校准或模型选择。
+- 历史身份读取保持原 provenance 后，对 A 回踩和 B 突破各自三组预注册机制、long/short 共 12 组
+  运行 Logistic champion、浅层 CatBoost challenger、五折 purged walk-forward 与独立温度校准。
+  12/12 均为 `rejected`，没有 validated/active 制品，也没有写运行库。
+- 最接近的 B 突破确认 long/short 都只有 1 条被选择，Brier skill 仅约 `0.56%/-0.18%`，费用后正值
+  不具备样本意义；A-short 市场共振虽选择 43 条且 EV 下界为正，也只有 2/5 EV 折、3/5 precision 折，
+  Brier skill 为负。全部未达到 selected≥30（本轮业务目标进一步要求 100）、Brier>5% 与 4/5 稳定门，
+  因而停止，不打开后 30 天验证集。
+
+## 2026-08-25 因子研究增加费用后效用挑战者
+
+- `signal_outcomes` 原本已经保存 MFE/MAE 与各极值触达时间，但概率研究加载器只暴露 TP/SL/timeout；
+  现将 `net_pnl_r=pnl_r-cost_r`、MFE/MAE 和触达时间完整带入 research row，不改变权威路径标签。
+- 预注册机制组新增 research-only 费用后 meta-label：目标是 `net_pnl_r>0`，每折仅在 purged 拟合段训练
+  Logistic，并只在独立尾部校准段冻结正效用下界阈值，测试段只评价。它与同覆盖率连续信号基线比较
+  Brier、逐折净 EV、样本量和单侧下界；不生成制品、不接生命周期、更不获得订单权限。
+- 机制组入口支持显式冻结 `strategy_version`，历史样本保持原 provenance，不再因当前配置身份漂移而
+  错报 0 行，也不允许旧模型冒充当前策略。
+- 前 60 天开发集实跑：A 可评价 8 个方向组、B 可评价 6 个方向组，新增挑战者全部
+  `stop_no_promotion`；执行成本组仍因历史盘口缺失不可评价。A-short 四组曾在个别折冻结阈值，但
+  聚合净 EV 为 `-0.3147R` 至 `-0.4038R`、Brier skill 全负，其余多数折没有校准出正下界策略；B
+  突破确认 long 虽有 Brier skill `+1.04%`，仍 0 条 OOS 放行、0/5 正 EV 折。该结果再次指向候选
+  经济性和历史微观结构缺口，不打开封存后 30 天、不晋升模型。
+
+## 2026-08-25 止损 ATR 尺度与盈亏比分离训练
+
+- 语义修正：`reward:risk=2:1` 是目标距离/风险距离之比，不等同于把参数命名为固定 `2R/-1R`。
+  研究配置拆为 `stop_atr_mult` 与 `reward_risk`，目标 ATR 距离由两者相乘；生产仍保持 1ATR 止损、
+  2:1 盈亏比，研究器没有订单或生命周期权限。
+- 看结果前冻结六组：0.75ATR×2:1、1ATR×1.5:1、1ATR×2:1、1ATR×3:1、1.5ATR×1.5:1、
+  2ATR×1.5:1。同一完整 1m 路径并行结算，任一方案路径不完整则整组排除；同分钟双触继续保守按止损，
+  费用按各方案自己的止损距离换算为 R。
+- 前 60 天开发集路径验证的 24 个策略×方向×退出结构全部 `stop_no_promotion`，各方案正聚类下界折均
+  为 0/5。最接近的 A-short 2ATR×1.5:1 净 EV `-0.1412R`、聚类 95% 下界 `-0.2498R`；不得因
+  “最接近”而事后选中。
+- 随后对全部预注册机制组×六种退出结构继续训练费用后 meta-label，所有组合仍
+  `stop_no_promotion`、正 EV 折均为 0。最接近零的 A-short 回踩确认 2ATR×1.5:1 放行 357 条，
+  净 EV `-0.0242R`、下界 `-0.1171R`、Brier skill `-1.16%`；没有打开后 30 天封存集，也没有生成
+  validated/active 模型。
+
+## 2026-08-25 多因子组二层权重训练
+
+- 新增 research-only 四段时序 stacking：基础段分别训练预注册组 Logistic，后续独立段用组概率训练
+  非负二层 Logistic，再后一独立段冻结费用后正下界阈值，外层测试段只评价。组权重投影为非负并按折
+  归一；同覆盖率同时比较等权组分和现役连续信号分。execution_cost 组历史数据不足时直接缺席，不做
+  中位数或零值伪填充。
+- stacking 需要额外 warm-up，最早外层折若无法同时满足三段各 30 条则不评价；之后至少四个完整 OOS
+  折仍须全部过原 4 折稳定门。新增权重稳定门：任何组在有效折间的归一权重极差不得超过 0.50，且不能
+  出现整折所有组权重为零。
+- 前 60 天实跑全部 `stop_no_promotion`：A-long/A-short/B-long/B-short Brier skill 分别为
+  `-10.13%/-10.62%/-5.35%/-2.67%`，正 EV 折均 0。只有 A-short 放行 342 条，但净 EV
+  `-0.3388R`、95% 下界 `-0.4636R`；四方向权重均不稳定，最大折间极差为
+  `1.00/1.00/0.786/1.00`。因此学习权重没有修复策略，未写制品、未打开封存 30 天。
+
+## 2026-08-25 OKX Chrome 页面辅助证据采集
+
+- 新增 Manifest V3 扩展。用户必须在当前 OKX 标签页手动启用；扩展监听页面 DOM 变化并在 1.5 秒稳定后
+  提取可见文本，主动排除脚本、样式、输入框、文本框、下拉框和可编辑区域，页面隐藏时停止采集。
+- 新增本机受控写入口和 `browser_page_events` v36 表；只接受 `www.okx.com`/`my.okx.com`，内容哈希
+  幂等，正文上限 20,000 字符，列表查询不回传正文。该路径没有订单、模型激活或风控修改能力。
+- 该数据暂为 research-only。OKX REST/WebSocket 保持行情事实源；页面文本必须积累结果并做消融验证后，
+  才能作为 Harness 的额外冻结证据，不能因“已采集”直接影响模拟盘订单。
+
+## 2026-08-25 C_AI 自主方向的模拟盘硬门执行
+
+- C implementation 升级为 `agent-proposal-impl-v9-major-only-unhinted-ai-direction-paper-gated`，协议使用
+  `agent-proposal-v6-ai-direction`：删除确定性 `aligned_direction` 对模型方向的资格约束，
+  并从v6模型输入移除 `aligned_direction/eligible_candidates` 两个答案提示；15m/1H/4H和微观结构改为
+  冻结证据，模型自主返回 long、short或空提案。结构化schema、证据ID白名单、
+  最低置信度、微观结构证据和同K幂等仍失败关闭。
+- 只对真实 OKX paper 开启硬门后执行；live/Fake永久无权限。首批执行范围仅限
+  BTC/ETH/SOL/XRP/DOGE，每个自然日最多1笔C订单，参考价偏离超过
+  20bps拒绝，并必须通过已收线1m/5m、连续订单流、盘口成本、2:1成本预测或首模paper bootstrap。
+  开仓仍复用现有1%风险、150 USDT名义、600 USDT组合敞口、最小量和交易所侧SL/TP链。
+- 修复最终确认读取契约：`_fetch_klines_any` 返回归一列表，旧代码按`row.ts`访问会让自然确认全部
+  `confirmation_error:AttributeError`；现兼容列表/领域对象并保持收线裁剪。
+- C成交后将共同候选改为`final_decision=opened`并绑定trade_id；`agent_proposals.execution_authority=1`
+  只表示该条已通过paper硬门执行，不代表模型获得live、风控或直接交易所工具权限。
+
+## 2026-08-25 预测补充预计止盈位
+
+- `forecast` 结构新增 `expected_take_profit`，值绑定候选进入预测函数时已有的确定性 2R 止盈障碍；
+  它与 `P(触止盈)` 使用同一个价位定义，供 Harness 和审计读取，不允许模型另造目标。
+- 用户可见预测摘要同步显示“预计止盈位”；未携带新字段的历史预测仍按旧格式兼容展示。
+
+## 2026-08-25 成本后净 USDT 2:1 口径隔离首轮
+
+- schema v37 为候选/结果预留计划数量、合约面值、毛盈亏、总成本、净盈亏、净盈亏比与
+  `ratio_version`；迁移只新增列，旧固定 ATR 标签保持 NULL，不做追认式回填。
+- 新增 research-only `net_usdt_reward_risk`，按数量×ctVal×价格距离计算毛 USDT 盈亏，并纳入手续费、
+  滑点和不利资金费。生产 `preopen_2to1_decision` 暂不消费它：当前候选阶段缺少共享的公开数量预检
+  契约，强接会让所有候选永久失败，故保持失败关闭而不部署半成品。
+- 训练加载器只接受 `ratio_version=net-usdt-ratio-v1` 且 `net_reward_risk>=2`。在独立副本
+  `/private/tmp/crypto-agent-net-usdt-v1-research.db` 迁移后实测新版标签 0 条；A/B/C 的 long/short 六次
+  训练均返回 `insufficient_data(n=0)`，没有生成、激活或写入任何模型。下一步必须先建立可复用的计划
+  数量预检和因果市场结构止盈/止损，再采集或合法重建新版标签。
+
+## 2026-08-25 历史净 2:1 单模型基线
+
+- 按看结果前冻结的单一方案训练 research-only 基线：A_pullback short、1ATR 止损、3:1 毛目标，原因是
+  正成本下 2:1 毛目标不可能仍满足净 2:1。净比率按 `(3-cost_r)/(1+cost_r)` 计算，只保留不低于 2
+  的候选；该归一比率与仓位尺度无关，但不冒充实际下单 USDT 金额。
+- 数据使用前 60 天开发库 `/private/tmp/crypto-agent-train60d-v1.db` 与完整十币 1m 市场库
+  `/private/tmp/crypto-agent-90d-swap-market.db`；1,730 个源候选中 1,724 个路径完整，290 个满足净比率，
+  275 个具备完整回踩确认特征。后 30 天封存集未打开。
+- Logistic OVR + 独立温度校准 + 五折 purged walk-forward 实跑：五折均完成校准，但 Brier skill
+  `+0.6658%`、多分类 Brier skill `-0.8360%`；放行 133 条，precision `27.07%`，相对同覆盖基线仅
+  `+1.50pp`；OOS 净 EV `+0.1900R`，单侧 95% 下界 `-0.0543R`，仅 2/5 折净 EV 为正。
+  结论 `eligible_for_shadow=false`，不保存制品、不激活模型、不打开封存集。
+
+## 2026-08-25 paper/live AI 预测信息特征开关集中化
+
+- `config.py` 新增 AI 特征总开关、paper/live 独立采集开关，以及 K线、多周期、forecast、成本EV、
+  微观结构、衍生品、新闻情绪、账户风险、健康、记忆和持久化的逐项开关；输出字段另设固定白名单和版本。
+- Harness 构造输入前按配置裁剪对应证据；持久化关闭时整条采集失败关闭，避免运行模型却没有审计。
+  完成的 Harness 结果以 `ai_prediction_features` 合并进同一 signal sample，paper/live 标明 mode，
+  `execution_authority` 永远为 false。模拟盘原执行门不变，live 只读采集且不能调用 C_AI 下单链。
+### 2026-08-25 — 实盘 AI 执行权限显式化（固定关闭）
+
+- `config.py` 新增 `AI_LIVE_ORDER_EXECUTION_ENABLED = False`，与实盘只读 AI
+  信息采集开关分离，便于配置审计。
+- 当前仓库授权仍是仅 OKX 模拟盘；该配置是安全声明，不接入实盘执行路径，不能
+  通过修改配置获得真实资金下单权限。

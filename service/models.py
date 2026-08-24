@@ -119,6 +119,23 @@ class ControlOut(BaseModel):
     message: str
 
 
+class BrowserPageEventIn(BaseModel):
+    captured_ts: float
+    url: str
+    page_title: str = ""
+    visible_text: str
+    source: str = "okx_chrome"
+    tab_id: Optional[int] = None
+    metadata: Dict = Field(default_factory=dict)
+
+
+class BrowserPageEventOut(BaseModel):
+    accepted: bool
+    created: bool
+    event_id: int
+    content_hash: str
+
+
 class RealtimeOut(BaseModel):
     """某币实时行情快照（WebSocket 数据）。"""
     base: str
@@ -207,7 +224,7 @@ class AgentRunsOut(BaseModel):
 
 
 class AgentProposalsOut(BaseModel):
-    """AI 主动候选的 shadow 审计；永远不含执行权限。"""
+    """AI 主动候选审计；execution_authority 仅表示 paper 硬门后权限。"""
     shadow_only: bool
     execution_authority: bool
     strategy_id: str

@@ -177,7 +177,8 @@ def parse_verdict(text):
 
 def _memory_block(db_path, base, direction):
     """RAG 记忆块(2026-08-23): 带结果的旧判断案例 + 该币教训。"""
-    if not getattr(config, "AGENT_JUDGE_MEMORY_ENABLED", False):
+    if (not getattr(config, "AGENT_JUDGE_MEMORY_ENABLED", False) or
+            not getattr(config, "AI_FEATURES_MEMORY_ENABLED", False)):
         return ""
     parts = []
     try:
@@ -381,7 +382,8 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
             sample_missing = []
     except (TypeError, ValueError, json.JSONDecodeError):
         sample_missing = []
-    account_snapshot = dict(account or {})
+    account_snapshot = (dict(account or {})
+                        if config.AI_FEATURES_ACCOUNT_RISK_ENABLED else {})
     health_snapshot = {
         "missing_features": sample_missing,
         "source_latency_ms": sample.get("source_latency_ms"),
@@ -389,6 +391,28 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
         "final_decision_at_snapshot": sample.get("final_decision"),
         **dict(health or {}),
     }
+    if not config.AI_FEATURES_HEALTH_ENABLED:
+        health_snapshot = {}
+    frozen_features = dict(sample_features)
+    if not config.AI_FEATURES_MARKET_KLINE_ENABLED:
+        frozen_features = {}
+    elif isinstance(frozen_features.get("factor_features"), dict):
+        factors = dict(frozen_features["factor_features"])
+        if not config.AI_FEATURES_MULTI_TIMEFRAME_ENABLED:
+            for name in ("momentum_1h", "momentum_4h", "market_breadth",
+                         "cross_sectional_rank", "btc_residual_momentum"):
+                factors.pop(name, None)
+        if not config.AI_FEATURES_MICROSTRUCTURE_ENABLED:
+            for name in config.AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS:
+                factors.pop(name, None)
+        if not config.AI_FEATURES_DERIVATIVES_ENABLED:
+            for name in ("funding_rate", "basis", "open_interest_change"):
+                factors.pop(name, None)
+        frozen_features["factor_features"] = factors
+    forecast_snapshot = ((sig.get("forecast") or {})
+                         if config.AI_FEATURES_FORECAST_ENABLED else {})
+    cost_ev_snapshot = ((sample_features.get("preopen_2to1") or {})
+                        if config.AI_FEATURES_COST_EV_ENABLED else {})
     inp = AgentInput(
         run_id=f"agent-{digest}", signal_id=resolved_signal_id,
         event_ts=str(event_ts), kline_ts=str(kline_ts),
@@ -402,11 +426,12 @@ def harness_judge(sig, base, score, price, sentiment, *, model_call=None,
                 "entry": price, "stop": sig.get("stop"), "tp": sig.get("tp"),
                 "timeframe": timeframe,
                 "shadow_dims": sig.get("shadow_dims") or {},
-                "forecast": sig.get("forecast") or {},
-                "preopen_2to1": sample_features.get("preopen_2to1") or {}},
+                "forecast": forecast_snapshot,
+                "preopen_2to1": cost_ev_snapshot},
         market={"regime": sig.get("regime"), "timeframe": timeframe,
-                "frozen_features": sample_features},
-        news=sentiment or {},
+                "frozen_features": frozen_features},
+        news=((sentiment or {})
+              if config.AI_FEATURES_NEWS_SENTIMENT_ENABLED else {}),
         account=account_snapshot,
         health=health_snapshot,
         field_provenance={

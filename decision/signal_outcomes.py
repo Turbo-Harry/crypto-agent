@@ -123,6 +123,73 @@ def settle_path(sample: Dict[str, Any], bars: Iterable[Any],
     }
 
 
+def settle_barrier_grid(sample: Dict[str, Any], bars: Iterable[Any],
+                        grid=None) -> Optional[Dict[str, Dict[str, Any]]]:
+    """同一路径并行结算预注册止损尺度×盈亏比；仅供研究。
+
+    `stop_atr_mult` 决定风险距离，`reward_risk` 只决定目标/风险比例；
+    两者不再被误写成固定的 2R/-1R 参数。任一基础路径缺失时整组返回 None，
+    禁止不同方案使用不同覆盖样本。
+    """
+    variants = tuple(grid or config.EXIT_BARRIER_RESEARCH_GRID)
+    if not variants:
+        return {}
+    try:
+        entry = float(sample["entry"])
+        atr = float(sample["atr"])
+        direction = str(sample["direction"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if entry <= 0 or atr <= 0 or direction not in ("long", "short"):
+        return None
+    materialized = list(bars)
+    output = {}
+    for name, stop_atr_mult, reward_risk in variants:
+        stop_atr_mult = float(stop_atr_mult)
+        reward_risk = float(reward_risk)
+        if stop_atr_mult <= 0 or reward_risk <= 0:
+            return None
+        risk_distance = atr * stop_atr_mult
+        stop = (entry - risk_distance if direction == "long"
+                else entry + risk_distance)
+        target_distance = risk_distance * reward_risk
+        target = (entry + target_distance if direction == "long"
+                  else entry - target_distance)
+        if min(stop, target) <= 0:
+            return None
+        variant = dict(sample, stop=stop, tp=target)
+        result = settle_path(
+            variant, materialized,
+            label_version=(f"{config.EXIT_BARRIER_RESEARCH_VERSION}:"
+                           f"{name}"))
+        if result is None:
+            return None
+        # 费用按该方案自己的止损距离换算为 R；不利资金费沿用同一信号快照。
+        from decision.entry_probability import cost_breakdown_r
+        cost = cost_breakdown_r(dict(variant, dir=direction))
+        if cost is None:
+            return None
+        total_cost_r = float(cost["total_cost_r"])
+        output[str(name)] = {
+            "stop_atr_mult": stop_atr_mult,
+            "reward_risk": reward_risk,
+            "target_atr_mult": stop_atr_mult * reward_risk,
+            "stop": stop, "target": target,
+            "tp_first": result["tp_first"],
+            "sl_first": result["sl_first"],
+            "timeout": result["timeout"],
+            "ambiguous": result["ambiguous"],
+            "gross_pnl_r": result["pnl_r"],
+            "cost_r": total_cost_r,
+            "net_pnl_r": result["pnl_r"] - total_cost_r,
+            "mfe_r": result["mfe_r"], "mae_r": result["mae_r"],
+            "time_to_tp_sec": result["time_to_tp_sec"],
+            "time_to_sl_sec": result["time_to_sl_sec"],
+            "label_version": result["label_version"],
+        }
+    return output
+
+
 def persist_outcome(outcome: Dict[str, Any], db_path: Optional[str] = None) -> None:
     """同一 signal_id 幂等覆盖；label_version 升级时允许确定性重算。"""
     import storage.db as sdb

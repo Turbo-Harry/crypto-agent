@@ -11,10 +11,15 @@ from typing import Any
 
 import config
 from storage import db
+from storage.news_event_repository import list_browser_page_events as _list_browser_page_events
 
 
 def _ready(db_path: str | None) -> None:
     db.init_db(db_path)
+
+
+def list_browser_page_events(db_path: str | None, limit: int = 20) -> list[dict[str, Any]]:
+    return _list_browser_page_events(db_path=db_path, limit=limit)
 
 
 def live_pnl_baseline(db_path: str | None) -> float | None:

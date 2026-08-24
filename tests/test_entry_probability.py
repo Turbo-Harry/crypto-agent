@@ -12,17 +12,20 @@ import config
 from decision.signal_identity import config_identity
 from decision.entry_probability import (entry_gate_decision, fit_logistic,
                                         cost_breakdown_r, execution_cost_r,
+                                        net_usdt_reward_risk,
                                         expected_value_r, fit_temperature,
                                         preopen_2to1_decision,
                                         predict_signal as predict_entry_signal,
                                         predict_from_artifact, raw_probability,
                                         signal_feature_values,
                                         temperature_scale)
-from factors.entry_model_training import (evaluate_rows,
+from factors.entry_model_training import (evaluate_cost_aware_meta_rows,
+                                          evaluate_rows,
                                           fit_catboost_artifact,
                                           select_model_family,
                                           train_entry_model)
 from factors.preregistered_groups import PREREGISTERED_GROUPS
+from factors.group_weight_training import evaluate_group_weight_model
 
 passed = failed = 0
 
@@ -60,6 +63,58 @@ def main():
           len(group_names) == 5 and len(set(group_names)) == 5 and
           all(3 <= len(group.features) <= 4 for group in PREREGISTERED_GROUPS),
           str(PREREGISTERED_GROUPS))
+    ratio = net_usdt_reward_risk({"entry": 100, "stop": 99, "tp": 102,
+                                  "qty": 10, "ctVal": 1, "direction": "long"},
+                                 cost_usdt=1.0)
+    check("成本后 USDT 口径明确计算并拒绝不足 2:1",
+          ratio is not None and ratio["net_profit_usdt"] == 19.0 and
+          ratio["net_loss_usdt"] == 11.0 and
+          ratio["passes_2to1"] is False,
+          str(ratio))
+    check("缺少合约数量时 USDT 比率失败关闭",
+          net_usdt_reward_risk({"entry": 100, "stop": 99, "tp": 102,
+                                "direction": "long"}) is None)
+    utility_rows = []
+    for idx in range(360):
+        positive = idx % 3 == 0
+        event_ts = 1_700_000_000 + idx * 18_000
+        utility_rows.append({
+            "signal_id": f"utility-{idx}", "event_ts": event_ts,
+            "kline_ts": event_ts, "label_end_ts": event_ts + 14_400,
+            "features": {"edge": 2.0 if positive else -2.0},
+            "tp_first": int(positive), "sl_first": int(not positive),
+            "timeout": 0, "pnl_r": 2.0 if positive else 0.0,
+            "cost_r": 0.2, "net_pnl_r": 1.8 if positive else -0.2,
+            "baseline_score": 0.0,
+        })
+    utility_eval = evaluate_cost_aware_meta_rows(utility_rows, ["edge"])
+    check("费用后 meta-label 仅经独立校准冻结策略并发现稳定效用",
+          utility_eval["eligible_for_shadow"] and
+          utility_eval["good_ev_folds"] >= 4 and
+          utility_eval["oos_net_ev_lower_bound"] > 0,
+          str(utility_eval))
+    stacked_rows = []
+    for idx in range(720):
+        positive = idx % 2 == 0
+        event_ts = 1_700_000_000 + idx * 18_000
+        stacked_rows.append({
+            "signal_id": f"stacked-{idx}", "event_ts": event_ts,
+            "kline_ts": event_ts, "label_end_ts": event_ts + 14_400,
+            "features": {"trend_edge": 2.0 if positive else -2.0,
+                         "market_edge": 1.0 if positive else -1.0},
+            "net_pnl_r": 1.0 if positive else -0.1,
+            "baseline_score": 0.0,
+        })
+    stacked_eval = evaluate_group_weight_model(
+        stacked_rows, [("trend", ["trend_edge"]),
+                       ("market", ["market_edge"])])
+    check("四段时序二层模型学习非负归一组权重",
+          stacked_eval["eligible_for_shadow"] and
+          stacked_eval["weights_stable"] and
+          all(abs(sum(fold["weights"].values()) - 1.0) < 1e-9 and
+              all(value >= 0 for value in fold["weights"].values())
+              for fold in stacked_eval["folds"]),
+          str(stacked_eval))
     check("EV 权威口径固定",
           abs(expected_value_r(0.4, 0.3, 0.3, 0.1, 0.05) - 0.48) < 1e-9)
     x = [[-2.0], [-1.0], [-0.5], [0.5], [1.0], [2.0]] * 60
@@ -275,14 +330,18 @@ def main():
             conn.executemany(
                 "INSERT INTO signal_outcomes (signal_id,horizon_hours,tp_first,"
                 "sl_first,timeout,ambiguous,pnl_r,mfe_r,mae_r,high_ret_h,"
-                "low_ret_h,settled_at,bar_resolution,label_version) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "low_ret_h,settled_at,bar_resolution,label_version,qty,ctVal,"
+                "gross_profit_usdt,gross_loss_usdt,total_cost_usdt,"
+                "net_profit_usdt,net_loss_usdt,net_reward_risk,ratio_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [("scope-current", config.SIGNAL_OUTCOME_HORIZON_HOURS,
                   1, 0, 0, 0, 2.0, 2.0, .1, .02, -.01,
-                  1_700_020_000, "1m", "path-v1"),
+                  1_700_020_000, "1m", "path-v1", 1.0, 1.0,
+                  2.0, 1.0, 0.0, 2.0, 1.0, 2.0, "net-usdt-ratio-v1"),
                  ("scope-old", config.SIGNAL_OUTCOME_HORIZON_HOURS,
                   0, 1, 0, 0, -1.0, .1, 1.0, .01, -.02,
-                  1_700_020_900, "1m", "path-v1")])
+                  1_700_020_900, "1m", "path-v1", 1.0, 1.0,
+                  2.0, 1.0, 0.0, 2.0, 1.0, 2.0, "net-usdt-ratio-v1")])
         scoped_training = train_entry_model(
             "long", db_path=db, feature_names=["wick"])
         check("概率训练只统计当前完整 identity，旧 v4 不得补样本门",
@@ -290,6 +349,14 @@ def main():
               scoped_training["tp_n"] == 1 and
               scoped_training["sl_n"] == 0,
               str(scoped_training))
+        historical_training = train_entry_model(
+            "long", db_path=db, feature_names=["wick"],
+            strategy_version="old-strategy")
+        check("历史研究可显式读取冻结身份且不冒充当前版本",
+              historical_training["n"] == 1 and
+              historical_training["tp_n"] == 0 and
+              historical_training["sl_n"] == 1,
+              str(historical_training))
         old_scope = dict(artifact, timeframe="1H", horizon_hours=24)
         sdb.x("INSERT INTO model_artifacts (model_id,model_type,direction,version,"
               "state,created_at,feature_names,artifact,metrics) "

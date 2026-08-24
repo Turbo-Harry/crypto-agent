@@ -35,6 +35,7 @@ from storage.query_api import (
     list_agent_runs,
     list_anomalies,
     list_factor_trials,
+    list_browser_page_events,
     list_risk_events,
 )
 
@@ -46,6 +47,7 @@ from service.models import (HealthOut, BalanceOut, PositionOut, OpenTradeOut,
                             AgentProposalsOut, AgentEvaluationOut, EntryModelsOut,
                             ForecastCalibrationOut, FactorTrialsOut,
                             EntryAccuracyAuditOut)
+from service.models import BrowserPageEventIn, BrowserPageEventOut
 
 _APP_TITLE = "Crypto Agent 交易服务"
 _APP_DESCRIPTION = (
@@ -104,6 +106,23 @@ def _runtime(request: Request) -> TradingRuntimePort:
     """Resolve the engine exclusively through its stable service contract."""
     trader = _trader(request)
     return getattr(trader, "service_api", None) or runtime_api(trader)
+
+
+@router.post("/browser/okx/events", response_model=BrowserPageEventOut,
+             tags=["研究"], dependencies=[Depends(require_control)])
+def browser_okx_event(request: Request, event: BrowserPageEventIn):
+    """接收用户主动启用标签页的可见 OKX 页面文本；无交易执行权限。"""
+    if not any(event.url.startswith(prefix)
+               for prefix in config.CHROME_CAPTURE_ALLOWED_URL_PREFIXES):
+        raise HTTPException(422, "仅接受 OKX 页面")
+    return BrowserPageEventOut(**_runtime(request).record_browser_page_event(
+        event.model_dump()))
+
+
+@router.get("/browser/okx/events", response_model=dict, tags=["研究"])
+def browser_okx_events(request: Request, limit: int = 20):
+    """查看最近的 OKX 页面采集事件（不返回大段正文）。"""
+    return {"events": list_browser_page_events(_runtime(request).db_path, limit)}
 
 
 @router.get("/health", response_model=HealthOut, tags=["观测"])

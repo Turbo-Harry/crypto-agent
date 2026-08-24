@@ -26,6 +26,35 @@ SIGNAL_SCORE = config.SIGNAL_SCORE
 FLAG_USE_SHADOW_SCORE_GATE = config.FLAG_USE_SHADOW_SCORE_GATE
 
 
+def _ai_feature_collection_enabled(live_mode):
+    """Mode-scoped read-only feature switch; never grants execution."""
+    return bool(
+        config.AI_FEATURES_ENABLED and
+        config.AI_FEATURES_PERSISTENCE_ENABLED and
+        (config.AI_FEATURES_LIVE_ENABLED if live_mode
+         else config.AI_FEATURES_PAPER_ENABLED))
+
+
+def _ai_feature_payload(run, sig, *, live_mode):
+    """Project an audited Harness run into bounded training features."""
+    if run is None:
+        return None
+    audited_run = getattr(run, "run", run)
+    raw = (audited_run.to_dict() if hasattr(audited_run, "to_dict")
+           else dict(audited_run))
+    selected = {name: raw.get(name)
+                for name in config.AI_FEATURES_OUTPUT_FIELDS}
+    if config.AI_FEATURES_FORECAST_ENABLED:
+        forecast = dict(sig.get("forecast") or {})
+        selected["forecast"] = {
+            name: forecast.get(name) for name in (
+                "expected_take_profit", "p_hit_tp", "p_hit_sl", "p_timeout",
+                "p_loss_prior", "calibration_status", "horizon_minutes")}
+    return {"version": config.AI_FEATURES_VERSION,
+            "mode": "live" if live_mode else "paper",
+            "execution_authority": False, **selected}
+
+
 def _refresh_config():
     """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
     把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
@@ -305,7 +334,9 @@ class SignalScanMixin:
         the time-critical A universe scan has completed without time leakage.
         """
         model_call = getattr(self, "agent_model_call", None)
+        live_mode = bool(getattr(self, "live_mode", False))
         if (not signal_id or not getattr(config, "AGENT_HARNESS_ENABLED", False)
+                or not _ai_feature_collection_enabled(live_mode)
                 or not model_call):
             return None
         try:
@@ -335,13 +366,21 @@ class SignalScanMixin:
 
         def _run():
             try:
-                return harness_judge(
+                result = harness_judge(
                     sig=sig_snapshot, base=base,
                     score=sig_snapshot.get("shadow_score") or SIGNAL_SCORE,
                     price=sig_snapshot.get("entry"), sentiment=sentiment,
                     model_call=model_call, db_path=db_path,
                     signal_id=signal_id, account=account, health=health,
                     allow_veto=bool(allow_veto))
+                payload = _ai_feature_payload(
+                    result, sig_snapshot, live_mode=live_mode)
+                if payload is not None:
+                    from engines.signal_sampling import merge_sample_features
+                    merge_sample_features(
+                        signal_id, {"ai_prediction_features": payload},
+                        db_path=db_path)
+                return result
             except Exception as exc:
                 strategy_id = (sig_snapshot.get("strategy_id") or
                                config.ENTRY_SIGNAL_STRATEGY_ID)

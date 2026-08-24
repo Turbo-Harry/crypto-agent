@@ -8,7 +8,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import storage.db as sdb
-from decision.signal_outcomes import persist_outcome, settle_path, settle_pending
+import config
+from decision.signal_outcomes import (persist_outcome, settle_barrier_grid,
+                                      settle_path, settle_pending)
+from factors.exit_barrier_research import evaluate_barrier_rows
 from engines.signal_sampling import record_signal_sample
 from exchange.fake_adapter import FakeAdapter
 from exchange.models import Candle
@@ -50,6 +53,35 @@ def main():
           str(out))
     check("long MFE 精确", math.isclose(out["mfe_r"], 2.1), str(out))
     check("long MAE 精确", math.isclose(out["mae_r"], 0.1), str(out))
+
+    grid_rows = bars()
+    grid_rows[10] = Candle(grid_rows[10].ts, 100, 121, 99, 119, 1)
+    grid = settle_barrier_grid(sample() | {"atr": 10.0}, grid_rows)
+    check("盈亏比与止损 ATR 尺度分离",
+          grid["stop075_rr200"]["stop_atr_mult"] == 0.75 and
+          grid["stop075_rr200"]["reward_risk"] == 2.0 and
+          math.isclose(grid["stop075_rr200"]["target_atr_mult"], 1.5),
+          str(grid))
+    check("生产基线 1ATR+2比1 在研究网格保留",
+          grid["stop100_rr200"]["stop"] == 90.0 and
+          grid["stop100_rr200"]["target"] == 120.0 and
+          grid["stop100_rr200"]["tp_first"] == 1,
+          str(grid["stop100_rr200"]))
+    research_rows = []
+    for idx in range(360):
+        event_ts = EVENT + idx * 18_000
+        variants = {name: {"net_pnl_r": 0.3}
+                    for name, _, _ in config.EXIT_BARRIER_RESEARCH_GRID}
+        research_rows.append({"signal_id": f"barrier-{idx}",
+                              "event_ts": event_ts, "kline_ts": event_ts,
+                              "label_end_ts": event_ts + 14_400,
+                              "barriers": variants})
+    barrier_eval = evaluate_barrier_rows(research_rows)
+    check("多障碍评价逐方案时间验证且不自动生产生效",
+          len(barrier_eval) == len(config.EXIT_BARRIER_RESEARCH_GRID) and
+          all(item["status"] == "eligible_for_model_challenge" and
+              item["research_only"] for item in barrier_eval),
+          str(barrier_eval))
 
     rows = bars()
     rows[5] = Candle(rows[5].ts, 100, 121, 89, 100, 1)

@@ -336,7 +336,11 @@ class Replay15mResearchTest(unittest.TestCase):
                          config.BREAKOUT_SIGNAL_STRATEGY_ID)
         self.assertEqual(evaluation["coverage"]["candidates"], 1)
         self.assertEqual(evaluation["coverage"]["outcomes"], 1)
-        self.assertEqual(evaluation["models"]["entry"]["long"]["n"], 1)
+        # 旧 replay 只有固定 ATR 路径标签，没有可审计的净 USDT v1
+        # 数量/成本口径；仍计入路径覆盖，但不得进入新版入场训练。
+        self.assertEqual(evaluation["models"]["entry"]["long"]["n"], 0)
+        self.assertEqual(evaluation["models"]["entry"]["long"]["status"],
+                         "insufficient_data")
         self.assertEqual(
             sum(item["n"] for item in
                 evaluation["segments"]["market_regime"].values()), 1)
@@ -437,7 +441,9 @@ class Replay15mResearchTest(unittest.TestCase):
         self.assertTrue(result["research_only"])
         self.assertEqual(result["coverage"]["candidates"], 1)
         self.assertEqual(result["coverage"]["outcomes"], 1)
-        self.assertEqual(result["models"]["entry"]["long"]["n"], 1)
+        self.assertEqual(result["models"]["entry"]["long"]["n"], 0)
+        self.assertEqual(result["models"]["entry"]["long"]["status"],
+                         "insufficient_data")
         self.assertEqual(result["models"]["extrema"]["long"]["n"], 1)
         self.assertEqual(result["decision"]["status"], "stop_no_promotion")
         self.assertFalse(result["decision"]["budget_expansion_allowed"])

@@ -7,7 +7,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from decision.forecast import forecast, calibration
+from decision.forecast import forecast, calibration, describe
 from engines.signal_scan import SignalScanMixin
 
 passed = failed = 0
@@ -85,6 +85,8 @@ def main():
               out["p_hit_sl"] + 0.5 * out["p_timeout"], 4), str(out))
     check("亏损先验方法可审计",
           out["loss_prior_method"] == "sl_plus_half_timeout_v1", str(out))
+    check("辅助 AI 和通知能看到预计止盈位",
+          "预计止盈位 105.0" in describe(out), describe(out))
     check("使用 regime moving block", out["bootstrap"] == "regime_moving_block")
 
     flat_profiles = [{"close_ret": 0.0, "high_ret": math.log(1.03),

@@ -262,6 +262,52 @@ def execution_cost_r(sig: Dict) -> Optional[float]:
     return breakdown["total_cost_r"] if breakdown is not None else None
 
 
+def net_usdt_reward_risk(sig: Dict, *, cost_usdt: Optional[float] = None) -> Optional[dict]:
+    """计算成本后实际 USDT 盈亏比；不把 ATR 倍数当作业务口径。
+
+    ``qty`` 是合约张数，``ctVal`` 是每张合约的基础币数量。缺少这两个
+    可审计的仓位字段时失败关闭，避免用名义 ATR 比例冒充 USDT 盈亏。
+    成本来自手续费、滑点和不利资金费的同一 ``cost_breakdown_r`` 模型，
+    也可由真实成交账单通过 ``cost_usdt`` 覆盖。
+    """
+    try:
+        entry = float(sig["entry"])
+        stop = float(sig["stop"])
+        tp = float(sig["tp"])
+        qty = float(sig["qty"])
+        ct_val = float(sig.get("ctVal", sig.get("ct_val")))
+        if min(entry, stop, tp, qty, ct_val) <= 0:
+            return None
+        direction = str(sig.get("dir") or sig.get("direction") or "")
+        if direction not in ("long", "short"):
+            return None
+        gross_loss = abs(entry - stop) * qty * ct_val
+        gross_win = abs(tp - entry) * qty * ct_val
+        if gross_loss <= 0 or gross_win <= 0:
+            return None
+        if cost_usdt is None:
+            cost_r = execution_cost_r(sig)
+            if cost_r is None:
+                return None
+            cost_usdt = float(cost_r) * gross_loss
+        cost_usdt = float(cost_usdt)
+        if cost_usdt < 0:
+            return None
+        net_profit = gross_win - cost_usdt
+        net_loss = gross_loss + cost_usdt
+        ratio = net_profit / net_loss if net_loss > 0 else None
+        return {"gross_profit_usdt": gross_win,
+                "gross_loss_usdt": gross_loss,
+                "cost_usdt": cost_usdt,
+                "net_profit_usdt": net_profit,
+                "net_loss_usdt": net_loss,
+                "net_reward_risk": ratio,
+                "passes_2to1": bool(ratio is not None and ratio >= 2.0),
+                "ratio_version": "net-usdt-ratio-v1"}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def predict_from_artifact(artifact: dict, feature_values: Dict[str, float],
                           cost_r_override: Optional[float] = None):
     try:
@@ -439,6 +485,14 @@ def preopen_2to1_decision(sig, prediction=None, db_path=None):
         "reason": "invalid_trade_geometry",
         "prediction_source": "validated_entry_probability",
     }
+    candidate_cost_r = execution_cost_r(sig)
+    if candidate_cost_r is not None:
+        result.update({"candidate_cost_r": round(candidate_cost_r, 6)})
+        breakdown = cost_breakdown_r(sig) or {}
+        result.update({name: round(float(breakdown[name]), 6)
+                       for name in ("trading_cost_r", "funding_cost_r")
+                       if breakdown.get(name) is not None})
+        result["cost_model_version"] = config.ENTRY_COST_MODEL_VERSION
     if actual_rr is None or not math.isclose(actual_rr, required_rr,
                                               rel_tol=1e-6, abs_tol=1e-6):
         return result

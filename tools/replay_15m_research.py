@@ -207,7 +207,10 @@ def _init_market_db(path: str) -> sqlite3.Connection:
 
 def _fetch_history_page(inst_id: str, bar: str, after: int | None = None,
                         timeout: float = 20.0) -> list[list[str]]:
-    params = {"instId": inst_id, "bar": bar, "limit": "100"}
+    # OKX history-candles accepts up to 300 rows per page.  Keeping the
+    # larger public page size materially reduces request volume for long
+    # 1m research windows; the cursor/ordering checks below remain unchanged.
+    params = {"instId": inst_id, "bar": bar, "limit": "300"}
     if after is not None:
         params["after"] = str(after)
     url = OKX_HISTORY_URL + "?" + urllib.parse.urlencode(params)
