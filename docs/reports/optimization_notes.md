@@ -1435,3 +1435,16 @@
 - 旧版裁决更新：当前完整 v4 A 评价 n=15、reject=0、`probability_std=0`、Brier skill=-0.1116%，
   模型成本后增量下界为负；继续 `insufficient_data/shadow`。v5 A 6 条最早 08:45、B 12 条最早
   09:15 才到期，本次不提前读取未来、不手工写 outcome，也不改变任何交易权限。
+
+## 2026-08-24 Harness 生命周期指标快照持续刷新
+
+- 活体触发：14:01 时按当前完整 v5 A 版本实时 `evaluate_harness` 已有 n=34、reject=0，但
+  `/research/readiness` 与 `agent_versions.metrics_json` 仍为 n=5；总 v5 prompt 已自然成熟 A 35、
+  B 27 条，证明路径结算正常，漂移发生在生命周期证据持久化而非采样链。
+- 修复：`storage.agent_lifecycle.refresh_metrics` 只更新同策略版本的 `metrics_json/reason`，不伪造状态
+  迁移，也不改 activated/rollback 时间。`sync_harness_lifecycle` 对未达门 shadow 每轮持久化最新评价；
+  validated 在人工激活前也刷新并重跑完整 promotion gate，新增证据退化立即 rolled-back。candidate、
+  100/30、完整成本/Trace/校准、主动授权与 paper-only Veto 边界均不变。
+- 验收要求：专项必须证明同一版本从 n=5 增至 n=34 时仍保持 shadow、readiness 快照更新为 34、
+  `veto_effective=false`；随后跑 Agent 专项、entry accuracy audit、全量套件与静态护栏。只部署 paper，
+  重启后再核对实时评价与持久快照一致，live PID 不得变化。

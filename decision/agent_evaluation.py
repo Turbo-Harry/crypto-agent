@@ -520,7 +520,7 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
 def sync_harness_lifecycle(db_path=None, strategy_id=None):
     """自动登记/验证 Harness 版本；只到 validated，绝不自动开启 veto。"""
     from decision import agent_lifecycle
-    from storage.agent_lifecycle import transition
+    from storage.agent_lifecycle import refresh_metrics, transition
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
     metrics = evaluate_harness(db_path=db_path, strategy_id=strategy_id)
     if not metrics.get("version"):
@@ -533,11 +533,29 @@ def sync_harness_lifecycle(db_path=None, strategy_id=None):
     if row["status"] == "candidate":
         row = transition(version, "shadow", reason="mature_samples_available",
                          metrics=metrics, strategy_id=strategy_id, db_path=db_path)
+    elif row["status"] == "shadow":
+        # mature outcome 持续增长时状态仍是 shadow，但 readiness 必须消费
+        # 当前证据，不能永远停在第一次 candidate→shadow 的少量样本快照。
+        row = refresh_metrics(
+            version, metrics, reason="shadow_metrics_refresh",
+            strategy_id=strategy_id, db_path=db_path)
     if (row["status"] == "shadow" and
             metrics["n"] >= config.AGENT_EVAL_MIN_VALID and
             metrics["reject_n"] >= config.AGENT_EVAL_MIN_REJECT):
         row = agent_lifecycle.validate(
             version, metrics, strategy_id=strategy_id, db_path=db_path)
+    if row["status"] == "validated":
+        ready, reason = agent_lifecycle.promotion_ready(metrics)
+        if ready:
+            row = refresh_metrics(
+                version, metrics, reason="validated_metrics_refresh",
+                strategy_id=strategy_id, db_path=db_path)
+        else:
+            # 人工激活前若新增证据破坏了验证门，立即撤销已验证身份；
+            # 不能继续展示旧的正面快照等待获权。
+            row = transition(
+                version, "rolled-back", reason=reason, metrics=metrics,
+                strategy_id=strategy_id, db_path=db_path)
     if (row["status"] == "validated" and
             config.AGENT_HARNESS_VETO_ENABLED):
         row = agent_lifecycle.activate(

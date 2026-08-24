@@ -44,6 +44,25 @@ def get(version: str, *, strategy_id: str | None = None,
                  [version, strategy_id], db_path=db_path)
 
 
+def refresh_metrics(version: str, metrics: Mapping[str, Any], *,
+                    reason: str = "metrics_refresh",
+                    strategy_id: str | None = None,
+                    db_path: str | None = None) -> dict[str, Any]:
+    """Persist a new evidence snapshot without pretending state changed."""
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    row = get(version, strategy_id=strategy_id, db_path=db_path)
+    if not row:
+        raise ValueError("unknown agent version")
+    if row["status"] in {"kept", "rolled-back"}:
+        raise ValueError(f"terminal agent version {row['status']}")
+    db.x(
+        "UPDATE agent_versions SET metrics_json=?,reason=? "
+        "WHERE version=? AND strategy_id=?",
+        [json.dumps(dict(metrics), sort_keys=True), reason,
+         version, strategy_id], db_path=db_path)
+    return get(version, strategy_id=strategy_id, db_path=db_path) or {}
+
+
 def transition(version: str, target: str, *, reason: str = "",
                metrics: Mapping[str, Any] | None = None,
                strategy_id: str | None = None,

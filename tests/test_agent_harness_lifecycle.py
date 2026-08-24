@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import config
 from decision import agent_lifecycle
@@ -103,6 +104,58 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
             "ready", db_path=self.path))
         self.assertFalse(agent_lifecycle.veto_effective(
             "different", db_path=self.path))
+
+    def test_shadow_metrics_refresh_without_granting_authority(self):
+        from decision.agent_evaluation import sync_harness_lifecycle
+
+        first = {
+            "status": "insufficient_data", "version": "growing-v1",
+            "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+            "n": 5, "reject_n": 0,
+        }
+        grown = dict(first, n=34)
+        with patch("decision.agent_evaluation.evaluate_harness",
+                   side_effect=[first, grown]):
+            initial = sync_harness_lifecycle(db_path=self.path)
+            refreshed = sync_harness_lifecycle(db_path=self.path)
+
+        stored = agent_lifecycle.get("growing-v1", db_path=self.path)
+        metrics = __import__("json").loads(stored["metrics_json"])
+        self.assertEqual(initial["status"], "shadow")
+        self.assertEqual(refreshed["status"], "shadow")
+        self.assertEqual(metrics["n"], 34)
+        self.assertEqual(stored["reason"], "shadow_metrics_refresh")
+        self.assertFalse(agent_lifecycle.veto_effective(
+            "growing-v1", db_path=self.path))
+
+    def test_validated_version_rolls_back_when_new_metrics_degrade(self):
+        from decision.agent_evaluation import sync_harness_lifecycle
+
+        ready = {
+            "status": "evaluated", "version": "validated-v1",
+            "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+            "n": 100, "reject_n": 30,
+            "model_cost_data_complete": True, "trace_coverage": 1.0,
+            "probability_coverage": 1.0, "probability_std": .1,
+            "reject_evidence_coverage": 1.0, "brier_skill": .1,
+            "saved_loss": 2.0, "missed_profit": .5,
+            "model_cost_r": .01, "incremental_ev_lower_bound": .1,
+            "max_segment_share": .5,
+        }
+        degraded = dict(ready, brier_skill=-.01)
+        with patch.object(config, "AGENT_HARNESS_VETO_ENABLED", False), \
+                patch("decision.agent_evaluation.evaluate_harness",
+                      side_effect=[ready, degraded]):
+            validated = sync_harness_lifecycle(db_path=self.path)
+            rolled = sync_harness_lifecycle(db_path=self.path)
+
+        stored = agent_lifecycle.get("validated-v1", db_path=self.path)
+        metrics = __import__("json").loads(stored["metrics_json"])
+        self.assertEqual(validated["status"], "validated")
+        self.assertEqual(rolled["status"], "rolled-back")
+        self.assertEqual(metrics["brier_skill"], -.01)
+        self.assertEqual(stored["reason"],
+                         "brier_worse_than_frequency_baseline")
 
 
 if __name__ == "__main__":
