@@ -2019,3 +2019,17 @@
   completed，没有把低于 8/10 bps 门的流动性写成失败；只用正新闻冲突与正 `trend_band_atr` 逆 short
   两个可复算风险族得到 `shadow_reject`，policy 仍为 `baseline_pass`。evaluation pending、零 Veto、零订单，
   这证明生产证据面和语义门生效，不证明该 reject 拦住了亏损；需等待真实 4h outcome。
+
+## 2026-08-24 C v5 自然采样吞吐与方向不平衡停止裁决
+
+- 只读证据：v5 当前 10 个自然周期中 9 completed、1 schema error，共生成 13 条确定性有效提案，long
+  10、short 3，execution_authority 全为 0；平均模型延迟 1429.5ms。最近两轮均为 2 条 long，看似可能
+  是每轮上限 2 挤掉 short。
+- 资格复算：冻结 audit 中 short 确定性资格只在 4/10 轮出现，且都只有 ZRO short；首轮 18:20 因旧函数体
+  与新身份边界产生 schema error，随后三个 completed 周期 3/3 都实际选择了 ZRO short。20:00 与 20:15
+  冻结候选只有 INJ/ZAMA long，根本没有可选择 short。因此当前方向不平衡来自自然三周期资格分布，
+  不是模型名额偏置或 validator 漏采。
+- 停止裁决：不提高 `AGENT_PROPOSAL_MAX_PROPOSALS=2`，不降低 0.60 信心、三周期同向、300/60/60 或
+  费用后门，也不通过同一行情的更多重叠候选制造样本。扩大 symbol universe 或拆方向批次会改变协议、
+  增加行情调用和重叠依赖；在现有 4h outcomes 尚未成熟前没有净收益证据，暂不实施。继续按自然市场
+  收集，待各方向路径结果出现后再基于有效样本率决定是否另立 shadow challenger。
