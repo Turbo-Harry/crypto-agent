@@ -11,6 +11,8 @@
   但成熟结果不足，`veto_enabled=false`。
 - 主动提案当前冻结 implementation 为 `agent-proposal-impl-v4.2-json-mode`；首个自然批次 completed、
   1 条 ZRO short 通过几何与证据门，但 `execution_authority=0`、`prediction_passed=0`，尚无 4h 成熟结果。
+- 入场概率与极值模型按 long/short 分开训练；300/60/60 是每个拟训练方向的门，不是把双方向总数相加。
+  当前 A long 成熟 128（TP 41/SL 62），A short 成熟 40（TP 6/SL 31），均未达到训练门。
 
 ## 目标
 
@@ -51,9 +53,9 @@
 - Brier skill 不低于频率基线，风险概率标准差至少 0.03，校准不得系统性反向。
 - saved loss 大于 missed profit 加模型成本，费用后增量 EV 单侧 95% 下界大于 0。
 - reject 不得由单一币种、方向、regime 或月份贡献超过 80%。
-- C 当前完整身份至少取得 300 条自然成熟提案，TP-first/SL-first 各至少 60；5 折中至少 4 折通过，
-  Brier skill 至少 0.05，费用后 EV 单侧 95% 下界大于 0，且 DSR/PBO 与分方向、币种、regime、月份
-  稳定性全部通过，才允许生成 shadow 入场模型。
+- C 当前完整身份在每个拟训练方向分别至少取得 300 条自然成熟提案，且该方向 TP-first/SL-first 各至少
+  60；5 折中至少 4 折通过，Brier skill 至少 0.05，费用后 EV 单侧 95% 下界大于 0，且 DSR/PBO 与
+  币种、regime、月份稳定性全部通过，才允许为该方向生成 shadow 入场模型。另一方向不得借样本晋升。
 - C 模型生成后仍需至少 60 条独立 shadow 候选、30 条已关闭、30 条被模型选择的完整评估；实际费用后
   EV 继续为正、Brier 不恶化、最大回撤不超过门限，才可另提人工批准。本文不授予该批准。
 - 当前协议的每个提案 input hash 必须从冻结 payload 逐字复算一致，2:1 几何严格成立，任何记录的
@@ -63,7 +65,7 @@
 
 ## 停止规则
 
-- 样本不足继续 shadow，不降低 100/30。
+- 样本不足继续 shadow，不把 long/short 合计冒充单方向 300/60/60，也不降低 Harness 100/30。
 - Brier、绝对费用后 EV、增量下界或分段稳定任一失败，停止晋升。
 - A/B/C 的独立 90 天或自然 paper 费用后 EV 下界非正时，模型列表保持为空；不得用降低样本门、删亏损、
   换费用口径、增加同一行情的重叠候选或只报胜率来制造通过。
