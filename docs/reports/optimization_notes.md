@@ -1493,3 +1493,16 @@
   如何，新版本都只能从 paper shadow 开始积累独立自然样本。只有 n≥100、reject≥30、Trace/概率/
   evidence 全覆盖、Brier skill≥0、概率 std≥0.03、费用后增量 EV 单侧 95% 下界>0 且非单段主导时，
   才有资格进入 validated；这仍不等于自动激活或立即下单。
+- 离线证据：LangGraph 语义边界 17/17、Harness E2E 12/12、legacy/provider 桥 19/19；最终全量
+  自动发现套件 57/57，AI 仓库、代码图、参数集中化、隔离、23 条修复护栏、`py_compile` 与
+  diff check 全绿。冻结实现与目标 Prompt 提交 `bb3eac3`。计划中的 67 条历史同输入 provider replay
+  因会批量外发冻结账户/市场快照且没有专项授权而未执行；没有绕过安全审查，也不把缺失 replay
+  冒充 challenger 胜率证据。
+- paper 部署：重启前 PID `90674`，空仓、今日零交易、未熔断、对账一致、`/error` 为空；只重启
+  paper 到 PID `97441`，live PID `90574` 未变化。14:45 收线轮自然产生 MET B_breakout short 候选，
+  首条 v6 run `agent-9abc3610b6b8428a27520762` 完成；首响应非 JSON，按固定上限修复一次后输出
+  reject、风险 0.72、信心 0.71，引用 market/health 两个冻结 evidence，reason_codes 为
+  signal_inconsistency/liquidity_failure。最终动作仅 `shadow_reject`，评价保持 pending；模型累计
+  5,529/398 input/output tokens、成本 0.00053427 USD、模型延迟 3,933ms。部署后健康心跳正常、零持仓、
+  今日零交易、未熔断、对账一致、无错误、`veto_enabled=false`、`/models/entry` 仍为空。该首条只证明
+  v6 能产生可追溯常规风险 reject，不能证明其拦亏正确或有正 EV，必须等待 4h 标签与 100/30 自然门。
