@@ -1518,3 +1518,18 @@
 - 验收要求：专项必须断言 Harness 请求包含 JSON Output 且 legacy 默认不含；全量与静态护栏全绿；
   先用无账户/市场隐私的合成 fixture 做一次 provider smoke，再只重启 paper。新身份的自然 run 必须
   有完整 Trace、零订单，并记录首次响应是否无需结构修复；单次成功不能证明准确率或允许晋升。
+- 离线证据：Harness E2E 13/13、provider/legacy 桥 19/19；最终全量自动发现套件 57/57，AI 仓库、
+  代码图、参数集中化、隔离、23 条修复护栏、`py_compile` 与 diff check 全绿。实现提交 `b833629`。
+  [DeepSeek 官方 JSON Output 契约](https://api-docs.deepseek.com/guides/json_mode/)要求 request 设置
+  `response_format=json_object`、Prompt 包含 json 和输出对象样例；本实现三项齐备，同时保留官方提示
+  的空 content 失败语义。
+- provider smoke：只发送不含真实账户、币种或市场数据的合成 fixture，首次模型 step completed、
+  retry=0，最终为合法 abstain；input/output 1,206/128 tokens，成本 0.00020468 USD，模型延迟 2,893ms。
+- paper 部署：重启前 PID `97441` 空仓、今日零交易、未熔断、对账一致且无错误；只重启 paper 到
+  PID `1760`，live PID `90574` 未变化。15:00 收线轮自然形成 4 条新身份 Trace：AAVE A reject
+  0.72/0.75、DOGE A abstain 0.55/0.50、ADA A reject 0.78/0.72、ETHFI B abstain 0.55/0.50。
+  4/4 首响应均为合法 JSON，A 三条全部 retry=0、模型延迟 2,012–2,103ms；B 首响应也是合法 JSON，
+  但 `insufficient_evidence` 与 verdict 不一致，按领域语义修复一次后完成，累计延迟 3,182ms。四条
+  均为 pending、零 Veto、零订单；部署后健康心跳正常、空仓、今日零交易、未熔断、对账一致、无错误、
+  `/models/entry` 为空。`/agent/status` 在新身份尚无成熟生命周期行时仍显示最近 v5 shadow，不能把该
+  展示值误解为进程未加载 v3 JSON Output；实际 run/step 的工具策略身份和 Trace 是部署事实源。
