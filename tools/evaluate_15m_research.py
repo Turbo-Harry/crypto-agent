@@ -27,6 +27,7 @@ from decision.signal_identity import research_scope_version
 
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
 _MINUTE_MS = 60_000
+PASSIVE_ENTRY_EVALUATION_VERSION = "passive-entry-v2-confirmed-klines"
 
 
 def _research_metadata(db_path: str) -> dict[str, Any]:
@@ -185,6 +186,7 @@ def _passive_entry_summary(rows: list[dict[str, Any]],
     adverse barrier (gaps are also conservatively stopped).
     """
     result: dict[str, Any] = {
+        "evaluation_version": PASSIVE_ENTRY_EVALUATION_VERSION,
         "policy": ("roundtrip_cost_recovery_limit_one_15m_bar"
                    if entry_offset_pct > 0 else
                    "signal_entry_limit_one_15m_bar"),
@@ -197,6 +199,7 @@ def _passive_entry_summary(rows: list[dict[str, Any]],
         "net_ev_r_per_candidate": None, "net_ev_lower_95": None,
         "clustered_event_net_ev_r": None, "symbol_concentration": None,
         "positive_folds": 0, "folds": [], "months": {}, "symbols": {},
+        "market_table": None,
         "status": "unavailable",
         "budget_expansion_allowed": False,
     }
@@ -219,6 +222,11 @@ def _passive_entry_summary(rows: list[dict[str, Any]],
     series: dict[str, tuple[list[int], list[tuple[Any, ...]]]] = {}
     conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     try:
+        has_confirmed = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='klines_v2'").fetchone()
+        kline_table = "klines_v2" if has_confirmed else "klines"
+        result["market_table"] = kline_table
         for symbol, material in by_symbol.items():
             lo = int(min(float(row["event_ts"]) for row in material) * 1000)
             hi = int(max(float(row["event_ts"]) +
@@ -226,7 +234,7 @@ def _passive_entry_summary(rows: list[dict[str, Any]],
                                config.SIGNAL_OUTCOME_HORIZON_HOURS) * 3600 +
                          ttl_ms / 1000 for row in material) * 1000)
             bars = conn.execute(
-                "SELECT open_time,open,high,low,close FROM klines "
+                f"SELECT open_time,open,high,low,close FROM {kline_table} "
                 "WHERE inst_id=? AND bar='1m' AND open_time>=? "
                 "AND open_time<? ORDER BY open_time",
                 [f"{symbol}-USDT-SWAP", lo, hi]).fetchall()

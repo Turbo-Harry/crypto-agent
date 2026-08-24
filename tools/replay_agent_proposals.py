@@ -46,6 +46,14 @@ FROZEN_SCHEMA_VERSION = "agent-proposal-schema-v1"
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
 
 
+def _market_table(path: Path) -> str:
+    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as conn:
+        has_confirmed = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='klines_v2'").fetchone()
+    return "klines_v2" if has_confirmed else "klines"
+
+
 class MarketReader:
     def __init__(self, path: str):
         resolved = Path(path).expanduser().resolve()
@@ -55,6 +63,7 @@ class MarketReader:
         self.conn = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA busy_timeout=5000")
+        self.kline_table = _market_table(resolved)
         self._cache: dict[tuple[str, str], tuple[list[int], list[dict[str, Any]]]] = {}
 
     def close(self) -> None:
@@ -65,7 +74,8 @@ class MarketReader:
         if key not in self._cache:
             rows = [dict(row) for row in self.conn.execute(
                 "SELECT open_time,open,high,low,close,volume,quote_volume "
-                "FROM klines WHERE inst_id=? AND bar=? ORDER BY open_time",
+                f"FROM {self.kline_table} WHERE inst_id=? AND bar=? "
+                "ORDER BY open_time",
                 [f"{base}-USDT-SWAP", bar]).fetchall()]
             self._cache[key] = ([int(row["open_time"]) for row in rows], rows)
         return self._cache[key]
@@ -116,6 +126,7 @@ def inventory(market_db: str, phase: str) -> dict[str, Any]:
         "event_count": len(events),
         "market_db": str(path),
         "market_db_sha256": _sha256(path),
+        "market_table": _market_table(path),
         "prompt_version": FROZEN_PROMPT_VERSION,
         "schema_version": FROZEN_SCHEMA_VERSION,
         "model_version": config.AGENT_JUDGE_MODEL,
@@ -145,11 +156,28 @@ def _init_output(output_db: Path, market_db: str) -> None:
             "research_only": True, "version": REPLAY_VERSION,
             "market_db": str(Path(market_db).expanduser().resolve()),
             "market_db_sha256": _sha256(Path(market_db).expanduser().resolve()),
+            "market_table": _market_table(
+                Path(market_db).expanduser().resolve()),
             "symbols": list(SYMBOLS), "stride_seconds": EVENT_STRIDE_SECONDS,
             "prompt_version": FROZEN_PROMPT_VERSION,
             "schema_version": FROZEN_SCHEMA_VERSION,
             "model_version": config.AGENT_JUDGE_MODEL,
         }
+        existing_row = conn.execute(
+            "SELECT value FROM kv WHERE key=?",
+            ["research.agent_proposal_replay.latest"]).fetchone()
+        if existing_row:
+            try:
+                existing = json.loads(existing_row[0])
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError("已有 Agent replay provenance 损坏") from exc
+            identity_fields = (
+                "research_only", "version", "market_db_sha256",
+                "market_table", "symbols", "stride_seconds",
+                "prompt_version", "schema_version", "model_version")
+            if any(existing.get(key) != proof.get(key)
+                   for key in identity_fields):
+                raise ValueError("已有 Agent replay 输出身份不一致，请使用新输出库")
         conn.execute(
             "INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value,"

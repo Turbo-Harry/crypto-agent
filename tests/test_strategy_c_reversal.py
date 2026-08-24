@@ -73,9 +73,19 @@ class StrategyCReversalTest(unittest.TestCase):
                 "CREATE TABLE funding_rates (inst_id TEXT,funding_time INTEGER,"
                 "funding_rate REAL,realized_rate REAL,"
                 "PRIMARY KEY(inst_id,funding_time))")
+            conn.execute(
+                "CREATE TABLE klines_v2 (source TEXT,venue TEXT,time_zone TEXT,"
+                "inst_id TEXT,bar TEXT,open_time INTEGER,close_time INTEGER,"
+                "open REAL,high REAL,low REAL,close REAL,volume REAL,"
+                "quote_volume REAL,confirmed INTEGER,ingested_at REAL,"
+                "as_of_ms INTEGER,raw_hash TEXT)")
             conn.commit()
             conn.close()
             result = evaluate(path)
+            self.assertEqual(
+                result["market_input_version"],
+                "confirmed-klines-v2-preferred")
+            self.assertEqual(result["market_table"], "klines_v2")
             self.assertEqual(result["verdict"], "stop_no_promotion")
             self.assertEqual(result["holdout"]["status"], "sealed_not_opened")
             self.assertFalse(result["execution_authority"])

@@ -131,12 +131,47 @@ class AgentProposalReplayTest(unittest.TestCase):
         self.assertEqual(evaluate_phase(
             self.output_db, "training")["status"], "stop_no_promotion")
 
+    def test_market_reader_prefers_confirmed_v2_over_legacy_rows(self):
+        conn = sqlite3.connect(self.market_db)
+        conn.execute(
+            "CREATE TABLE klines_v2 (source TEXT,venue TEXT,time_zone TEXT,"
+            "inst_id TEXT,bar TEXT,open_time INTEGER,close_time INTEGER,"
+            "open REAL,high REAL,low REAL,close REAL,volume REAL,"
+            "quote_volume REAL,confirmed INTEGER,ingested_at REAL,"
+            "as_of_ms INTEGER,raw_hash TEXT)")
+        event_ms = int(replay_tool.TRAIN_START_TS * 1000)
+        conn.execute(
+            "INSERT INTO klines_v2 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ["okx", "swap", "UTC", "BTC-USDT-SWAP", "15m",
+             event_ms - 900_000, event_ms, 200, 201, 199, 200, 10, 2000,
+             1, 1.0, event_ms, "confirmed"])
+        conn.commit()
+        conn.close()
+        reader = replay_tool.MarketReader(self.market_db)
+        try:
+            bars = reader.closed("BTC", "15m", event_ms, 1)
+            self.assertEqual(reader.kline_table, "klines_v2")
+            self.assertEqual(bars[0]["close"], 200)
+        finally:
+            reader.close()
+
     def test_validation_cannot_run_before_training_passes(self):
         replay_tool._init_output(Path(self.output_db), self.market_db)
         with self.assertRaisesRegex(ValueError, "validation 保持封存"):
             replay_tool.replay(
                 self.market_db, self.output_db, "validation",
                 model_call=_model_for_prompt)
+
+    def test_output_rejects_changed_market_input_identity(self):
+        replay_tool._init_output(Path(self.output_db), self.market_db)
+        conn = sqlite3.connect(self.market_db)
+        conn.execute(
+            "INSERT INTO klines VALUES (?,?,?,?,?,?,?,?,?)",
+            ["BTC-USDT-SWAP", "15m", 1, 1, 1, 1, 1, 1, 1])
+        conn.commit()
+        conn.close()
+        with self.assertRaisesRegex(ValueError, "输出身份不一致"):
+            replay_tool._init_output(Path(self.output_db), self.market_db)
 
     def test_full_synthetic_training_gate_still_has_no_execution_authority(self):
         replay_tool._init_output(Path(self.output_db), self.market_db)

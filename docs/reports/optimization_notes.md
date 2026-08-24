@@ -2197,3 +2197,29 @@
   `com.crypto.paper`：PID `19558→21109`；live PID `90574` 未变化。重启后 health ok、心跳持续、未暂停、
   空仓、对账 balanced、错误为空。A 当前身份统计 9 runs（8 completed/1 failed），B 为 8（7/1），C
   为 0；三者 `configured_version` 均正确，当前 lifecycle 全部 null、Veto 全部 false，未知策略 422。
+
+## 2026-08-24 确认行情旁路修复与 96-SWAP 当前语义扩展重放
+
+- 数据源修复：被动限价评价、Agent 提案 replay、策略 C 独立评价在 `klines_v2` 存在时只读确认行情，
+  不再硬读 `legacy_unverified`。输出显式记录 `market_table` 与输入/评价版本；Agent replay 若市场哈希、
+  表身份、Prompt/Schema/模型或版本不同则拒绝复用旧输出库，防止历史 run 混计。
+- 冲突回归：fixture 同时写入“不成交”的 legacy 价格和“成交后 TP”的 v2 价格，被动评价与 Agent
+  MarketReader 均明确选择 v2；策略 C 空库也报告 v2。专项为 15m replay 15/15、Agent proposal replay
+  5/5、策略 C 4/4、研究运行时隔离 1/1。
+- 扩展数据：对运行中 `data/market.db` 做 SQLite 在线一致性快照到 `/tmp`，不写活体库。确认表含 109
+  个 1m、108 个 15m/1H、105 个 4H SWAP；选择 96 个至少具备一天四周期覆盖的合约，A/B 同时扫描
+  31,322 个已收线时点，生成 4,430 个 research-only 候选，连续 4h/1m 标签 2,730 个。
+- A 结果：当前 `71848d5359e9` 身份为 2,050 候选/1,284 标签，TP/SL/timeout=320/825/139，毛
+  EV -0.1053R、费用后 -0.6130R；61 因子 validated=0。确认行情的信号价限价每成交 -0.5028R、
+  聚类下界 -0.7503R；20bp 成本回收限价填单 59.35%、每成交 -0.3476R、下界 -0.4483R。
+  冻结首触风险先验虽拦亏精度 77.81%、每候选相对增量 +0.2055R，但保留组仍 -0.5377R、Brier
+  skill -4.59%，裁决 `stop_no_promotion`。
+- B 结果：当前 `f4440c07ea39` 身份为 2,380/1,446，TP/SL/timeout=467/923/56，毛 EV
+  +0.0177R、费用后 -0.5127R；long 毛 +0.1992R 但费用后仍 -0.3475R，short -0.7949R。61 因子
+  validated=0；信号价/成本回收限价下界 -0.7124R/-0.2254R。多分类 Brier skill +0.96% 但 SL
+  Brier skill -0.26%，保留组下界 -0.7193R，仍 `stop_no_promotion`。
+- C 复核：当前短窗口 v2 只出现 1 个开发候选且路径不完整，留出集保持封存，继续
+  `stop_no_promotion`。所有输出仅位于 `/tmp` 研究库，不能计入自然 paper 300/60/60、Harness
+  100/30、模型 lifecycle 或预算；本轮证据明确否决“直接启用模型/限价/风险先验”，不修改参数。
+- 回归证据：按 CI 独立数据库、事件文件和运行目录自动发现并通过 58/58 个测试脚本，失败 0；
+  AI repo 9/9、参数集中、测试隔离、23 条修复护栏、code graph、py_compile 与 diff check 全绿。

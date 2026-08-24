@@ -1404,3 +1404,16 @@
   `veto_enabled=false`，未知策略 422。
 - 预防：多策略状态页禁止把 `ORDER BY created_at DESC LIMIT 1` 当作 current；current 必须先定义配置
   identity，再查完全相等的生命周期记录，latest runtime 也必须单独按同 scope 过滤。
+
+### 2026-08-24 主重放使用确认行情不代表旁路评价也已切换
+
+- 现象：`replay_15m_research.MarketReader` 在 `klines_v2` 存在时已拒绝回退旧表，但被动限价评价、
+  Agent 提案历史 replay 和策略 C 极端反转仍硬编码 `FROM klines`。同一研究报告可能因此用 v2 生成
+  候选、再用 `legacy_unverified` 结算执行变体或其他策略。
+- 根因：行情表选择散落在多个工具 SQL 中；旧测试只构造 `klines`，无法暴露“新旧表同时存在且内容
+  冲突”的生产形态。Agent replay 还会覆盖 provenance 后继续复用旧输出库，可能混合不同市场输入。
+- 修复：三条当前研究旁路统一“v2 存在即只读 v2，否则仅为旧 fixture 兼容读 klines”，响应冻结
+  `market_table`/输入版本；被动评价版本升 v2。Agent replay provenance 加入表身份和市场库哈希，
+  已有输出身份不一致时拒绝复用，要求新研究库。新增冲突表反例证明最终价格来自 v2。
+- 预防：数据源迁移验收必须全仓搜索旧表 SQL，并覆盖候选、标签、执行变体、Agent replay 和独立策略；
+  测试必须同时放置“正确 v2 + 相反 legacy”而非只测单表可运行。

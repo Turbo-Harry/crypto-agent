@@ -512,6 +512,50 @@ class Replay15mResearchTest(unittest.TestCase):
             "roundtrip_cost_recovery_limit_one_15m_bar")
         self.assertGreater(recovery["net_ev_r_per_fill"], 1.84)
 
+    def test_passive_entry_prefers_confirmed_v2_over_legacy_market_rows(self):
+        conn = _init_market(self.market)
+        conn.execute(
+            "CREATE TABLE klines_v2 (source TEXT,venue TEXT,time_zone TEXT,"
+            "inst_id TEXT,bar TEXT,open_time INTEGER,close_time INTEGER,"
+            "open REAL,high REAL,low REAL,close REAL,volume REAL,"
+            "quote_volume REAL,confirmed INTEGER,ingested_at REAL,"
+            "as_of_ms INTEGER,raw_hash TEXT)")
+        inst = "BTC-USDT-SWAP"
+        start = 1_700_000_000_000
+        legacy, confirmed = [], []
+        for idx in range(300):
+            ts = start + idx * BAR_MS["1m"]
+            # legacy 永远不触 100 的 long limit；v2 第一分钟成交，下一分钟 TP。
+            legacy.append([inst, "1m", ts, 110, 111, 109, 110, 1, 110])
+            if idx == 0:
+                o, high, low, close = 100.2, 100.3, 99.7, 100.1
+            elif idx == 1:
+                o, high, low, close = 100.1, 102.1, 100.0, 102.0
+            else:
+                o, high, low, close = 101.0, 101.2, 100.5, 101.0
+            confirmed.append([
+                "okx", "swap", "UTC", inst, "1m", ts,
+                ts + BAR_MS["1m"], o, high, low, close, 1, close, 1,
+                1.0, ts + BAR_MS["1m"], f"hash-{idx}"])
+        conn.executemany("INSERT INTO klines VALUES (?,?,?,?,?,?,?,?,?)", legacy)
+        conn.executemany(
+            "INSERT INTO klines_v2 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            confirmed)
+        conn.commit()
+        conn.close()
+        result = _passive_entry_summary([{
+            "signal_id": "confirmed-fill", "event_ts": start / 1000,
+            "symbol": "BTC", "direction": "long", "entry": 100,
+            "stop": 99, "tp": 102, "horizon_hours": 4,
+            "features": "{}", "pnl_r": 2,
+        }], self.market)
+        self.assertEqual(result["market_table"], "klines_v2")
+        self.assertEqual(
+            result["evaluation_version"],
+            "passive-entry-v2-confirmed-klines")
+        self.assertEqual(result["fills"], 1)
+        self.assertEqual(result["tp_first"], 1)
+
     def test_forecast_risk_prior_uses_frozen_probability_and_full_cost(self):
         rows = []
         start = 1_700_000_000

@@ -42,6 +42,14 @@ DEVELOPMENT = (
     "BTC", "ETH", "SOL", "XRP", "DOGE", "LINK", "ADA", "AVAX")
 HOLDOUT = ("BNB", "LTC")
 POLICY_VERSION = "strategy-c-extreme-reversal-v1-predeclared"
+MARKET_INPUT_VERSION = "confirmed-klines-v2-preferred"
+
+
+def _preferred_kline_table(conn: sqlite3.Connection) -> str:
+    has_confirmed = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='klines_v2'").fetchone()
+    return "klines_v2" if has_confirmed else "klines"
 
 
 def _wilder(values: list[float], period: int) -> list[float | None]:
@@ -166,10 +174,11 @@ def _funding_asof(conn: sqlite3.Connection, inst_id: str,
     return float(row[0]) if row and row[0] is not None else None
 
 
-def _detect_symbol(conn: sqlite3.Connection, symbol: str) -> list[dict[str, Any]]:
+def _detect_symbol(conn: sqlite3.Connection, symbol: str,
+                   kline_table: str) -> list[dict[str, Any]]:
     inst_id = f"{symbol}-USDT-SWAP"
     bars = conn.execute(
-        "SELECT open_time,open,high,low,close FROM klines WHERE inst_id=? "
+        f"SELECT open_time,open,high,low,close FROM {kline_table} WHERE inst_id=? "
         "AND bar='15m' ORDER BY open_time", [inst_id]).fetchall()
     indicators = _indicators(bars)
     candidates = []
@@ -335,10 +344,11 @@ def summarize(rows: list[dict[str, Any]], *, candidates: int,
 
 
 def _evaluate_symbols(conn: sqlite3.Connection,
-                      symbols: Iterable[str]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                      symbols: Iterable[str],
+                      kline_table: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     candidates: list[dict[str, Any]] = []
     for symbol in symbols:
-        candidates.extend(_detect_symbol(conn, symbol))
+        candidates.extend(_detect_symbol(conn, symbol, kline_table))
     by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in candidates:
         by_symbol[str(row["symbol"])].append(row)
@@ -349,7 +359,8 @@ def _evaluate_symbols(conn: sqlite3.Connection,
         hi = max(int(row["event_ms"]) for row in material) + \
             HORIZON_HOURS * 3_600_000
         minute_bars = conn.execute(
-            "SELECT open_time,open,high,low,close FROM klines WHERE inst_id=? "
+            f"SELECT open_time,open,high,low,close FROM {kline_table} "
+            "WHERE inst_id=? "
             "AND bar='1m' AND open_time>=? AND open_time<? ORDER BY open_time",
             [f"{symbol}-USDT-SWAP", lo, hi]).fetchall()
         for candidate in material:
@@ -368,7 +379,8 @@ def evaluate(market_db: str) -> dict[str, Any]:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     try:
-        meta, rows = _evaluate_symbols(conn, DEVELOPMENT)
+        kline_table = _preferred_kline_table(conn)
+        meta, rows = _evaluate_symbols(conn, DEVELOPMENT, kline_table)
         development = summarize(
             rows, candidates=meta["candidates"],
             missing_path=meta["missing_path"])
@@ -376,7 +388,8 @@ def evaluate(market_db: str) -> dict[str, Any]:
             holdout = {"status": "sealed_not_opened", "symbols": list(HOLDOUT)}
             verdict = "stop_no_promotion"
         else:
-            holdout_meta, holdout_rows = _evaluate_symbols(conn, HOLDOUT)
+            holdout_meta, holdout_rows = _evaluate_symbols(
+                conn, HOLDOUT, kline_table)
             holdout = summarize(
                 holdout_rows, candidates=holdout_meta["candidates"],
                 missing_path=holdout_meta["missing_path"], holdout=True)
@@ -387,6 +400,8 @@ def evaluate(market_db: str) -> dict[str, Any]:
     return {
         "generated_ts": time.time(), "policy_version": POLICY_VERSION,
         "research_only": True, "market_db": str(path), "data_hash": digest,
+        "market_input_version": MARKET_INPUT_VERSION,
+        "market_table": kline_table,
         "policy": {
             "timeframe": "15m", "entry": "next_1m_open",
             "rsi": {"period": RSI_PERIOD, "long_max": RSI_LONG_MAX,
