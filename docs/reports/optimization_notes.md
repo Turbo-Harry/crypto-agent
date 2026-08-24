@@ -1876,3 +1876,12 @@
   参数集中、测试隔离、23 条修复护栏、code graph、AI repo check、py_compile 与 diff check 全绿。
   代码变更期间先确认 paper 空仓后暂停扫描，数据库没有任何 v9/v7 混合身份 run；提交后只完整重启
   paper，再等待首批自然 v9/v7 Trace，不能用合成正例冒充自然准确率。
+- 部署证据：实现提交 `038669c`；已暂停且空仓的 paper 从 PID 63310 完整重启为 67668，live PID 90574
+  未变化。重启后 configured=v9/v7、`veto_enabled=false`，空仓、未熔断、心跳正常、对账 balanced、
+  `/error` 为空、`/models/entry` 仍为空；完整重启前 v9/v7 run 数为 0，没有混合身份污染。
+- 首批自然证据：18:45 收线轮形成 HOOD/ADA 两条 A_pullback short run，均首次模型 step completed、
+  retry=0、总延迟 1588/1600ms、evaluation pending。HOOD 使用唯一 news/market 锚，正新闻
+  `news_score=0.6667/composite=0.5633` 正确取得 short 的新闻冲突，第二风险族为结构不一致；ADA 使用
+  唯一 market/news 锚，`spread_bps=9.1199` 超过冻结 8 bps 门而取得流动性风险，正新闻取得第二风险族。
+  两条均未使用 `extreme_market_event`，动作仅 `shadow_reject`、零 Veto、零订单。这证明新机器契约已在
+  自然链路生效，不证明拦亏精确率或正 EV；必须等待各自真实 4h 标签并继续累计 100/30。

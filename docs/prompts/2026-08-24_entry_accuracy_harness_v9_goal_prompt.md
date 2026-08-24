@@ -9,7 +9,9 @@
   `/models/entry` 为空；不得把“模型为空”当成需要绕过的故障。
 - Harness v8/v6 已有 12 条自然 pending run：6 reject、5 abstain、1 schema error，仍未取得任何成熟
   4h 结果，`veto_enabled=false`。其中 GRASS long 把正新闻误报为冲突，DOGE/HOOD 又把普通波动冒充
-  `extreme_market_event`；新 challenger 因此冻结为 Prompt v9 + Tool Policy v7，并从零收集自然证据。
+  `extreme_market_event`；新 challenger 因此冻结为 Prompt v9 + Tool Policy v7。完整重启后的首批两条
+  自然 run 均一次完成、零修复：HOOD short 使用正新闻冲突+结构不一致，ADA short 使用正新闻冲突+
+  9.12 bps 点差；两条都没有冒充严重事件，仍为 pending shadow，`veto_enabled=false`。
 - 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.1-full-restart-boundary`；v4.2 四个自然
   批次仅 1 completed、3 schema error，最新错误被定位为双提案长 evidence 在 200-token 共享预算下没有
   形成完整 JSON。v5.0 在代码提交后、进程完整重启前被 config 热重载，产生 1 条“新身份+旧函数体”的
