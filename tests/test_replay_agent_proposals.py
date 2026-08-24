@@ -101,6 +101,9 @@ class AgentProposalReplayTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertNotIn("microstructure",
                          json.loads(calls[0])["snapshots"][0])
+        self.assertNotIn("aligned_direction",
+                         json.loads(calls[0])["snapshots"][0])
+        self.assertNotIn("eligible_candidates", json.loads(calls[0]))
         self.assertEqual(replay_tool.config.AGENT_PROPOSAL_PROMPT_VERSION,
                          active_prompt_version)
         self.assertEqual(

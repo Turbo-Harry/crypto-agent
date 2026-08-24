@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 
 import config
 import storage.db as sdb
@@ -88,6 +89,17 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(sample["rule_decision"], "shadow")
         self.assertEqual(sample["final_decision"], "rejected")
         self.assertIn("agent_proposal_shadow", sample["reject_reason"])
+
+    def test_snapshot_freezes_deterministic_aligned_direction(self):
+        long_snap = snapshot()
+        short_snap = replace(
+            long_snap, ema20_15m=99.0, ema50_15m=100.0,
+            momentum_1h=-0.01, momentum_4h=-0.02)
+        mixed_snap = replace(long_snap, momentum_4h=-0.02)
+        self.assertEqual(long_snap.aligned_direction, "long")
+        self.assertEqual(short_snap.aligned_direction, "short")
+        self.assertIsNone(mixed_snap.aligned_direction)
+        self.assertEqual(long_snap.to_dict()["aligned_direction"], "long")
 
     def test_cycle_is_idempotent_and_does_not_rebill_model(self):
         snap = snapshot()
@@ -194,6 +206,9 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(audit["snapshot_count"], 1)
         self.assertGreater(audit["microstructure_coverage"], 0)
         frozen = audit["input_snapshot"]["snapshots"][0]
+        self.assertEqual(frozen["aligned_direction"], "long")
+        self.assertEqual(audit["input_snapshot"]["eligible_candidates"], [
+            {"base": "BTC", "direction": "long"}])
         self.assertIn("microstructure", frozen)
         self.assertTrue(any(value.endswith(":microstructure")
                             for value in frozen["evidence_ids"]))
@@ -204,6 +219,32 @@ class AgentProposalTest(unittest.TestCase):
                 "proposals": [], "abstain_reason": None},
             db_path=self.db_path)
         self.assertEqual(result["run"]["runtime_status"], "schema_error")
+
+    def test_false_no_aligned_reason_is_rejected_before_sampling(self):
+        result = run_proposal_cycle(
+            [snapshot()], model_call=lambda _prompt: {
+                "proposals": [], "abstain_reason": "no_aligned_candidate"},
+            db_path=self.db_path)
+        self.assertEqual(result["run"]["runtime_status"], "schema_error")
+        self.assertEqual(result["proposals"], [])
+        self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
+                                db_path=self.db_path)["n"], 0)
+
+    def test_all_unaligned_requires_no_aligned_reason(self):
+        unaligned = replace(snapshot(), momentum_4h=-0.02)
+        valid = run_proposal_cycle(
+            [unaligned], model_call=lambda _prompt: {
+                "proposals": [], "abstain_reason": "no_aligned_candidate"},
+            db_path=self.db_path)
+        self.assertEqual(valid["run"]["runtime_status"], "completed")
+
+        other_db = os.path.join(self.tmp.name, "proposal-other.db")
+        sdb.init_db(other_db)
+        invalid = run_proposal_cycle(
+            [unaligned], model_call=lambda _prompt: {
+                "proposals": [], "abstain_reason": "no_clear_edge"},
+            db_path=other_db)
+        self.assertEqual(invalid["run"]["runtime_status"], "schema_error")
 
     def test_scanner_hook_is_paper_shadow_and_never_places_order(self):
         snap_rows = {
@@ -272,6 +313,9 @@ class AgentProposalTest(unittest.TestCase):
         self.assertGreater(micro["spread_bps"], 0)
         self.assertIsInstance(
             captured["snapshots"][0]["microstructure_as_of_ms"], int)
+        self.assertEqual(captured["snapshots"][0]["aligned_direction"], "long")
+        self.assertEqual(captured["eligible_candidates"], [
+            {"base": "BTC", "direction": "long"}])
         self.assertTrue(captured["snapshots"][0]["evidence_ids"][-1].endswith(
             ":microstructure"))
         sample = sdb.q1(

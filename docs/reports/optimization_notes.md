@@ -1717,3 +1717,26 @@
   `/models/entry` 仍为空。17:00、17:05、17:10 三轮 A/B 均无结构候选，因此 v6 自然 run=0、订单=0；
   这证明无候选时不越权调用，不证明首次合法完成率已经改善。latest run 仍诚实显示旧 v8/v5，必须等
   下一条真实候选后再逐条验收首次完成、修复次数、证据锚、延迟与 4h outcome。
+
+## 2026-08-24 Agent 主动提案 v4 确定性资格预声明
+
+- 触发证据：当前 v3.2 有 52 个自然审计批次、49 completed、2 schema error、0 条提案。对冻结 input
+  本地复算发现 45/52 个批次实际至少有一个 15m EMA20/EMA50、1h 动量、4h 动量严格同号的候选，
+  合计 89 个同向快照；模型却把其中绝大多数返回为 `no_aligned_candidate`。这不是市场没有候选，而是
+  Prompt 让模型从小数自行推导资格、输出 abstain 原因又没有确定性校验，导致反事实样本链长期为 0。
+- 冻结变更：Prompt 升为 `agent-proposal-v4-deterministic-eligibility`，implementation 升为
+  `agent-proposal-impl-v4-deterministic-eligibility`。每个冻结快照新增由现有三周期同号函数计算的
+  `aligned_direction=long|short|null`；模型只能选择非 null 且方向完全一致的候选。若任一快照已同向，
+  空提案不得再报 `no_aligned_candidate`，应按真实原因使用 microstructure_conflict、
+  insufficient_microstructure、liquidity_too_weak 或 no_clear_edge；反之全部 null 时必须报
+  `no_aligned_candidate`。不新增阈值、不读取 outcome、不放宽微观结构证据门。
+- 权限与验收：v4 仍仅 OKX paper shadow，固定 2:1、0 下单、0 veto、0 预算扩大；旧 v1/v2/v3 证据
+  保留但不混计。专项必须覆盖 long/short/null 字段、错误 abstain 失败关闭、方向冲突拒绝和 v1 回放
+  输入兼容；随后跑 Agent proposal、回放、全量自动发现与静态护栏。部署后首个自然 v4 批次必须证明
+  input hash 可复算、同向字段正确、空提案原因与资格一致；是否提高胜率仍等独立 4h 成熟提案与既有
+  费用后 EV、聚类下界、时间折、方向和币种集中度门。
+- 离线证据：主动提案专项扩至 14/14，覆盖确定性 long/short/null、顶层 eligibility 清单、已有资格却
+  误报 no-aligned 和全部无资格却误报其他原因均 schema fail-closed；冻结 v1 回放 3/3，证明历史 payload
+  不新增 `aligned_direction/eligible_candidates`、身份与幂等结果不变。最终自动发现套件 58/58、红 0；
+  AI 仓库与入口契约、依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile`、`diff --check`
+  全绿。实现只改变 C 的 shadow 输入/语义校验，不修改 A/B、provider、费用、阈值、订单或风险预算。

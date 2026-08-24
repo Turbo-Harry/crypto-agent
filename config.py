@@ -260,11 +260,12 @@ AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 # 2R 止盈全部由确定性代码计算。提案只进入反事实标签链，永不调用执行层。
 AGENT_PROPOSAL_SHADOW_ENABLED = True
 AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
-# v3 freezes the exact microstructure input, requires a cited microstructure
-# evidence ID for every non-empty proposal, and audits structured abstention.
-# It remains paper-only shadow evidence with no execution authority.
-AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v3-audited-microstructure"
-AGENT_PROPOSAL_IMPLEMENTATION_VERSION = "agent-proposal-impl-v3.2-base-qty-book"
+# v4 keeps the audited microstructure contract and additionally freezes the
+# deterministic three-timeframe eligible direction.  The model judges edge;
+# it no longer recomputes eligibility from raw decimals.  Still paper shadow.
+AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v4-deterministic-eligibility"
+AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
+    "agent-proposal-impl-v4-deterministic-eligibility"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",
