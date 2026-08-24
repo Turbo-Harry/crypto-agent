@@ -241,11 +241,16 @@ def _validate_decision_semantics(decision: AgentDecision,
             decision.risk_probability > config.AGENT_HARNESS_APPROVE_MAX_RISK):
         raise AgentSemanticError(
             "approve exceeds configured maximum loss probability")
-    if (decision.verdict is Verdict.ABSTAIN and
+    reject_action_required = True
+    if (agent_input.prompt_version in
+            config.AGENT_HARNESS_EVIDENCE_GATED_ABSTAIN_PROMPT_VERSIONS):
+        reject_action_required = _reject_evidence_floor_satisfied(agent_input)
+    if (decision.verdict is Verdict.ABSTAIN and reject_action_required and
             decision.risk_probability >= config.AGENT_HARNESS_REJECT_MIN_RISK and
             decision.confidence >= config.AGENT_HARNESS_REJECT_MIN_CONFIDENCE):
         raise AgentSemanticError(
-            "high-risk high-confidence decision must be reject or lower confidence")
+            "high-risk high-confidence decision with satisfied evidence floor "
+            "must be reject")
     if decision.verdict is Verdict.REJECT:
         provenance = state["agent_input"].field_provenance
         allowed = _evidence_ids(state) if provenance else set()
@@ -388,6 +393,16 @@ def _qualified_ordinary_risk_families(
     return tuple(code.value for code, qualified in checks if qualified)
 
 
+def _reject_evidence_floor_satisfied(agent_input: AgentInput) -> bool:
+    """Return the validator-owned reject action feasibility for this input."""
+
+    return bool(
+        len(_qualified_ordinary_risk_families(agent_input)) >=
+        config.AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES or
+        _has_explicit_extreme_market_event(agent_input)
+    )
+
+
 def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
     """Expose validator-owned facts before the first bounded model call."""
 
@@ -444,7 +459,9 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             "regime, volatility and strategy_route alone never qualify. "
             "qualified_ordinary_risk_families is the exact validator-owned "
             "list; when reject_evidence_floor_satisfied is false, reject is "
-            "forbidden and missing data can only lower confidence."),
+            "forbidden. A high risk_probability and high confidence must then "
+            "remain an honest abstain without lowering either estimate; "
+            "missing data can only lower confidence."),
     }
     if factor_specific:
         contract["signal_inconsistency_conflicting_factors"] = list(
@@ -452,10 +469,8 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
     if family_floor:
         qualified = _qualified_ordinary_risk_families(agent_input)
         contract["qualified_ordinary_risk_families"] = list(qualified)
-        contract["reject_evidence_floor_satisfied"] = bool(
-            len(qualified) >=
-            config.AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES or
-            _has_explicit_extreme_market_event(agent_input))
+        contract["reject_evidence_floor_satisfied"] = \
+            _reject_evidence_floor_satisfied(agent_input)
     return contract
 
 

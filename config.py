@@ -165,7 +165,7 @@ AGENT_HARNESS_ENABLED = True
 # Harness 不能恢复任何基线拒单。
 AGENT_HARNESS_VETO_ENABLED = True
 AGENT_HARNESS_PROMPT_VERSION = \
-    "harness-risk-v12-qualified-family-floor"
+    "harness-risk-v13-evidence-gated-abstain"
 AGENT_HARNESS_REJECT_MIN_RISK = 0.70
 AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
 AGENT_HARNESS_APPROVE_MAX_RISK = 0.45
@@ -180,6 +180,7 @@ AGENT_HARNESS_DIRECTIONAL_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v10-signal-consistency-semantics",
     "harness-risk-v11-factor-specific-signal-evidence",
     "harness-risk-v12-qualified-family-floor",
+    "harness-risk-v13-evidence-gated-abstain",
 )
 AGENT_HARNESS_LIQUIDITY_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v8-liquidity-field-semantics",
@@ -187,24 +188,32 @@ AGENT_HARNESS_LIQUIDITY_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v10-signal-consistency-semantics",
     "harness-risk-v11-factor-specific-signal-evidence",
     "harness-risk-v12-qualified-family-floor",
+    "harness-risk-v13-evidence-gated-abstain",
 )
 AGENT_HARNESS_NEWS_EVENT_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v9-news-extreme-event-semantics",
     "harness-risk-v10-signal-consistency-semantics",
     "harness-risk-v11-factor-specific-signal-evidence",
     "harness-risk-v12-qualified-family-floor",
+    "harness-risk-v13-evidence-gated-abstain",
 )
 AGENT_HARNESS_SIGNAL_CONSISTENCY_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v10-signal-consistency-semantics",
     "harness-risk-v11-factor-specific-signal-evidence",
     "harness-risk-v12-qualified-family-floor",
+    "harness-risk-v13-evidence-gated-abstain",
 )
 AGENT_HARNESS_FACTOR_SPECIFIC_REASON_PROMPT_VERSIONS = (
     "harness-risk-v11-factor-specific-signal-evidence",
     "harness-risk-v12-qualified-family-floor",
+    "harness-risk-v13-evidence-gated-abstain",
 )
 AGENT_HARNESS_RISK_FAMILY_FLOOR_PROMPT_VERSIONS = (
     "harness-risk-v12-qualified-family-floor",
+    "harness-risk-v13-evidence-gated-abstain",
+)
+AGENT_HARNESS_EVIDENCE_GATED_ABSTAIN_PROMPT_VERSIONS = (
+    "harness-risk-v13-evidence-gated-abstain",
 )
 # sentiment.news_score/composite 的生成契约是 [-1,+1]；0 是固定中性语义，
 # 不是用 outcome 搜索出来的交易阈值。
@@ -237,9 +246,12 @@ position_risk_conflict、insufficient_evidence。
 3. 普通常规风险也可形成 reject，不要求必须出现闪崩或重大新闻；但必须由至少两个
    相互独立的当前证据族共同支持，或由一个可核验的严重事件支持。缺失字段本身只会
    降低 confidence，不能提高亏损概率或成为 reject 证据。decision_contract 中
-   reject_evidence_floor_satisfied=false 时 verdict 绝不能为 reject；应按概率门选择 abstain 或 approve。
-4. risk_probability≥0.70、confidence≥0.70 且满足上条证据要求时 verdict=reject；
-   risk_probability≤0.45 时 verdict=approve；其余情况 verdict=abstain。
+   reject_evidence_floor_satisfied=false 时 verdict 绝不能为 reject；即使风险与信心均不低于 0.70，
+   也应诚实保留原估计并选择 abstain，不得为了通过校验而压低概率或信心。只有风险概率≤0.45 且
+   当前证据支持低风险时才选择 approve。
+4. risk_probability≥0.70、confidence≥0.70 且满足上条证据要求时 verdict=reject；若相同概率与信心
+   但 reject 证据地板未满足，verdict=abstain，并保留真实概率与信心。risk_probability≤0.45 且当前
+   证据支持低风险时 verdict=approve；其余情况 verdict=abstain。
 5. reject 必须至少给一个 reason_code，并从 context.field_provenance、memory 或 tools
    中逐字引用 evidence_id。abstain 必须填写具体 abstain_reason；只有使用
    insufficient_evidence 时才填写具体市场字段到 missing_information。
@@ -273,7 +285,7 @@ extreme_market_event=true 资格时才能使用该 code。deterministic_qualifie
 spread_bps≥8 或 expected_slippage_bps≥10 支持；低于门槛的执行摩擦可影响总体概率，但不取得
 独立风险族资格。完成判断后立即停止。
 """.strip()
-# v12 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
+# v13 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
 # 避免把模型切换、输入补全和风险任务改写混成无法归因的实验。
 AGENT_HARNESS_MODEL = "deepseek-chat"
 AGENT_HARNESS_JSON_MODE = True
@@ -282,31 +294,36 @@ AGENT_HARNESS_JSON_MODE = True
 AGENT_HARNESS_CONTEXT_VERSION = "context-v3-accuracy-evidence"
 AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
 AGENT_HARNESS_TOOL_POLICY_VERSION = \
-    "tool-policy-v10-qualified-family-floor"
+    "tool-policy-v11-evidence-gated-abstain"
 AGENT_HARNESS_INITIAL_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v6-initial-decision-contract",
     "tool-policy-v7-news-extreme-event-contract",
     "tool-policy-v8-signal-consistency-contract",
     "tool-policy-v9-factor-specific-signal-contract",
     "tool-policy-v10-qualified-family-floor",
+    "tool-policy-v11-evidence-gated-abstain",
 )
 AGENT_HARNESS_NEWS_EVENT_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v7-news-extreme-event-contract",
     "tool-policy-v8-signal-consistency-contract",
     "tool-policy-v9-factor-specific-signal-contract",
     "tool-policy-v10-qualified-family-floor",
+    "tool-policy-v11-evidence-gated-abstain",
 )
 AGENT_HARNESS_SIGNAL_CONSISTENCY_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v8-signal-consistency-contract",
     "tool-policy-v9-factor-specific-signal-contract",
     "tool-policy-v10-qualified-family-floor",
+    "tool-policy-v11-evidence-gated-abstain",
 )
 AGENT_HARNESS_FACTOR_SPECIFIC_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v9-factor-specific-signal-contract",
     "tool-policy-v10-qualified-family-floor",
+    "tool-policy-v11-evidence-gated-abstain",
 )
 AGENT_HARNESS_RISK_FAMILY_FLOOR_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v10-qualified-family-floor",
+    "tool-policy-v11-evidence-gated-abstain",
 )
 # DeepSeek 2026-08-23 官方美元价（每百万 token）；只用于 shadow 成本审计。
 # cache 明细缺失时按 cache miss 计费，防止低估模型成本。

@@ -1,4 +1,4 @@
-# 入场准确率、Harness v12/v10 与主动提案 v5 目标 Prompt
+# 入场准确率、Harness v13/v11 与主动提案 v5 目标 Prompt
 
 > 状态：权威实施稿；仅 OKX 模拟盘 shadow，不是已验证模型或下单许可
 > 日期：2026-08-24
@@ -16,8 +16,10 @@
   自然 run 又显示布尔资格过粗：GRASS short 确有正 `trend_band_atr` 冲突，但模型把负的顺向动量写成
   “正动量冲突”。v11 因此逐字列出真正冲突因子并校验理由引用。其首批 7 条自然 run 中，具备两族
   资格的 BTC/LINK/LTC 3 条均首次完成；只有单族资格的 INJ/ETH/BNB/ENA 4 条却在一次修复后仍错误
-  尝试 reject，全部 schema fail-closed。当前 challenger 冻结为 Prompt v12 + Tool Policy v10，把精确
-  合格风险族和 reject 证据地板前置；仍为 pending shadow，`veto_enabled=false`。
+  尝试 reject，全部 schema fail-closed。v12/v10 把精确合格风险族和 reject 证据地板前置，首条自然
+  SOL 单族样本已首次完成并正确 abstain；静态审计随后发现旧“高风险+高信心必须 reject”校验与单族
+  禁止 reject 冲突。当前 challenger 冻结为 Prompt v13 + Tool Policy v11，只在证据地板满足时强制
+  reject；地板不满足时允许诚实保留高风险估计并 abstain。仍为 pending shadow，`veto_enabled=false`。
 - 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.1-full-restart-boundary`；v4.2 四个自然
   批次仅 1 completed、3 schema error，最新错误被定位为双提案长 evidence 在 200-token 共享预算下没有
   形成完整 JSON。v5.0 在代码提交后、进程完整重启前被 config 热重载，产生 1 条“新身份+旧函数体”的
@@ -37,7 +39,7 @@
 
 ## 步骤
 
-1. 冻结完整身份：Prompt v12、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v10 和价格口径
+1. 冻结完整身份：Prompt v13、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v11 和价格口径
    任一变化都重新计样本，旧版本只保留审计。
 2. 按方向解释动量和资金费：long 的负动量、short 的正动量才是逆向；正资金费不是 short 成本，
    负资金费不是 long 成本。
@@ -48,14 +50,15 @@
    `liquidity_failure` 风险族资格。低于门槛仍可影响总体概率，但不算独立拒绝证据。
 5. 机器校验概率/信心、方向、资金费、持仓冲突、流动性门、风险族数量和 evidence 锚；首次判断即收到
    与校验器同源的 `allowed_evidence_ids`，以及动量逆向、账户冲突、严重流动性和资金费成本四项冻结
-   资格。v12/v10 还必须收到新闻方向冲突、显式严重事件和信号不一致三项资格：news_score/composite 按 [-1,+1]
+   资格。v13/v11 还必须收到新闻方向冲突、显式严重事件和信号不一致三项资格：news_score/composite 按 [-1,+1]
    符号解释；没有冻结 `extreme_market_event=true` 时，高波动/regime/forecast 都不能冒充严重事件。
    `signal_inconsistency` 只接受 1H/4H 动量、`trend_band_atr` 或 `directional_index_spread` 中至少一项
    符号与候选方向相反；契约还必须列出具体冲突因子，理由不得把清单外的顺向因子写成冲突。
    disorder、波动水平、route 或缺模型本身都不能取得该资格。
    首次契约还必须列出精确 `qualified_ordinary_risk_families` 与
    `reject_evidence_floor_satisfied`。只有至少两个合格普通风险族或显式严重事件时才可 reject；false
-   时必须按概率门选择 abstain/approve。缺失字段只能降低信心，不能凑第二风险族。
+   时必须按概率门选择 abstain/approve；即使风险概率与信心均不低于 0.70，也必须保留真实估计并
+   abstain，不能人为压低信心。缺失字段只能降低信心，不能凑第二风险族。
    修复轮继续复用同一契约，重复 evidence ID 必须去重。最多修复一次，仍不合格或总耗时超过 4 秒就
    失败关闭并保持量化基线。
 6. 只在 paper 自然 shadow 收集 A/B 分策略 run→outcome→evaluation→version 证据；live 永久 shadow，
@@ -70,7 +73,7 @@
 
 ## 验收标准
 
-- 当前完整 v12/v10 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
+- 当前完整 v13/v11 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
 - 所有 `liquidity_failure` 都满足冻结点差或预期滑点门；方向失衡不得冒充绝对深度不足。
 - 总延迟不超过 4 秒；迟到、超时、Schema、网络或 Trace 错误均为零 Veto。
 - Brier skill 不低于频率基线，风险概率标准差至少 0.03，校准不得系统性反向。
@@ -94,7 +97,7 @@
   换费用口径、增加同一行情的重叠候选或只报胜率来制造通过。
 - 不得改活体数据库、伪造 outcome、混历史重放、直接标 active 或让 Harness 恢复基线拒绝。
 
-## v12 冻结反例
+## v13 冻结反例
 
 v7/v4 首轮 A 自然 Trace 有 XRP/SOL/LTC 三个 reject。XRP 的点差/预期滑点为 3.389/5.372 bps，
 SOL 为 1.063/1.739 bps，二者却因负盘口失衡或高 `depth` 分被描述为流动性失败；实际上这些字段
@@ -117,3 +120,7 @@ v11/v9 在 19:15 自然批次出现清晰分界：BTC/LINK/LTC 同时具备严�
 完成；INJ 只有严重滑点，ETH/BNB 只有方向冲突，ENA 只有新闻冲突，4/4 却反复尝试 reject 并在一次
 修复后失败。v12/v10 把 validator 已能复算的族清单和“是否满足 reject 地板”直接放进首次契约；
 不改 0.70/0.70 或两个普通风险族门，只消除模型自行组合资格的错误。
+v12/v10 首条自然 SOL long 只有 `signal_inconsistency` 一族，首次调用即 completed 并 abstain；但代码
+审计发现，如果同类单族样本给出风险概率与信心都不低于 0.70，旧 validator 会要求 reject 或降低信心，
+与地板 false 时禁止 reject 的机器契约冲突。v13/v11 只把这条强制改为“证据地板满足时才要求
+reject”；地板 false 时允许高风险高信心 abstain，旧 v12 仍按冻结语义回放。

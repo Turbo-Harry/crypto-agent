@@ -59,7 +59,7 @@
 
 - [docs/prompts/2026-08-24_entry_accuracy_harness_v6_goal_prompt.md](docs/prompts/2026-08-24_entry_accuracy_harness_v6_goal_prompt.md): 入场准确率与 Harness v6 目标 Prompt（目标/步骤/验收/停止门；paper shadow，不是下单许可）
 - [docs/prompts/2026-08-24_entry_accuracy_harness_v7_goal_prompt.md](docs/prompts/2026-08-24_entry_accuracy_harness_v7_goal_prompt.md): 入场准确率与 Harness v7 权威目标 Prompt（方向/资金费/风险族一致性；paper shadow，不是下单许可）
-- [docs/prompts/2026-08-24_entry_accuracy_harness_v12_goal_prompt.md](docs/prompts/2026-08-24_entry_accuracy_harness_v12_goal_prompt.md): 入场准确率、Harness v12/v10 与主动提案 v5 权威目标 Prompt（目标/步骤/样本门/验收/停止门；paper shadow，不是下单许可）
+- [docs/prompts/2026-08-24_entry_accuracy_harness_v13_goal_prompt.md](docs/prompts/2026-08-24_entry_accuracy_harness_v13_goal_prompt.md): 入场准确率、Harness v13/v11 与主动提案 v5 权威目标 Prompt（目标/步骤/样本门/验收/停止门；paper shadow，不是下单许可）
 - [docs/prompts/2026-08-16_factor_mining_goal_prompt.md](docs/prompts/2026-08-16_factor_mining_goal_prompt.md): 因子挖掘完善目标 prompt（原理/业界标准/验证门/影子政策）
 - [factors/factor_gate.py](factors/factor_gate.py): 因子验证门（walk-forward t 值 ≥3.0 / 成本扣除 / 去冗余 / 经济逻辑必填 + factor_trials 试验日志）
 - [factors/overfit_guard.py](factors/overfit_guard.py): 防过拟合守卫（Deflated Sharpe + CSCV-PBO）

@@ -1960,3 +1960,20 @@
   总延迟 1900ms、无 schema error；理由明确写出“reject 证据门槛未满足”。该 run 无执行权限、零 Veto、
   零订单，evaluation 仍 pending。它验证单风险族场景已从 v11 的失败关闭修为可靠 abstain，不证明拦亏
   精确率、费用后正 EV 或胜率改善；必须等待真实 4h 标签并继续累计每策略 100/30。
+
+## 2026-08-24 Harness v13 证据可行动作预声明
+
+- 触发证据：v12 首条自然 SOL 单族样本以 0.62/0.65 正确 abstain；随后静态审计发现，同类样本若给出
+  `risk_probability≥0.70` 且 `confidence≥0.70`，旧通用校验会强制 reject 或降低信心，但 v12 的
+  `reject_evidence_floor_satisfied=false` 又明确禁止 reject。两条机器规则互斥，无需未来 outcome 即可证明。
+- 冻结变更：Prompt 升 `harness-risk-v13-evidence-gated-abstain`，Tool Policy 升
+  `tool-policy-v11-evidence-gated-abstain`。概率与信心原值不变；只有同源证据地板为 true 时，高风险高信心
+  abstain 才必须修复为 reject。地板 false 时允许诚实 abstain，不得为了通过 validator 人为压低估计。
+  旧 v12/v10 保持原语义回放。
+- 安全边界：不改 0.70/0.70、两个普通风险族、流动性门、模型、Context、4 秒预算、100/30、费用后 EV、
+  Veto 或订单权限。paper 已确认空仓并暂停新开仓扫描，止损监控继续；完整测试、提交和重启前 v13/v11
+  自然 run 必须为 0，live 不触碰。
+- 离线证据：LangGraph 48/48，覆盖 v12 单族高风险旧回放、v13 单族高风险首次 abstain 与双族高风险
+  强制 reject；决策闭环 61/61、策略 B 34/34。按 CI 隔离数据库、事件文件和运行目录自动发现并通过
+  58/58 个测试脚本，失败 0；参数集中化、测试隔离、23 条 fix guard、code graph、AI repo check、
+  py_compile 与 diff check 全绿。paper 暂停期间 v13/v11 run 数为 0，没有热重载混样。

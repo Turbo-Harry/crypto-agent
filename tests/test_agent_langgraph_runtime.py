@@ -705,6 +705,123 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
         self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
 
+    def test_v12_replay_still_repairs_high_risk_high_confidence_abstain(self):
+        calls = []
+        inp = replace(
+            make_input("v12-high-risk-abstain-replay"),
+            prompt_version="harness-risk-v12-qualified-family-floor",
+            tool_policy_version="tool-policy-v10-qualified-family-floor",
+            signal={"base": "INJ", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": .001, "momentum_4h": .004,
+                "trend_band_atr": .67,
+                "directional_index_spread": .064,
+                "expected_slippage_bps": 33.2,
+            }}})
+
+        def model(prompt):
+            calls.append(prompt)
+            return {
+                "verdict": "abstain", "risk_probability": .8,
+                "confidence": .8 if len(calls) == 1 else .69,
+                "reason_codes": ["liquidity_failure"], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "only one ordinary risk family is qualified",
+                "reason": "loss risk is high but reject evidence is incomplete",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("high-risk high-confidence", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+        self.assertEqual(result.run.confidence, .69)
+
+    def test_v13_one_family_allows_honest_high_risk_abstain_first_call(self):
+        calls = []
+        inp = replace(
+            make_input("v13-high-risk-one-family"),
+            prompt_version="harness-risk-v13-evidence-gated-abstain",
+            tool_policy_version="tool-policy-v11-evidence-gated-abstain",
+            signal={"base": "INJ", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": .001, "momentum_4h": .004,
+                "trend_band_atr": .67,
+                "directional_index_spread": .064,
+                "expected_slippage_bps": 33.2,
+            }}},
+            field_provenance={
+                "market": "signal:v13-high-risk-one-family:market",
+            })
+
+        def model(prompt):
+            calls.append(json.loads(prompt))
+            return {
+                "verdict": "abstain", "risk_probability": .8,
+                "confidence": .8, "reason_codes": ["liquidity_failure"],
+                "evidence_ids": ["signal:v13-high-risk-one-family:market"],
+                "missing_information": [],
+                "abstain_reason": "only one ordinary risk family is qualified",
+                "reason": "loss risk is high but reject evidence floor is false",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 1)
+        contract = calls[0]["decision_contract"]
+        self.assertEqual(contract["qualified_ordinary_risk_families"],
+                         ["liquidity_failure"])
+        self.assertFalse(contract["reject_evidence_floor_satisfied"])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+        self.assertEqual(result.run.risk_probability, .8)
+        self.assertEqual(result.run.confidence, .8)
+
+    def test_v13_two_families_still_repairs_high_risk_abstain_to_reject(self):
+        calls = []
+        inp = replace(
+            make_input("v13-high-risk-two-families"),
+            prompt_version="harness-risk-v13-evidence-gated-abstain",
+            tool_policy_version="tool-policy-v11-evidence-gated-abstain",
+            signal={"base": "BTC", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.001, "momentum_4h": .002,
+                "trend_band_atr": .4,
+                "directional_index_spread": .05,
+                "expected_slippage_bps": 14.2,
+            }}},
+            field_provenance={
+                "market": "signal:v13-high-risk-two-families:market",
+                "signal": "signal:v13-high-risk-two-families",
+            })
+
+        def model(prompt):
+            calls.append(prompt)
+            verdict = "abstain" if len(calls) == 1 else "reject"
+            return {
+                "verdict": verdict, "risk_probability": .8,
+                "confidence": .8,
+                "reason_codes": ["liquidity_failure",
+                                 "signal_inconsistency"],
+                "evidence_ids": ["signal:v13-high-risk-two-families:market",
+                                 "signal:v13-high-risk-two-families"],
+                "missing_information": [],
+                "abstain_reason": ("mixed high-risk evidence"
+                                   if verdict == "abstain" else None),
+                "reason": "severe slippage and negative momentum_1h oppose long",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("satisfied evidence floor", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
     def test_v12_two_qualified_families_reject_on_first_call(self):
         calls = []
         inp = replace(
