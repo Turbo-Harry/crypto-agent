@@ -48,7 +48,8 @@ def _ai_feature_payload(run, sig, *, live_mode):
         forecast = dict(sig.get("forecast") or {})
         selected["forecast"] = {
             name: forecast.get(name) for name in (
-                "expected_take_profit", "p_hit_tp", "p_hit_sl", "p_timeout",
+                "expected_stop_loss", "expected_take_profit",
+                "p_hit_tp", "p_hit_sl", "p_timeout",
                 "p_loss_prior", "calibration_status", "horizon_minutes")}
     return {"version": config.AI_FEATURES_VERSION,
             "mode": "live" if live_mode else "paper",
@@ -952,6 +953,7 @@ class SignalScanMixin:
                 if (_dynamic_tp.get("passed") and
                         _paper_dynamic_tp_enabled(self)):
                     selected = _dynamic_tp["selected"]
+                    _stop = selected["stop"]
                     _tp = selected["tp"]
                     _forecast = selected["forecast"]
             except Exception as exc:
@@ -1078,15 +1080,22 @@ class SignalScanMixin:
                         "ofi_event_age_ms": event_flow.get("ofi_event_age_ms"),
                     })
                     market_snapshot_ts = int(time.time() * 1000)
-                    snapshots.append(build_market_snapshot(
+                    _snap = build_market_snapshot(
                         base, frames[config.SIGNAL_SAMPLE_TIMEFRAME],
                         frames[config.SIGNAL_CONTEXT_TIMEFRAME],
                         frames[config.SIGNAL_REGIME_TIMEFRAME],
                         market_features=market_features,
-                        market_snapshot_ts=market_snapshot_ts))
+                        market_snapshot_ts=market_snapshot_ts)
+                    # 2026-08-25 用户指示"先机械过滤再AI提案":
+                    # 15m EMA20/50 + 1h 动量 + 4h 动量三周期同号才进 AI,
+                    # 方向不一致的标的机械剔除(不让 AI 在矛盾证据上弃权)
+                    if _snap.aligned_direction is None:
+                        continue
+                    snapshots.append(_snap)
                 except ValueError:
                     continue
             if not snapshots:
+                print("[C_AI] 机械过滤后无三周期同向候选,本轮不调 AI")
                 return None
             from engines.signal_sampling import record_agent_proposal_sample
             result = run_proposal_cycle(

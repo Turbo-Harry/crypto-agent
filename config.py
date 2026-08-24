@@ -371,6 +371,10 @@ AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
 AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v6-ai-direction"
 AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
     "agent-proposal-impl-v9-major-only-unhinted-ai-direction-paper-gated"
+# 2026-08-25 实盘启用(用户指示): 实盘侧提示词用 live 版协议字符串——
+# "paper-gated" 字样会让模型在实盘系统性弃权(实测 5/5 次 no_aligned_candidate)
+AGENT_PROPOSAL_LIVE_IMPLEMENTATION_VERSION = \
+    "agent-proposal-impl-v9-major-only-unhinted-ai-direction-live-enabled"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",
@@ -457,10 +461,11 @@ DYNAMIC_TP_PAPER_PREDICTION_ENABLED = True
 DYNAMIC_TP_LIVE_PREDICTION_ENABLED = True
 DYNAMIC_TP_PAPER_EXECUTION_ENABLED = True
 DYNAMIC_TP_LIVE_EXECUTION_ENABLED = False
-DYNAMIC_TP_VERSION = "path-extrema-orderflow-ev-v2"
+DYNAMIC_TP_VERSION = "joint-path-barriers-orderflow-ev-v3"
 DYNAMIC_TP_STRUCTURE_LOOKBACK_BARS = 48
 DYNAMIC_TP_DISCOVERY_PATHS = 500
 DYNAMIC_TP_EVALUATION_PATHS = 500
+DYNAMIC_BARRIER_COORDINATE_PASSES = 2
 DYNAMIC_TP_MIN_ORDERFLOW_FIELDS = 2
 DYNAMIC_TP_ORDERFLOW_LOGIT_SCALE = 0.35
 DYNAMIC_TP_MIN_EV_R = 0.0

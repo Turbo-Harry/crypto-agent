@@ -391,6 +391,9 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
     model_version = str(getattr(model_call, "model_version", None) or
                         config.AGENT_JUDGE_MODEL)
     cycle_ts = max(item.kline_ts for item in ordered)
+    _impl_version = (config.AGENT_PROPOSAL_LIVE_IMPLEMENTATION_VERSION
+                     if getattr(config, "CRYPTO_MODE", "live") == "live"
+                     else config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
     cycle_identity = {
         "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
         "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
@@ -400,8 +403,7 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
         "model_version": model_version,
     }
     if config.AGENT_PROPOSAL_PROMPT_VERSION != "agent-proposal-v1":
-        cycle_identity["implementation_version"] = (
-            config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
+        cycle_identity["implementation_version"] = _impl_version
     cycle_key = stable_hash(cycle_identity)
     existing = _read_existing(cycle_key, db_path)
     if existing:
@@ -427,8 +429,7 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
         "snapshots": snapshot_payload,
     }
     if config.AGENT_PROPOSAL_PROMPT_VERSION != "agent-proposal-v1":
-        prompt_payload["implementation_version"] = (
-            config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
+        prompt_payload["implementation_version"] = _impl_version
         if _requires_deterministic_direction_gate():
             prompt_payload["eligible_candidates"] = [
                 {"base": item.base, "direction": item.aligned_direction}
