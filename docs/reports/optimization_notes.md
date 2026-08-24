@@ -2521,3 +2521,10 @@
   非正 EV 均拒单，不回退固定 ATR 止盈。
 - live 同样生成 Harness 提案与动态 TP 预测并落库展示，但不覆盖 live 订单 TP，
   `AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED=False`，执行层对 live 固定返回。
+### 2026-08-25 — 动态 TP v2 去固定 R 网格
+
+- 删除 `DYNAMIC_TP_REWARD_RISK_GRID`；R 仅在选中价格后用于报告收益风险。
+- 500 条 discovery 路径的有利极值与最近48根确认结构价生成候选；另用固定
+  种子隔离的500条 evaluation 路径计算首触概率和成本后 EV，降低同样本选点
+  与评价造成的乐观偏差。
+- 订单流仍只作有界 odds 修正；无市场生成候选、路径不足或无正 EV 均拒单。

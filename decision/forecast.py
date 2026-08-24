@@ -383,6 +383,59 @@ def _adjust_passage_for_orderflow(fc, score):
             "p_timeout": timeout / total}
 
 
+def _dynamic_tp_path_sets(entry, klines):
+    """独立生成候选发现/评价路径，避免在同批路径选点又报EV的乐观偏差。"""
+    recent = list(klines or [])[-config.FORECAST_LOOKBACK_BARS:]
+    profiles = []
+    for idx in range(1, len(recent)):
+        previous = float(recent[idx - 1].get("close") or 0)
+        current = recent[idx]
+        if previous <= 0 or min(float(current.get(key) or 0)
+                                for key in ("high", "low", "close")) <= 0:
+            continue
+        profiles.append({
+            "close_ret": math.log(float(current["close"]) / previous),
+            "high_ret": math.log(float(current["high"]) / previous),
+            "low_ret": math.log(float(current["low"]) / previous)})
+    if len(profiles) < config.FORECAST_MIN_RETURN_BARS:
+        return None, None
+
+    def _paths(count, seed):
+        sampled = moving_block_profiles(
+            profiles, config.FORECAST_HORIZON_BARS, count,
+            config.FORECAST_BLOCK_SIZE, seed=seed,
+            regime_lookback=config.FORECAST_REGIME_LOOKBACK_BARS)
+        return simulate_bar_paths(float(entry), sampled)
+
+    discovery = _paths(config.DYNAMIC_TP_DISCOVERY_PATHS,
+                       config.DYNAMIC_TP_FORECAST_SEED)
+    evaluation = _paths(config.DYNAMIC_TP_EVALUATION_PATHS,
+                        config.DYNAMIC_TP_FORECAST_SEED + 1)
+    return discovery, evaluation
+
+
+def _market_generated_targets(entry, direction, klines, discovery_paths):
+    """只从模拟有利极值和已确认结构价产生候选，不引入人为 R 倍数网格。"""
+    prices = set()
+    for path in discovery_paths or ():
+        if not path:
+            continue
+        level = (max(float(bar["high"]) for bar in path) if direction == "long"
+                 else min(float(bar["low"]) for bar in path))
+        if ((direction == "long" and level > entry) or
+                (direction == "short" and 0 < level < entry)):
+            prices.add(round(level, 8))
+    for bar in list(klines or [])[-config.DYNAMIC_TP_STRUCTURE_LOOKBACK_BARS:]:
+        try:
+            level = float(bar["high"] if direction == "long" else bar["low"])
+            if ((direction == "long" and level > entry) or
+                    (direction == "short" and 0 < level < entry)):
+                prices.add(round(level, 8))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(prices, reverse=(direction == "short"))
+
+
 def optimize_take_profit(sig, base, klines, factor_features, db_path=None):
     """模拟盘动态 TP：市场结构候选 × 路径首触概率 × 订单流 × 成本后 EV。"""
     try:
@@ -400,29 +453,43 @@ def optimize_take_profit(sig, base, klines, factor_features, db_path=None):
         return {"passed": False, "reason": "insufficient_orderflow",
                 "version": config.DYNAMIC_TP_VERSION}
 
-    candidates = {round(float(rr), 8) for rr in
-                  config.DYNAMIC_TP_REWARD_RISK_GRID if float(rr) > 0}
-    for bar in list(klines or [])[-config.DYNAMIC_TP_STRUCTURE_LOOKBACK_BARS:]:
-        try:
-            level = float(bar["high"] if direction == "long" else bar["low"])
-            reward = level - entry if direction == "long" else entry - level
-            rr = reward / risk
-            if min(config.DYNAMIC_TP_REWARD_RISK_GRID) <= rr <= max(
-                    config.DYNAMIC_TP_REWARD_RISK_GRID):
-                candidates.add(round(rr, 8))
-        except (KeyError, TypeError, ValueError, ZeroDivisionError):
-            continue
+    discovery_paths, evaluation_paths = _dynamic_tp_path_sets(entry, klines)
+    if not discovery_paths or not evaluation_paths:
+        return {"passed": False, "reason": "insufficient_kline_paths",
+                "orderflow_score": round(flow_score, 6),
+                "version": config.DYNAMIC_TP_VERSION}
+    candidates = _market_generated_targets(
+        entry, direction, klines, discovery_paths)
+    terminal = terminal_distribution(evaluation_paths)
+    if not candidates or terminal is None:
+        return {"passed": False, "reason": "no_market_generated_target",
+                "orderflow_score": round(flow_score, 6),
+                "version": config.DYNAMIC_TP_VERSION}
 
     from decision.entry_probability import execution_cost_r
     ranked = []
-    for rr in sorted(candidates):
-        tp = entry + rr * risk if direction == "long" else entry - rr * risk
-        candidate = dict(sig, tp=tp)
-        fc = forecast_for_trade(
-            candidate, base, klines, db_path=db_path, empirical_enabled=False,
-            seed=config.DYNAMIC_TP_FORECAST_SEED)
-        if not fc:
+    for tp in candidates:
+        reward = tp - entry if direction == "long" else entry - tp
+        rr = reward / risk
+        if reward <= 0:
             continue
+        candidate = dict(sig, tp=tp)
+        passage = first_passage_probabilities(
+            evaluation_paths, direction, stop, tp)
+        fc = {
+            "median": round(float(terminal["median"]), 6),
+            "q05": round(float(terminal["q05"]), 6),
+            "q95": round(float(terminal["q95"]), 6),
+            "p_hit_tp": passage["tp"], "p_hit_sl": passage["sl"],
+            "p_timeout": passage["timeout"],
+            "expected_take_profit": round(tp, 6),
+            "horizon_bars": config.FORECAST_HORIZON_BARS,
+            "bar_minutes": config.FORECAST_BAR_MINUTES,
+            "horizon_minutes": (config.FORECAST_HORIZON_BARS *
+                                config.FORECAST_BAR_MINUTES),
+            "calibration_status": "online_experimental",
+            "target_source": "path_extrema_or_confirmed_structure",
+        }
         adjusted = _adjust_passage_for_orderflow(fc, flow_score)
         cost_r = execution_cost_r(candidate)
         if adjusted is None or cost_r is None:
@@ -451,6 +518,8 @@ def optimize_take_profit(sig, base, klines, factor_features, db_path=None):
                        "non_positive_cost_adjusted_ev"),
             "orderflow_score": round(flow_score, 6),
             "selected": best, "candidate_count": len(ranked),
+            "candidate_source": "path_extrema_and_confirmed_structure",
+            "selection_split": "independent_discovery_evaluation_paths",
             "version": config.DYNAMIC_TP_VERSION}
 
 

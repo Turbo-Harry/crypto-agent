@@ -84,7 +84,7 @@ def main():
                                     hourly_returns=rets) is None)
 
     # ---- K线候选 + 订单流 + 成本后 EV 动态止盈 ----
-    bars = [{"open": 100, "high": 100 + (i % 4), "low": 99,
+    bars = [{"open": 100, "high": 100, "low": 99.5,
              "close": 100, "volume": 10} for i in range(80)]
     base_sig = {"dir": "long", "entry": 100.0, "stop": 99.0,
                 "tp": 102.0, "atr": 1.0}
@@ -93,25 +93,29 @@ def main():
           not missing_flow["passed"] and
           missing_flow["reason"] == "insufficient_orderflow")
 
-    def fake_candidate(candidate, *_args, **_kwargs):
-        rr = candidate["tp"] - candidate["entry"]
-        p_tp = max(0.05, 0.8 - 0.2 * (rr - 1))
-        return {"median": 101.0, "q05": 98.0, "q95": 104.0,
-                "p_hit_tp": p_tp, "p_hit_sl": 0.1,
-                "p_timeout": 0.9 - p_tp,
-                "expected_take_profit": candidate["tp"]}
-
-    with mock.patch("decision.forecast.forecast_for_trade",
-                    side_effect=fake_candidate), \
+    discovery = [
+        [{"high": level, "low": 99.5, "close": 101.0}]
+        for level in (101.37, 102.73, 104.11)]
+    evaluation = [
+        [{"high": 104.5, "low": 99.5, "close": 102.0}],
+        [{"high": 103.0, "low": 99.5, "close": 102.0}],
+        [{"high": 103.0, "low": 99.5, "close": 102.0}],
+        [{"high": 102.0, "low": 99.5, "close": 101.0}],
+        [{"high": 100.2, "low": 98.5, "close": 99.0}],
+    ]
+    with mock.patch("decision.forecast._dynamic_tp_path_sets",
+                    return_value=(discovery, evaluation)), \
             mock.patch("decision.entry_probability.execution_cost_r",
                        return_value=0.05):
         dynamic = optimize_take_profit(
             base_sig, "BTC", bars,
             {"ofi_event_multilevel": 0.4, "depth_imbalance": 0.2})
-    check("动态止盈选择正成本后EV候选并携带订单流审计",
+    check("动态止盈只从市场路径价格选正EV候选",
           dynamic["passed"] and dynamic["selected"]["ev_r"] > 0 and
           dynamic["orderflow_score"] > 0 and
-          dynamic["selected"]["tp"] != 102.0, str(dynamic))
+          dynamic["selected"]["tp"] in (101.37, 102.73, 104.11) and
+          dynamic["candidate_source"] ==
+          "path_extrema_and_confirmed_structure", str(dynamic))
 
     # ---- 真实路径标签校准 + Brier ----
     tmp = tempfile.mkdtemp(prefix="fc_")
