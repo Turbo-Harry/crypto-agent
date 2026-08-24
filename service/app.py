@@ -246,14 +246,22 @@ def agent_proposals(request: Request, limit: int = 50):
 
 
 @router.get("/agent/evaluation", response_model=AgentEvaluationOut, tags=["Agent Harness"])
-def agent_evaluation(request: Request):
+def agent_evaluation(
+        request: Request,
+        strategy_id: str = config.ENTRY_SIGNAL_STRATEGY_ID):
     """Harness 成熟结果与旧 AI 把关反事实增量的统一只读报告。"""
     path = _agent_db_path(request)
-    rows = list_agent_evaluations(path)
+    try:
+        strategy_version = decision_api.research_strategy_version(strategy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    rows = list_agent_evaluations(
+        path, strategy_id=strategy_id, strategy_version=strategy_version)
     mature = [row for row in rows if row.get("lifecycle_status") == "mature"]
     saved = sum(float(row.get("saved_loss") or 0) for row in mature)
     missed = sum(float(row.get("missed_profit") or 0) for row in mature)
-    counterfactual = decision_api.evaluate_agent(path)
+    counterfactual = decision_api.evaluate_agent(
+        path, strategy_id=strategy_id)
     return AgentEvaluationOut(
         samples=len(mature),
         reject_samples=sum(float(row.get("saved_loss") or 0) > 0 or float(row.get("missed_profit") or 0) > 0
@@ -261,7 +269,8 @@ def agent_evaluation(request: Request):
         saved_loss=round(saved, 8), missed_profit=round(missed, 8),
         incremental_ev=round(saved - missed, 8), mature_samples=len(mature),
         pending_samples=sum(row.get("lifecycle_status") == "pending" for row in rows),
-        harness=decision_api.evaluate_harness(path),
+        harness=decision_api.evaluate_harness(
+            path, strategy_id=strategy_id),
         **counterfactual)
 
 

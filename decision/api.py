@@ -14,14 +14,14 @@ def list_agent_proposals(*, limit: int, db_path: str | None) -> dict[str, Any]:
     return list_proposals(limit=limit, db_path=db_path)
 
 
-def evaluate_agent(db_path: str | None) -> dict[str, Any]:
+def evaluate_agent(db_path: str | None, *, strategy_id: str) -> dict[str, Any]:
     from decision.agent_evaluation import evaluate_agent as evaluate
-    return evaluate(db_path)
+    return evaluate(db_path, strategy_id=strategy_id)
 
 
-def evaluate_harness(db_path: str | None) -> dict[str, Any]:
+def evaluate_harness(db_path: str | None, *, strategy_id: str) -> dict[str, Any]:
     from decision.agent_evaluation import evaluate_harness as evaluate
-    return evaluate(db_path)
+    return evaluate(db_path, strategy_id=strategy_id)
 
 
 def scan_evolution_snapshot(db_path: str | None) -> dict[str, Any]:
@@ -87,6 +87,9 @@ def entry_accuracy_status(db_path: str | None, *,
 
 def research_strategy_version(strategy_id: str) -> str | None:
     """返回研究查询必须使用的精确协议身份；不授予交易权限。"""
+    import config
+    if strategy_id not in config.ENTRY_ACCURACY_RESEARCH_STRATEGIES:
+        raise ValueError(f"未知研究策略: {strategy_id}")
     from decision.signal_identity import research_scope_version
     return research_scope_version(strategy_id)
 

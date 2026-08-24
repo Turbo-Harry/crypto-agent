@@ -2161,3 +2161,16 @@
   model reject 反例；生命周期 9/9、readiness 11/11，全部 Agent、评价、决策闭环、服务和接口边界相关
   18/18 脚本通过。按 CI 独立数据库、事件文件和运行目录自动发现并通过 58/58 个测试脚本，失败 0；
   参数集中、测试隔离、23 条修复护栏、code graph、AI repo 9/9、py_compile 与 diff check 全绿。
+
+## 2026-08-24 Agent 评价接口按当前策略身份端到端隔离
+
+- 触发：宿主复核发现 `/agent/evaluation?strategy_id=B_breakout` 仍展示 A 的 Harness version，说明底层
+  evaluator 虽已支持策略参数，HTTP、decision 门面和顶层成熟统计没有端到端透传。
+- 实现：`/agent/evaluation` 只接受 A/B/C 三个研究策略，先解析当前精确 `strategy_version`，再以同一
+  scope 查询成熟评价、旧 AI 反事实和 Harness 指标。`storage.query_api` 通过 evaluation→run→物理
+  signal 联结隔离策略与版本；旧 AI 评价也退出跨版本 canonical/global 状态计数。
+- 契约：响应新增顶层 `strategy_id`；B 请求必须在顶层与 Harness 嵌套层都返回 B，完整 version 必须含
+  `B_breakout`；未知策略 422。该变更完全只读，不触发训练、生命周期推进、Veto 或订单。
+- 离线证据：服务 API 62/62、Agent 增量评价 13/13、接口边界 17/17 通过；按 CI 独立数据库、事件文件
+  与运行目录自动发现并通过 58/58 个测试脚本，失败 0。参数、隔离、修复护栏、code graph、AI repo、
+  py_compile 与部署证据在本批次后续补记。

@@ -161,16 +161,21 @@ def compare_same_inputs(champion: Sequence[Mapping[str, object]],
     }
 
 
-def evaluate_agent(db_path=None):
-    """评价旧 AI 把关相对纯量化基线的 15m/4h 反事实增量。"""
+def evaluate_agent(db_path=None, strategy_id=None):
+    """评价指定当前策略身份下旧 AI 把关相对量化基线的反事实增量。"""
     import storage.db as sdb
+    from decision.signal_identity import research_scope_version
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    strategy_version = research_scope_version(strategy_id)
     rows = sdb.q(
         "SELECT a.base,a.direction,a.verdict,a.reason_code,a.risk_probability,"
         "a.outcome_r,s.entry,s.stop,s.features,s.horizon_hours "
-        "FROM ai_judgments a JOIN signal_samples_canonical s "
+        "FROM ai_judgments a JOIN signal_samples s "
         "ON s.signal_id=a.signal_id WHERE a.call_status='valid' "
-        "AND a.outcome_r IS NOT NULL AND s.timeframe=? AND s.horizon_hours=?",
-        [config.SIGNAL_SAMPLE_TIMEFRAME, config.SIGNAL_OUTCOME_HORIZON_HOURS],
+        "AND a.outcome_r IS NOT NULL AND s.strategy_id=? "
+        "AND s.strategy_version=? AND s.timeframe=? AND s.horizon_hours=?",
+        [strategy_id, strategy_version, config.SIGNAL_SAMPLE_TIMEFRAME,
+         config.SIGNAL_OUTCOME_HORIZON_HOURS],
         db_path=db_path)
     from decision.entry_probability import execution_cost_r
     for row in rows:
@@ -178,10 +183,14 @@ def evaluate_agent(db_path=None):
                                 float(execution_cost_r(row) or 0.0))
     rejects = [row for row in rows if row["verdict"] == "reject"]
     counts = sdb.q(
-        "SELECT COALESCE(call_status,'legacy') status,COUNT(*) n "
-        "FROM ai_judgments GROUP BY COALESCE(call_status,'legacy')",
+        "SELECT COALESCE(a.call_status,'legacy') status,COUNT(*) n "
+        "FROM ai_judgments a JOIN signal_samples s ON s.signal_id=a.signal_id "
+        "WHERE s.strategy_id=? AND s.strategy_version=? "
+        "GROUP BY COALESCE(a.call_status,'legacy')",
+        [strategy_id, strategy_version],
         db_path=db_path)
-    result = {"status": "insufficient_data", "valid_n": len(rows),
+    result = {"status": "insufficient_data", "strategy_id": strategy_id,
+              "strategy_version": strategy_version, "valid_n": len(rows),
               "reject_n": len(rejects),
               "call_status_counts": {row["status"]: row["n"] for row in counts},
               "blocked_loss_precision": None, "opportunity_cost_r": None,

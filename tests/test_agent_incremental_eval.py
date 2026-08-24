@@ -61,8 +61,10 @@ def main():
                  signal_id],
                 db_path=db)
         for status in ("no_key", "timeout", "parse_error", "api_error"):
-            sdb.x("INSERT INTO ai_judgments (ts,base,direction,verdict,call_status) "
-                  "VALUES (?,?,?,?,?)", [time.time(), "BTC", "long", "approve", status],
+            sdb.x("INSERT INTO ai_judgments "
+                  "(ts,base,direction,verdict,call_status,signal_id) "
+                  "VALUES (?,?,?,?,?,?)",
+                  [time.time(), "BTC", "long", "approve", status, signal_id],
                   db_path=db)
         result = evaluate_agent(db)
         check("达到 100 有效/30 reject 后才评价", result["status"] == "evaluated",

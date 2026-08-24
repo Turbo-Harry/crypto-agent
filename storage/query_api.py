@@ -82,9 +82,20 @@ def agent_status_summary(db_path: str | None) -> dict[str, Any]:
     }
 
 
-def list_agent_evaluations(db_path: str | None) -> list[dict[str, Any]]:
+def list_agent_evaluations(
+        db_path: str | None, *, strategy_id: str | None = None,
+        strategy_version: str | None = None) -> list[dict[str, Any]]:
     _ready(db_path)
-    return db.q("SELECT * FROM agent_evaluations", db_path=db_path)
+    if strategy_id is None and strategy_version is None:
+        return db.q("SELECT * FROM agent_evaluations", db_path=db_path)
+    if not strategy_id or not strategy_version:
+        raise ValueError("strategy_id 与 strategy_version 必须同时提供")
+    return db.q(
+        "SELECT e.* FROM agent_evaluations e "
+        "JOIN agent_runs r ON r.run_id=e.run_id "
+        "JOIN signal_samples s ON s.signal_id=r.signal_id "
+        "WHERE s.strategy_id=? AND s.strategy_version=?",
+        [strategy_id, strategy_version], db_path=db_path)
 
 
 def list_agent_runs(db_path: str | None, limit: int = 50) -> list[dict[str, Any]]:

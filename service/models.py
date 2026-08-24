@@ -226,6 +226,7 @@ class AgentProposalsOut(BaseModel):
 
 
 class AgentEvaluationOut(BaseModel):
+    strategy_id: str
     samples: int
     reject_samples: int
     saved_loss: float

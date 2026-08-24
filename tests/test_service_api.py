@@ -213,6 +213,17 @@ def main():
           and "incremental_ev" in client.get("/agent/evaluation").json()
           and "incremental_ev_lower_bound" in
           client.get("/agent/evaluation").json()["harness"])
+    breakout_evaluation = client.get(
+        "/agent/evaluation?strategy_id=B_breakout")
+    check("/agent/evaluation 按 B 策略精确透传且不回退 A",
+          breakout_evaluation.status_code == 200
+          and breakout_evaluation.json()["strategy_id"] == "B_breakout"
+          and breakout_evaluation.json()["harness"]["strategy_id"] ==
+              "B_breakout"
+          and ":B_breakout:" in
+              breakout_evaluation.json()["harness"]["version"])
+    check("/agent/evaluation 拒绝未知策略而非生成伪身份",
+          client.get("/agent/evaluation?strategy_id=unknown").status_code == 422)
     check("/models/entry 默认无模型且禁止扩大预算",
           client.get("/models/entry").json() ==
           {"models": [], "budget_expansion_allowed": False})

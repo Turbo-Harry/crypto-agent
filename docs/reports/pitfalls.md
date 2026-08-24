@@ -1379,3 +1379,16 @@
 - 预防：任何增量组件必须画清“在哪调用、在哪有权改变结果、评价基线是什么”；无偏留样可以更宽，
   但晋升分母必须与真实消费点一致。身份、样本筛选、贡献归因和集中度都要有负例，不能用全量 Trace
   数或细粒度组合分散证明可执行增量。
+
+### 2026-08-24 底层 evaluator 支持策略参数不代表 HTTP 已透传
+
+- 现象：`evaluate_harness(..., strategy_id="B_breakout")` 已能隔离 B，但
+  `/agent/evaluation?strategy_id=B_breakout` 仍返回 A 的完整版本和结果；接口还把全部策略的
+  `agent_evaluations` 与旧 AI 判断混成顶层统计。
+- 根因：服务端点没有声明或向 `decision.api` 传递 `strategy_id`，存储 query API 也没有策略与精确
+  `strategy_version` 过滤；测试只断言响应含 Harness 字段，没有用 B/C 反例验证返回身份。
+- 修复：端点、decision 门面、旧 AI 评价与评价行查询统一接收策略身份；旧 AI 与 Harness 均绑定当前
+  物理 `signal_samples` 精确版本，未知策略返回 422。响应显式返回 `strategy_id`，B 回归同时断言完整
+  Harness version 含 `B_breakout`，不再静默回退 A。
+- 预防：任何多策略只读接口至少用非默认策略和未知策略做两条契约测试；验收不仅看 200/字段存在，
+  还要核对顶层身份、嵌套身份、完整版本和样本计数来自同一 scope。
