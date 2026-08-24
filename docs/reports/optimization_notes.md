@@ -2244,3 +2244,20 @@
 - 裁决：三个预注册条件都只能相对减亏，不能把保留组变成正的扣费后策略；不新增生产成本门、不改变
   A/B 路由或动量阈值、不生成模型制品。研究回放继续只具否证权，不能计入当前自然 paper
   `300/60/60` 或 Harness `100/30`。
+
+## 2026-08-24 C 主动提案接入独立 Harness shadow
+
+- 触发审计：当前 C 身份已产生 10 个自然候选，readiness 也展示 C 自己的 Harness `100/30` 门，但
+  C 的 `agent_runs` 始终为 0。A/B 的风险 critic 接线没有覆盖 `run_proposal_cycle` 的独立提案留样路径，
+  因此 C 即使持续采集也永远无法形成 Agent 增量证据。
+- 实现：只有本轮刚冻结、确定性 2:1 几何有效且已取得 `signal_id` 的 C 提案才调用共享 Harness；Trace
+  绑定 C 当前精确策略身份，固定 `allow_veto=False`。调用位于整轮 A/B 扫描和 C 提案生成之后，不阻塞
+  潜在 A 执行候选，也不调用 `open_position`。已 deduplicated 的旧周期不补跑，防止用当前新闻、账户和
+  健康上下文污染历史时点。
+- 回归反例：proposal 专项新增同一自然 C 提案产生 completed/abstain Trace、策略身份为 C、提案
+  `execution_authority=0`、FakeAdapter 零订单；重复同 K cycle 返回 deduplicated，Harness provider 只调用
+  一次。专项 17/17、Harness 13/13、增量评价 13/13、生命周期 9/9、readiness 11/11、采样 18/18、
+  决策闭环 64/64、服务 64/64 通过。
+- 全量证据：按 CI 独立数据库、事件文件和运行目录自动发现并通过 58/58 个脚本，失败 0；AI repo
+  9/9、参数集中、测试隔离、23 条修复护栏、code graph、py_compile 与 diff check 全绿。该接线只补齐
+  C 的风险反事实生产者，不激活模型、不授予 Veto、不扩大预算，也不追溯冒充已有 10 条 C 的历史 Trace。

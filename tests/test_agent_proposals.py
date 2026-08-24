@@ -347,9 +347,30 @@ class AgentProposalTest(unittest.TestCase):
             }], "abstain_reason": None}
 
         holder.agent_proposal_model_call = model
+        harness_calls = []
+
+        def harness_model(_prompt):
+            harness_calls.append(1)
+            return {
+                "verdict": "abstain", "risk_probability": 0.5,
+                "confidence": 0.5, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "没有足够的独立风险证据",
+                "reason": "保持纯影子，不改变基线",
+            }
+
+        holder.agent_model_call = harness_model
         holder.watch_scores = {"BTC": 1.0}
         holder._db_path = self.db_path
         holder.exchange = fake
+        holder.risk = type("Risk", (), {
+            "equity": 1000.0, "halted": False, "halt_reason": "",
+            "can_trade": lambda _self: True,
+        })()
+        holder.ledger = type("Ledger", (), {
+            "total_notional": lambda _self: 0.0,
+        })()
+        holder._long_scan_progress = lambda: None
         holder._proposal_oi_state = {"BTC": 100.0}
         holder.rt = type("Realtime", (), {"get_orderflow": lambda _self, _base: {
             "ofi_event_multilevel": 0.35,
@@ -401,6 +422,24 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(view["current_protocol_proposal_coverage"], 1.0)
         self.assertAlmostEqual(
             view["current_protocol_microstructure_coverage"], 13 / 15, 6)
+        harness = sdb.q1(
+            "SELECT r.runtime_status,r.model_verdict,r.final_action,"
+            "s.strategy_id FROM agent_runs r JOIN signal_samples s "
+            "ON s.signal_id=r.signal_id WHERE r.signal_id=?",
+            [result["proposals"][0]["signal_id"]], db_path=self.db_path)
+        self.assertEqual(harness, {
+            "runtime_status": "completed", "model_verdict": "abstain",
+            "final_action": "agent_abstain",
+            "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
+        })
+        self.assertEqual(harness_calls, [1])
+        self.assertFalse(result["proposals"][0]["execution_authority"])
+
+        # 同一根已收线 K 的 proposal cycle 幂等返回；不能重复计费 Harness，
+        # 更不能拿当前上下文补跑历史 C 候选。
+        repeated = SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"])
+        self.assertTrue(repeated["deduplicated"])
+        self.assertEqual(harness_calls, [1])
 
     def test_live_mode_guard_does_not_call_model(self):
         calls = []

@@ -983,6 +983,29 @@ class SignalScanMixin:
                 sample_recorder=lambda **kwargs: record_agent_proposal_sample(
                     db_path=self._db_path, **kwargs),
                 db_path=self._db_path)
+            # C 与 A/B 使用同一风险 critic，但仍是完全独立的生命周期。
+            # 只有本轮刚冻结的提案才调用 Harness：对历史 deduplicated 行用
+            # 当前新闻/账户补跑会造成时点泄漏。C 永远传 allow_veto=False，
+            # 因而这里只生成可结算的 shadow Trace，不可能获得下单权限。
+            if not result.get("deduplicated"):
+                for proposal in result.get("proposals") or ():
+                    if (not proposal or
+                            int(proposal.get("geometry_valid") or 0) != 1 or
+                            not proposal.get("signal_id")):
+                        continue
+                    self._long_scan_progress()
+                    harness_runner = SignalScanMixin._prepare_harness_shadow(
+                        self,
+                        str(proposal["base"]), {
+                            "dir": proposal.get("direction"),
+                            "entry": proposal.get("reference_entry"),
+                            "stop": proposal.get("stop"),
+                            "tp": proposal.get("tp"),
+                            "atr": proposal.get("atr"),
+                            "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
+                        }, str(proposal["signal_id"]), allow_veto=False)
+                    if harness_runner is not None:
+                        harness_runner()
             if result.get("proposals") and not result.get("deduplicated"):
                 valid = sum(row.get("geometry_valid") == 1
                             for row in result["proposals"] if row)
