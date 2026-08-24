@@ -1,7 +1,10 @@
-"""开仓概率模型离线训练与 purged walk-forward 评估。"""
+"""开仓概率模型 Champion–Challenger 与 purged walk-forward 评估。"""
+import base64
 import hashlib
 import json
 import math
+import os
+import tempfile
 import time
 from typing import List
 
@@ -53,7 +56,78 @@ def _impute(train_rows, test_rows, feature_names):
     return train_x, test_x
 
 
-def evaluate_rows(rows: List[dict], feature_names: List[str]):
+def fit_catboost_artifact(train_x, train_rows, feature_names):
+    """训练浅层三分类 Challenger 并序列化；CatBoost 只在训练路径导入。"""
+    if not config.ENTRY_CATBOOST_ENABLED:
+        return None
+    labels = [(0 if row["tp_first"] else 1 if row["sl_first"] else 2)
+              for row in train_rows]
+    if len(set(labels)) < 2:
+        return None
+    try:
+        from catboost import CatBoostClassifier
+        model = CatBoostClassifier(
+            loss_function="MultiClass",
+            depth=config.ENTRY_CATBOOST_DEPTH,
+            iterations=config.ENTRY_CATBOOST_ITERATIONS,
+            learning_rate=config.ENTRY_CATBOOST_LEARNING_RATE,
+            l2_leaf_reg=config.ENTRY_CATBOOST_L2_LEAF_REG,
+            random_seed=config.ENTRY_CATBOOST_RANDOM_SEED,
+            allow_writing_files=False,
+            verbose=False,
+            thread_count=1,
+        )
+        model.fit(train_x, labels, verbose=False)
+        handle = tempfile.NamedTemporaryFile(suffix=".cbm", delete=False)
+        handle.close()
+        try:
+            model.save_model(handle.name)
+            with open(handle.name, "rb") as saved:
+                encoded = base64.b64encode(saved.read()).decode("ascii")
+        finally:
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
+        priors = {
+            "tp": sum(row["tp_first"] for row in train_rows) / len(train_rows),
+            "sl": sum(row["sl_first"] for row in train_rows) / len(train_rows),
+            "timeout": sum(row["timeout"] for row in train_rows) / len(train_rows),
+        }
+        timeouts = [row["pnl_r"] for row in train_rows if row["timeout"]]
+        return {
+            "model_family": "catboost_multiclass",
+            "feature_names": list(feature_names),
+            "catboost_model_b64": encoded,
+            "catboost_classes": [int(value) for value in model.classes_],
+            "n_train": len(train_rows),
+            "class_priors": priors,
+            "prior_strength": config.ENTRY_MODEL_PRIOR_STRENGTH,
+            "mean_timeout_r": (sum(timeouts) / len(timeouts)
+                               if timeouts else 0.0),
+        }
+    except Exception:
+        return None
+
+
+def select_model_family(champion: dict, challenger: dict):
+    """CatBoost 只有自身过门且相对 Brier 增益足够时才能击败 Champion。"""
+    champion_brier = champion.get("multiclass_brier")
+    challenger_brier = challenger.get("multiclass_brier")
+    relative_gain = (
+        (champion_brier - challenger_brier) / champion_brier
+        if champion_brier is not None and champion_brier > 0 and
+        challenger_brier is not None else None)
+    selected = "logistic_ovr"
+    if (challenger.get("eligible_for_shadow") and
+            relative_gain is not None and
+            relative_gain >= config.ENTRY_CATBOOST_MIN_RELATIVE_BRIER_GAIN):
+        selected = "catboost_multiclass"
+    return selected, relative_gain
+
+
+def evaluate_rows(rows: List[dict], feature_names: List[str],
+                  model_family: str = "logistic_ovr"):
     splits = purged_walk_forward_splits(rows)
     folds = []
     all_y, all_p, all_base = [], [], []
@@ -69,26 +143,34 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
         if train_x is None:
             continue
         labels = [row["tp_first"] for row in train]
-        model = fit_logistic(train_x, labels)
-        if model is None:
-            continue
-        class_models = {
-            "tp": model,
-            "sl": fit_logistic(train_x, [row["sl_first"] for row in train]),
-            "timeout": fit_logistic(train_x, [row["timeout"] for row in train])}
-        if any(value is None for value in class_models.values()):
-            continue
-        class_priors = {name: sum(1 for row in train if row[f"{name}_first"])
+        class_priors = {name: sum(row[f"{name}_first"] for row in train)
                         / len(train) for name in ("tp", "sl")}
         class_priors["timeout"] = sum(row["timeout"] for row in train) / len(train)
-        timeouts = [row["pnl_r"] for row in train if row["timeout"]]
-        fold_artifact = {
-            "feature_names": feature_names, "model": model,
-            "class_models": class_models, "class_priors": class_priors,
-            "prior_strength": config.ENTRY_MODEL_PRIOR_STRENGTH,
-            "mean_timeout_r": (sum(timeouts) / len(timeouts)
-                               if timeouts else 0.0),
-        }
+        if model_family == "catboost_multiclass":
+            fold_artifact = fit_catboost_artifact(
+                train_x, train, feature_names)
+            if fold_artifact is None:
+                continue
+        else:
+            model = fit_logistic(train_x, labels)
+            if model is None:
+                continue
+            class_models = {
+                "tp": model,
+                "sl": fit_logistic(train_x, [row["sl_first"] for row in train]),
+                "timeout": fit_logistic(
+                    train_x, [row["timeout"] for row in train])}
+            if any(value is None for value in class_models.values()):
+                continue
+            timeouts = [row["pnl_r"] for row in train if row["timeout"]]
+            fold_artifact = {
+                "model_family": "logistic_ovr",
+                "feature_names": feature_names, "model": model,
+                "class_models": class_models, "class_priors": class_priors,
+                "prior_strength": config.ENTRY_MODEL_PRIOR_STRENGTH,
+                "mean_timeout_r": (sum(timeouts) / len(timeouts)
+                                   if timeouts else 0.0),
+            }
         predictions = [predict_from_artifact(
             fold_artifact, dict(zip(feature_names, values)),
             cost_r_override=row["cost_r"])
@@ -164,7 +246,8 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
         baseline_selected_truth.extend(baseline_selected_y)
         baseline_selected_net_returns.extend(baseline_selected_net)
     if not all_y:
-        return {"feature_names": list(feature_names), "folds": folds,
+        return {"feature_names": list(feature_names), "model_family": model_family,
+                "folds": folds,
                 "brier_skill": None, "good_brier_folds": 0,
                 "multiclass_brier_skill": None, "good_multiclass_folds": 0,
                 "good_ev_folds": 0, "good_precision_folds": 0,
@@ -212,7 +295,11 @@ def evaluate_rows(rows: List[dict], feature_names: List[str]):
                 config.MODEL_MIN_SELECTED_EVALUATIONS and
                 precision > baseline_precision and
                 oos_lower is not None and oos_lower > 0)
-    return {"feature_names": list(feature_names), "folds": folds,
+    return {"feature_names": list(feature_names), "model_family": model_family,
+            "folds": folds,
+            "brier": brier(all_y, all_p), "baseline_brier": base_score,
+            "multiclass_brier": multiclass_brier(all_classes, all_class_p),
+            "baseline_multiclass_brier": multi_base,
             "brier_skill": skill,
             "multiclass_brier_skill": multi_skill,
             "good_brier_folds": good_brier,
@@ -308,7 +395,27 @@ def train_entry_model(direction, db_path=None, feature_names=None,
         return {"status": "insufficient_data", "strategy_id": strategy_id,
                 "n": len(rows),
                 "tp_n": tp_n, "sl_n": sl_n, "features": names}
-    version = "entry-logit-ovr-v4-grouped-kline-ci"
+    champion_evaluation = evaluate_rows(rows, names, "logistic_ovr")
+    challenger_evaluation = evaluate_rows(
+        rows, names, "catboost_multiclass")
+    selected_family, relative_gain = select_model_family(
+        champion_evaluation, challenger_evaluation)
+    evaluation = dict(challenger_evaluation if
+                      selected_family == "catboost_multiclass" else
+                      champion_evaluation)
+    evaluation["champion_challenger"] = {
+        "champion_family": "logistic_ovr",
+        "challenger_family": "catboost_multiclass",
+        "selected_family": selected_family,
+        "relative_multiclass_brier_gain": relative_gain,
+        "minimum_relative_gain":
+            config.ENTRY_CATBOOST_MIN_RELATIVE_BRIER_GAIN,
+        "champion": champion_evaluation,
+        "challenger": challenger_evaluation,
+    }
+    version = ("entry-catboost-multiclass-v1-purged-ci"
+               if selected_family == "catboost_multiclass" else
+               "entry-logit-ovr-v5-champion-ci")
     # 不能只哈希 signal_id：标签回填、成本口径或特征修正后，即使候选身份
     # 不变，也必须生成新的制品身份，避免错误复用旧模型。
     data_evidence = [{
@@ -333,7 +440,17 @@ def train_entry_model(direction, db_path=None, feature_names=None,
         "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
         "cost_model_version": config.ENTRY_COST_MODEL_VERSION,
         "l2": config.ENTRY_MODEL_L2, "epochs": config.ENTRY_MODEL_EPOCHS,
-        "prior": config.ENTRY_MODEL_PRIOR_STRENGTH}
+        "prior": config.ENTRY_MODEL_PRIOR_STRENGTH,
+        "selected_family": selected_family,
+        "catboost": {
+            "depth": config.ENTRY_CATBOOST_DEPTH,
+            "iterations": config.ENTRY_CATBOOST_ITERATIONS,
+            "learning_rate": config.ENTRY_CATBOOST_LEARNING_RATE,
+            "l2_leaf_reg": config.ENTRY_CATBOOST_L2_LEAF_REG,
+            "random_seed": config.ENTRY_CATBOOST_RANDOM_SEED,
+            "minimum_relative_brier_gain":
+                config.ENTRY_CATBOOST_MIN_RELATIVE_BRIER_GAIN,
+        }}
     if strategy_version:
         signature_data["strategy_version"] = strategy_version
     signature = hashlib.sha256(json.dumps(
@@ -347,24 +464,17 @@ def train_entry_model(direction, db_path=None, feature_names=None,
         return {"status": existing["state"], "model_id": model_id,
                 "strategy_id": strategy_id,
                 "n": len(rows), "tp_n": tp_n, "sl_n": sl_n,
-                "features": names, "reused": True}
-    evaluation = evaluate_rows(rows, names)
+                "features": names, "model_family": selected_family,
+                "reused": True}
     train_x, _ = _impute(rows, [], names)
-    labels = [row["tp_first"] for row in rows]
-    model = fit_logistic(train_x, labels)
-    class_models = {
-        "tp": model,
-        "sl": fit_logistic(train_x, [row["sl_first"] for row in rows]),
-        "timeout": fit_logistic(train_x, [row["timeout"] for row in rows])}
     non_tp = [row for row in rows if not row["tp_first"]]
     sl_given = sum(row["sl_first"] for row in non_tp) / len(non_tp)
     timeouts = [row["pnl_r"] for row in rows if row["timeout"]]
-    artifact = {"version": version, "direction": direction,
+    common_artifact = {"version": version, "direction": direction,
                 "strategy_id": strategy_id,
                 "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
                 "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
-                "feature_names": names, "model": model,
-                "class_models": class_models,
+                "feature_names": names,
                 "class_priors": {
                     "tp": tp_n / len(rows), "sl": sl_n / len(rows),
                     "timeout": sum(row["timeout"] for row in rows) / len(rows)},
@@ -373,6 +483,26 @@ def train_entry_model(direction, db_path=None, feature_names=None,
                 "sl_given_not_tp": sl_given,
                 "mean_timeout_r": sum(timeouts) / len(timeouts) if timeouts else 0.0,
                 "cost_r": sum(row["cost_r"] for row in rows) / len(rows)}
+    if selected_family == "catboost_multiclass":
+        artifact = fit_catboost_artifact(train_x, rows, names)
+        if artifact is None:
+            selected_family = "logistic_ovr"
+            evaluation = champion_evaluation
+        else:
+            artifact.update(common_artifact)
+    if selected_family == "logistic_ovr":
+        labels = [row["tp_first"] for row in rows]
+        model = fit_logistic(train_x, labels)
+        artifact = dict(common_artifact, model_family="logistic_ovr",
+                        model=model, class_models={
+                            "tp": model,
+                            "sl": fit_logistic(
+                                train_x, [row["sl_first"] for row in rows]),
+                            "timeout": fit_logistic(
+                                train_x, [row["timeout"] for row in rows]),
+                        })
+    artifact["model_family"] = selected_family
+    artifact["n_train"] = len(rows)
     if strategy_version:
         artifact["strategy_version"] = strategy_version
     state = "validated" if evaluation["eligible_for_shadow"] else "rejected"
@@ -417,4 +547,5 @@ def train_entry_model(direction, db_path=None, feature_names=None,
     return {"status": state, "model_id": model_id,
             "strategy_id": strategy_id, "n": len(rows),
             "tp_n": tp_n, "sl_n": sl_n, "features": names,
+            "model_family": selected_family,
             "evaluation": evaluation}

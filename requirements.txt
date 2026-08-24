@@ -13,8 +13,9 @@ websocket-client>=1.7
 # 当前交易/实时行情后端（ccxt 包同时提供 ccxt.pro）
 ccxt>=4.5,<5
 
-# 数值/机器学习（决策层与因子研究）
+# 数值/机器学习（训练与已晋升制品推理）
 numpy>=1.26
+catboost>=1.2,<2
 
 # Agent Harness（LangChain 结构化输出 + LangGraph 唯一编排运行时）
 langchain>=1.0,<2

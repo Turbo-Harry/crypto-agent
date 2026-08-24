@@ -17,7 +17,10 @@ from decision.entry_probability import (entry_gate_decision, fit_logistic,
                                         predict_signal as predict_entry_signal,
                                         predict_from_artifact, raw_probability,
                                         signal_feature_values)
-from factors.entry_model_training import evaluate_rows, train_entry_model
+from factors.entry_model_training import (evaluate_rows,
+                                          fit_catboost_artifact,
+                                          select_model_family,
+                                          train_entry_model)
 
 passed = failed = 0
 
@@ -165,6 +168,36 @@ def main():
           not costly_evaluation["eligible_for_shadow"] and
           costly_evaluation["good_ev_folds"] == 0,
           str(costly_evaluation))
+
+    catboost_evaluation = evaluate_rows(
+        synthetic_rows(), ["edge"], "catboost_multiclass")
+    selected_family, relative_gain = select_model_family(
+        evaluation, catboost_evaluation)
+    check("浅层 CatBoost 使用相同 purged 五折并击败 Logistic 才入选",
+          catboost_evaluation["eligible_for_shadow"] and
+          len(catboost_evaluation["folds"]) ==
+          config.FACTOR_WALK_FORWARD_FOLDS and
+          selected_family == "catboost_multiclass" and relative_gain > 0,
+          str(catboost_evaluation))
+    rejected_family, _ = select_model_family(
+        evaluation, dict(catboost_evaluation, eligible_for_shadow=False))
+    check("CatBoost 自身未过门时不能替换 Champion",
+          rejected_family == "logistic_ovr")
+    cat_rows = synthetic_rows(360)
+    cat_artifact = fit_catboost_artifact(
+        [[row["features"]["edge"]] for row in cat_rows], cat_rows, ["edge"])
+    cat_prediction = predict_from_artifact(cat_artifact, {"edge": 0.9},
+                                           cost_r_override=.1)
+    check("CatBoost 二进制制品可由消费端延迟加载并输出三分类概率",
+          cat_prediction and
+          cat_prediction["probability_method"] ==
+          "catboost_multiclass_beta_shrink" and
+          abs(sum(cat_prediction[f"p_{name}"] for name in
+                  ("tp", "sl", "timeout")) - 1) < 1e-6,
+          str(cat_prediction))
+    broken_cat = dict(cat_artifact, catboost_model_b64="not-base64")
+    check("损坏 CatBoost 制品失败关闭",
+          predict_from_artifact(broken_cat, {"edge": 0.9}) is None)
 
     multi_artifact = dict(artifact, class_models={
         "tp": model,

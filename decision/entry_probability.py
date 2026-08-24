@@ -1,11 +1,59 @@
 """开仓 TP-first 概率消费端；模型缺失/损坏时 fail-safe 回现役规则。"""
+import base64
+import hashlib
 import json
 import math
+import os
+import tempfile
 from typing import Dict, List, Optional
 
 import config
 from decision.feature_transforms import materialize_derived_features
 from decision.signal_identity import research_scope_version
+
+
+_CATBOOST_CACHE = {}
+
+
+def _catboost_probabilities(artifact: dict, values: List[float]):
+    """延迟加载 CatBoost 制品；无模型扫描不承担重依赖启动成本。"""
+    encoded = artifact.get("catboost_model_b64")
+    if not encoded:
+        return None
+    digest = hashlib.sha256(encoded.encode("ascii")).hexdigest()
+    model = _CATBOOST_CACHE.get(digest)
+    if model is None:
+        try:
+            from catboost import CatBoostClassifier
+            payload = base64.b64decode(encoded.encode("ascii"))
+            handle = tempfile.NamedTemporaryFile(suffix=".cbm", delete=False)
+            try:
+                handle.write(payload)
+                handle.close()
+                model = CatBoostClassifier()
+                model.load_model(handle.name)
+            finally:
+                try:
+                    os.unlink(handle.name)
+                except OSError:
+                    pass
+            _CATBOOST_CACHE[digest] = model
+        except Exception:
+            return None
+    try:
+        probabilities = model.predict_proba([values])[0]
+        classes = [int(value) for value in artifact.get(
+            "catboost_classes", model.classes_)]
+        mapped = {name: 0.0 for name in ("tp", "sl", "timeout")}
+        class_names = {0: "tp", 1: "sl", 2: "timeout"}
+        for label, probability in zip(classes, probabilities):
+            if label in class_names:
+                mapped[class_names[label]] = float(probability)
+        total = sum(mapped.values())
+        return ({name: value / total for name, value in mapped.items()}
+                if total > 0 else None)
+    except Exception:
+        return None
 
 
 def sigmoid(value):
@@ -164,11 +212,26 @@ def predict_from_artifact(artifact: dict, feature_values: Dict[str, float],
     try:
         names = list(artifact["feature_names"])
         values = [float(feature_values[name]) for name in names]
-        n = float(artifact["model"].get("n_train") or 0)
+        family = str(artifact.get("model_family") or "logistic_ovr")
+        n = float(artifact.get("n_train") or
+                  (artifact.get("model") or {}).get("n_train") or 0)
         prior = float(artifact.get("prior_strength") or
                       config.ENTRY_MODEL_PRIOR_STRENGTH)
         weight = n / (n + prior) if n + prior > 0 else 0.0
-        if artifact.get("class_models"):
+        if family == "catboost_multiclass":
+            raw_classes = _catboost_probabilities(artifact, values)
+            if raw_classes is None:
+                return None
+            priors = artifact.get("class_priors") or {}
+            shrunk = {name: weight * raw_classes[name] +
+                      (1 - weight) * float(priors.get(name, 1 / 3))
+                      for name in raw_classes}
+            total = sum(shrunk.values())
+            p_tp, p_sl, p_timeout = (shrunk["tp"] / total,
+                                     shrunk["sl"] / total,
+                                     shrunk["timeout"] / total)
+            probability_method = "catboost_multiclass_beta_shrink"
+        elif artifact.get("class_models"):
             raw_classes = raw_class_probabilities(artifact["class_models"], values)
             if raw_classes is None:
                 return None
@@ -202,7 +265,7 @@ def predict_from_artifact(artifact: dict, feature_values: Dict[str, float],
                       p_timeout * (timeout_r - payoff_mean) ** 2)
         se = math.sqrt(max(0.0, payoff_var) / max(1.0, n))
         baseline_p_tp = float((artifact.get("class_priors") or {}).get(
-            "tp", artifact["model"].get("base_rate", 0.5)))
+            "tp", (artifact.get("model") or {}).get("base_rate", 0.5)))
         return {"p_tp": round(p_tp, 6), "p_sl": round(p_sl, 6),
                 "p_timeout": round(p_timeout, 6), "ev_r": round(ev, 6),
                 "ev_r_lower": round(ev - config.ENTRY_MODEL_EV_Z * se, 6),

@@ -3,6 +3,13 @@
 > 用途：主agent在等待调研员/质疑官报告期间自查发现的候选问题。
 > 合并后按收益/风险排序实施。每个条目：证据 → 危害 → 修法。
 
+### 2026-08-24 Logistic Champion × CatBoost Challenger
+- 引入 CatBoost 1.2 系依赖；训练器对 Logistic OVR 与深度 4、300 轮、固定随机种子的 CatBoost
+  MultiClass 使用完全相同的 purged 五折、候选成本和 EV 下界口径。
+- Challenger 必须自身满足 Brier、precision、费用后 EV、折稳定性与最小 selected 样本门，并相对
+  Logistic 的多分类 Brier 至少改善 2% 才能获选；否则继续使用 Champion。制品二进制 base64 入库，
+  消费端延迟加载并按摘要缓存，缺依赖/损坏返回无预测。模型生命周期和交易权限门保持不变。
+
 ### 2026-08-24 paper baseline bootstrap
 - 用户明确授权无 active 模型期用模拟盘下单采集真实成交/平仓数据。实现只在真实 OKX paper 组装开启，
   且仅覆盖 `no_validated_active_model`；模型若已存在但成本后 EV 下界非正仍拒绝。候选审计保留
