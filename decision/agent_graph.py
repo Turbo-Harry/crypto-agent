@@ -290,6 +290,24 @@ def _has_directional_momentum_conflict(agent_input: AgentInput) -> bool:
     return False
 
 
+def _has_signal_inconsistency(agent_input: AgentInput) -> bool:
+    """Detect a frozen signed factor that opposes the candidate direction."""
+
+    direction = str(agent_input.signal.get("direction") or
+                    agent_input.signal.get("dir") or "").lower()
+    features = _frozen_factor_features(agent_input)
+    signed = [_as_float(features.get(name)) for name in (
+        "momentum_1h", "momentum_4h", "trend_band_atr",
+        "directional_index_spread",
+    )]
+    usable = [value for value in signed if value is not None]
+    if direction == "long":
+        return any(value < 0 for value in usable)
+    if direction == "short":
+        return any(value > 0 for value in usable)
+    return False
+
+
 def _has_position_risk_conflict(agent_input: AgentInput) -> bool:
     health = agent_input.health
     if health.get("risk_halted") is True or health.get("risk_can_trade") is False:
@@ -370,6 +388,10 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             "extreme_market_event_qualified":
                 _has_explicit_extreme_market_event(agent_input),
         })
+    if (agent_input.tool_policy_version in
+            config.AGENT_HARNESS_SIGNAL_CONSISTENCY_CONTRACT_TOOL_POLICIES):
+        qualifiers["signal_inconsistency_qualified"] = \
+            _has_signal_inconsistency(agent_input)
     return {
         "allowed_evidence_ids": sorted(_evidence_ids(state)),
         "deterministic_qualifiers": qualifiers,
@@ -391,7 +413,9 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             "news_direction_conflict_qualified uses the frozen [-1,+1] "
             "sentiment sign. extreme_market_event_qualified requires an "
             "explicit frozen boolean and is never implied by volatility or "
-            "regime alone."),
+            "regime alone. signal_inconsistency_qualified only uses signed "
+            "1H/4H momentum, trend_band_atr and directional_index_spread; "
+            "regime, volatility and strategy_route alone never qualify."),
     }
 
 
@@ -416,8 +440,14 @@ def _validate_directional_reject_evidence(decision: AgentDecision,
     codes = set(decision.reason_codes)
     reason_text = decision.reason.lower()
     cites_momentum = "momentum" in reason_text or "动量" in reason_text
-    if (ReasonCode.SIGNAL_INCONSISTENCY in codes and cites_momentum and not
-            _has_directional_momentum_conflict(agent_input)):
+    if (agent_input.prompt_version in
+            config.AGENT_HARNESS_SIGNAL_CONSISTENCY_EVIDENCE_PROMPT_VERSIONS):
+        if (ReasonCode.SIGNAL_INCONSISTENCY in codes and not
+                _has_signal_inconsistency(agent_input)):
+            raise AgentSemanticError(
+                "signal_inconsistency lacks an opposite-sign frozen factor")
+    elif (ReasonCode.SIGNAL_INCONSISTENCY in codes and cites_momentum and not
+          _has_directional_momentum_conflict(agent_input)):
         raise AgentSemanticError(
             "signal_inconsistency cites direction-aligned 1H/4H momentum")
     if ReasonCode.POSITION_RISK_CONFLICT in codes and not \

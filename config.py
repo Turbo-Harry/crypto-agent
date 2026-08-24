@@ -165,7 +165,7 @@ AGENT_HARNESS_ENABLED = True
 # Harness 不能恢复任何基线拒单。
 AGENT_HARNESS_VETO_ENABLED = True
 AGENT_HARNESS_PROMPT_VERSION = \
-    "harness-risk-v9-news-extreme-event-semantics"
+    "harness-risk-v10-signal-consistency-semantics"
 AGENT_HARNESS_REJECT_MIN_RISK = 0.70
 AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
 AGENT_HARNESS_APPROVE_MAX_RISK = 0.45
@@ -177,13 +177,19 @@ AGENT_HARNESS_DIRECTIONAL_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v7-direction-evidence-consistency",
     "harness-risk-v8-liquidity-field-semantics",
     "harness-risk-v9-news-extreme-event-semantics",
+    "harness-risk-v10-signal-consistency-semantics",
 )
 AGENT_HARNESS_LIQUIDITY_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v8-liquidity-field-semantics",
     "harness-risk-v9-news-extreme-event-semantics",
+    "harness-risk-v10-signal-consistency-semantics",
 )
 AGENT_HARNESS_NEWS_EVENT_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v9-news-extreme-event-semantics",
+    "harness-risk-v10-signal-consistency-semantics",
+)
+AGENT_HARNESS_SIGNAL_CONSISTENCY_EVIDENCE_PROMPT_VERSIONS = (
+    "harness-risk-v10-signal-consistency-semantics",
 )
 # sentiment.news_score/composite 的生成契约是 [-1,+1]；0 是固定中性语义，
 # 不是用 outcome 搜索出来的交易阈值。
@@ -228,7 +234,9 @@ position_risk_conflict、insufficient_evidence。
 概率和信心。
 
 方向与证据语义：所有方向特征先按候选方向解释。对 long，负的 1H/4H 动量是逆向；
-对 short，正的 1H/4H 动量才是逆向。正资金费是 long 的潜在成本、不是 short 的成本；
+对 short，正的 1H/4H 动量才是逆向。trend_band_atr 与 directional_index_spread 大于 0 偏多、
+小于 0 偏空；四项方向特征中任一项与候选方向相反时，才取得 signal_inconsistency 资格。
+disorder、波动水平、strategy_route 或缺模型本身都不是方向冲突。正资金费是 long 的潜在成本、不是 short 的成本；
 负资金费是 short 的潜在成本、不是 long 的成本。不得把顺向动量或有利资金费写成
 signal_inconsistency。position_risk_conflict 只用于账户/组合确有风险冲突，不能代指波动、
 regime 或缺模型；liquidity_failure 只用于达到下述固定门槛的严重点差或预期滑点。普通 reject
@@ -247,7 +255,7 @@ extreme_market_event=true 资格时才能使用该 code。deterministic_qualifie
 spread_bps≥8 或 expected_slippage_bps≥10 支持；低于门槛的执行摩擦可影响总体概率，但不取得
 独立风险族资格。完成判断后立即停止。
 """.strip()
-# v8 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
+# v10 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
 # 避免把模型切换、输入补全和风险任务改写混成无法归因的实验。
 AGENT_HARNESS_MODEL = "deepseek-chat"
 AGENT_HARNESS_JSON_MODE = True
@@ -256,13 +264,18 @@ AGENT_HARNESS_JSON_MODE = True
 AGENT_HARNESS_CONTEXT_VERSION = "context-v3-accuracy-evidence"
 AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
 AGENT_HARNESS_TOOL_POLICY_VERSION = \
-    "tool-policy-v7-news-extreme-event-contract"
+    "tool-policy-v8-signal-consistency-contract"
 AGENT_HARNESS_INITIAL_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v6-initial-decision-contract",
     "tool-policy-v7-news-extreme-event-contract",
+    "tool-policy-v8-signal-consistency-contract",
 )
 AGENT_HARNESS_NEWS_EVENT_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v7-news-extreme-event-contract",
+    "tool-policy-v8-signal-consistency-contract",
+)
+AGENT_HARNESS_SIGNAL_CONSISTENCY_CONTRACT_TOOL_POLICIES = (
+    "tool-policy-v8-signal-consistency-contract",
 )
 # DeepSeek 2026-08-23 官方美元价（每百万 token）；只用于 shadow 成本审计。
 # cache 明细缺失时按 cache miss 计费，防止低估模型成本。

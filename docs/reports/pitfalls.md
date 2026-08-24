@@ -1244,3 +1244,12 @@
 - 修复：混合 run 原样保留，implementation 再升 v5.1，并以完整进程重启作为正式身份边界。
 - 预防：任何同时修改 config 身份与 Python 行为的协议升级，提交后先停止扫描并完整重启，再接受首条
   新身份样本；不得用热重载结果作为部署完成证据。
+### 2026-08-24 signal_inconsistency 不能由 regime 或波动代替方向证据
+
+- 现象：Harness v9 首批自然 HOOD short 的 1H/4H 动量与 EMA 趋势带均顺向，却把 disorder、波动不稳和
+  route=abstain 写成 `signal_inconsistency`，与新闻冲突拼成普通 reject。
+- 根因：旧校验器只在理由明确提到 momentum 时检查动量方向；模型可以换一种措辞，继续使用同一个风险码。
+- 修复：v10 用同一确定性函数解释 1H/4H 动量、`trend_band_atr` 与 `directional_index_spread` 的符号；
+  四项都顺向时，无论理由如何措辞都不能使用 `signal_inconsistency`。
+- 预防：凡 reason code 可从冻结输入确定资格，都应在首次请求显式给出 qualifier，并由 validator 无条件
+  复算；不得依赖理由文本关键词，也不得用治理元数据或 regime 代替字段语义。

@@ -575,6 +575,148 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertFalse(qualifiers["news_direction_conflict_qualified"])
         self.assertFalse(qualifiers["extreme_market_event_qualified"])
 
+    def test_v8_contract_exposes_signed_signal_consistency(self):
+        calls = []
+        inp = replace(
+            make_input("v8-signal-contract"),
+            prompt_version="harness-risk-v10-signal-consistency-semantics",
+            tool_policy_version="tool-policy-v8-signal-consistency-contract",
+            signal={"base": "HOOD", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.000187,
+                "momentum_4h": -.003827,
+                "trend_band_atr": -1.7486,
+                "directional_index_spread": -.12,
+            }}},
+            field_provenance={
+                "market": "signal:v8-signal-contract:market",
+            })
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda prompt: calls.append(json.loads(prompt)) or
+            approve(prompt), db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        qualifiers = calls[0]["decision_contract"]["deterministic_qualifiers"]
+        self.assertFalse(qualifiers["signal_inconsistency_qualified"])
+        self.assertFalse(qualifiers["news_direction_conflict_qualified"])
+        self.assertFalse(qualifiers["extreme_market_event_qualified"])
+
+    def test_v10_repairs_regime_misread_as_signal_inconsistency(self):
+        calls = []
+        inp = replace(
+            make_input("v10-aligned-hood"),
+            prompt_version="harness-risk-v10-signal-consistency-semantics",
+            tool_policy_version="tool-policy-v8-signal-consistency-contract",
+            signal={"base": "HOOD", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.000187,
+                "momentum_4h": -.003827,
+                "trend_band_atr": -1.7486,
+                "directional_index_spread": -.12,
+                "vol_of_vol": .02,
+            }}, "regime": {"state": "disorder"},
+                     "strategy_route": "abstain"},
+            news={"news_score": .6667, "composite": .5633},
+            field_provenance={
+                "market": "signal:v10-aligned-hood:market",
+                "news": "signal:v10-aligned-hood:news",
+            })
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return {
+                    "verdict": "reject", "risk_probability": .75,
+                    "confidence": .75,
+                    "reason_codes": ["news_direction_conflict",
+                                     "signal_inconsistency"],
+                    "evidence_ids": ["signal:v10-aligned-hood:news",
+                                     "signal:v10-aligned-hood:market"],
+                    "missing_information": [], "abstain_reason": None,
+                    "reason": "bullish news conflicts; disorder is not a clean short",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .62,
+                "confidence": .65, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "only one qualified ordinary risk family",
+                "reason": "all signed technical factors align with short",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("opposite-sign frozen factor", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_v10_allows_opposite_signed_dmi_as_signal_family(self):
+        inp = replace(
+            make_input("v10-opposite-dmi"),
+            prompt_version="harness-risk-v10-signal-consistency-semantics",
+            tool_policy_version="tool-policy-v8-signal-consistency-contract",
+            signal={"base": "ADA", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.01, "momentum_4h": -.02,
+                "trend_band_atr": -.8, "directional_index_spread": .15,
+            }}},
+            news={"news_score": .4},
+            field_provenance={
+                "market": "signal:v10-opposite-dmi:market",
+                "news": "signal:v10-opposite-dmi:news",
+            })
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda _prompt: {
+                "verdict": "reject", "risk_probability": .78,
+                "confidence": .76,
+                "reason_codes": ["signal_inconsistency",
+                                 "news_direction_conflict"],
+                "evidence_ids": ["signal:v10-opposite-dmi:market",
+                                 "signal:v10-opposite-dmi:news"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "positive DMI spread and bullish news oppose the short",
+            }, db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
+    def test_v9_replay_preserves_pre_v10_signal_semantics(self):
+        inp = replace(
+            make_input("v9-signal-replay"),
+            prompt_version="harness-risk-v9-news-extreme-event-semantics",
+            tool_policy_version="tool-policy-v7-news-extreme-event-contract",
+            signal={"base": "HOOD", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.01, "momentum_4h": -.02,
+                "trend_band_atr": -.8,
+            }}, "regime": {"state": "disorder"}},
+            news={"news_score": .4},
+            field_provenance={
+                "market": "signal:v9-signal-replay:market",
+                "news": "signal:v9-signal-replay:news",
+            })
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda _prompt: {
+                "verdict": "reject", "risk_probability": .78,
+                "confidence": .76,
+                "reason_codes": ["signal_inconsistency",
+                                 "news_direction_conflict"],
+                "evidence_ids": ["signal:v9-signal-replay:market",
+                                 "signal:v9-signal-replay:news"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "disorder weakens the setup and bullish news opposes short",
+            }, db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
     def test_v9_repairs_favorable_news_misread_as_long_conflict(self):
         calls = []
         inp = replace(

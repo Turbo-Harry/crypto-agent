@@ -1885,3 +1885,22 @@
   唯一 market/news 锚，`spread_bps=9.1199` 超过冻结 8 bps 门而取得流动性风险，正新闻取得第二风险族。
   两条均未使用 `extreme_market_event`，动作仅 `shadow_reject`、零 Veto、零订单。这证明新机器契约已在
   自然链路生效，不证明拦亏精确率或正 EV；必须等待各自真实 4h 标签并继续累计 100/30。
+
+## 2026-08-24 Harness v10 信号方向资格预声明
+
+- 触发证据：v9/v7 首批自然 HOOD short 的 `momentum_1h=-0.000187`、`momentum_4h=-0.003827`、
+  `trend_band_atr=-1.7486` 均与 short 同向；模型仍把 disorder、高波动和 route=abstain 描述为
+  `signal_inconsistency`，再与合法的正新闻冲突拼成 reject。该错误完全可由冻结输入判定，无需读取未来
+  4h outcome。
+- 冻结变更：Prompt 升 `harness-risk-v10-signal-consistency-semantics`，Tool Policy 升
+  `tool-policy-v8-signal-consistency-contract`。首次请求新增 `signal_inconsistency_qualified`；同源函数只看
+  1H/4H 动量、EMA20-EMA50/ATR 趋势带与 +DI-minus-DI 方向差，任一有值因子符号与候选方向相反才取得
+  资格。regime、波动水平、strategy route 和缺模型本身永不取得该风险族。
+- 隔离与安全：旧 v9/v7 继续按旧语义回放，不被新 validator 静默改写；v10/v8 从零累计自然结果。
+  不修改模型、Context、0.70/0.70、两个普通风险族、4 秒预算、100/30、Brier/费用后 EV、下单权限或
+  风险预算。更新期间 paper 已确认空仓并暂停扫描，live 不触碰；测试、完整重启与自然 Trace 证据完成前
+  不宣称部署或准确率改善。
+- 离线证据：LangGraph 37/37，覆盖 HOOD 全顺向反例、DMI 逆向正例、v8 首次资格契约及 v9 历史回放；
+  决策闭环 61/61、策略 B 34/34。按 CI 的独立数据库/事件/运行目录自动发现并通过 58/58 个测试脚本，
+  失败 0；参数集中化、测试隔离、23 条 fix guard、code graph、AI repo check、py_compile 和 diff check
+  全绿。paper 暂停期间 v10/v8 run 数为 0，尚无热重载混合身份样本。
