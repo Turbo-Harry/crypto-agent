@@ -1599,3 +1599,8 @@
 - 离线证据：LangGraph 专项扩至 23/23，覆盖迟到合法 reject 失败关闭和修复剩余预算；Harness E2E
   13/13 覆盖动态 HTTP timeout。全部 `test_agent_*.py` 绿，最终全量自动发现套件 57/57；AI 仓库、
   依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile` 与 `diff --check` 全绿。
+- 实现与部署：提交 `1953efa`。重启前 paper PID `11748`，空仓、今日零交易、未熔断、对账一致、
+  `/error` 为空；只 kickstart paper 到 PID `14762`，live PID `90574` 未变化。重启后 `/health=ok`、
+  心跳正常、空仓、对账一致、无错误，configured=v7/`tool-policy-v4-total-time-budget`，旧 lifecycle
+  仍 shadow、`veto_enabled=false`。15:38/15:40/15:45 三轮无新结构候选，因此尚无 v4 自然 run；
+  不用合成或旧 v3 结果冒充自然部署验收，继续等待下一条真实候选。
