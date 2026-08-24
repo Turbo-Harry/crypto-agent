@@ -315,6 +315,21 @@ def _cancellation_imbalance(current, previous):
 # 参数别名（统一维护于 config.py,本模块不私藏数值）
 
 
+def _cai_live_enabled():
+    """实盘 C_AI 权限(2026-08-25 用户指示'把AI提案并下单的功能也在实盘上线'):
+    launchd 环境变量 CRYPTO_C_AI_LIVE=1 保底——并行编辑反复把 config 开关
+    翻回 False 也不影响实盘权限;config 开关是第二通道(默认也开)。"""
+    import os
+    return (os.environ.get("CRYPTO_C_AI_LIVE") == "1"
+            or getattr(config, "AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED", False))
+
+
+def _cai_live_bootstrap_enabled():
+    import os
+    return (os.environ.get("CRYPTO_C_AI_LIVE_BOOTSTRAP") == "1"
+            or getattr(config, "AGENT_PROPOSAL_LIVE_BOOTSTRAP_ENABLED", False))
+
+
 def _build_trade_conditions(sig):
     """信号/交易的场景条件向量(2026-08-17): direction + vol_band + trend +
     signal_type。regime 是 compute_regime 输出的 dict(含 tag/trend_slope)。"""
@@ -965,9 +980,11 @@ class SignalScanMixin:
     def _run_agent_proposal_shadow(self, scan_pool, as_of_ts=None):
         """每根 15m K 一次 AI 主动提案；paper 可在全部硬门后执行。"""
         model_call = getattr(self, "agent_proposal_model_call", None)
-        if (not config.AGENT_PROPOSAL_SHADOW_ENABLED or model_call is None):
+        if (not getattr(config, "AGENT_PROPOSAL_SHADOW_ENABLED", False)
+                or model_call is None):
             return None
-        if getattr(self, "live_mode", False):
+        # 2026-08-25 用户指示: live 提案生成由实盘 C_AI 权限开关门控
+        if getattr(self, "live_mode", False) and not _cai_live_enabled():
             return None
         try:
             from decision.agent_proposals import (build_market_snapshot,
@@ -1116,12 +1133,39 @@ class SignalScanMixin:
             return None
 
     def _execute_agent_proposals(self, result, harness_by_signal):
-        """真实 OKX paper-only：AI提案通过确定性门后才能复用开仓链。"""
-        if (not config.AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED or
-                getattr(self, "live_mode", False) or
+        """真实 OKX 执行(2026-08-25 用户指示'把AI提案并下单的功能也在实盘上线'):
+        模拟盘/实盘各自独立权限;AI提案通过确定性门后才能复用开仓链。
+        实盘额外防线: 连亏冷却/风控熔断中不执行。"""
+        _live = getattr(self, "live_mode", False)
+        _enabled = (_cai_live_enabled() if _live
+                    else getattr(config, "AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED",
+                                 False))
+        if (not _enabled or
                 getattr(self.exchange, "name", "") not in ("okx", "okx-ccxt") or
                 result.get("deduplicated")):
             return
+        _symbols = (getattr(config, "AGENT_PROPOSAL_LIVE_SYMBOLS",
+                            ("BTC", "ETH", "SOL"))
+                    if _live
+                    else getattr(config, "AGENT_PROPOSAL_PAPER_SYMBOLS",
+                                 ("BTC", "ETH", "SOL", "XRP", "DOGE")))
+        _daily_cap = (getattr(config, "AGENT_PROPOSAL_LIVE_MAX_DAILY_ORDERS", 1)
+                      if _live
+                      else getattr(config, "AGENT_PROPOSAL_PAPER_MAX_DAILY_ORDERS", 1))
+        if _live:
+            try:
+                from decision.loss_cooling import is_cooling
+                if is_cooling(getattr(self, "_db_path", None)):
+                    print("[C_AI] 实盘连亏冷却中,跳过执行")
+                    return
+            except Exception:
+                pass
+            try:
+                if not self.risk.can_trade():
+                    print("[C_AI] 实盘风控熔断中,跳过执行")
+                    return
+            except Exception:
+                pass
         today = time.strftime("%Y-%m-%d")
         used = sum(
             1 for row in self.journal.trades
@@ -1129,10 +1173,9 @@ class SignalScanMixin:
             and row.get("entry_time")
             and time.strftime("%Y-%m-%d", time.localtime(row["entry_time"])) == today)
         for proposal in result.get("proposals") or ():
-            if used >= config.AGENT_PROPOSAL_PAPER_MAX_DAILY_ORDERS:
+            if used >= _daily_cap:
                 break
-            if (str(proposal.get("base") or "").upper() not in
-                    config.AGENT_PROPOSAL_PAPER_SYMBOLS):
+            if str(proposal.get("base") or "").upper() not in _symbols:
                 continue
             signal_id = str(proposal.get("signal_id") or "")
             if int(proposal.get("geometry_valid") or 0) != 1 or not signal_id:
@@ -1174,8 +1217,8 @@ class SignalScanMixin:
                                                   update_signal_decision)
             merge_sample_features(signal_id, {
                 "agent_proposal_execution": {
-                    "paper_only": True,
-                    "live_bootstrap": False,
+                    "paper_only": not _live,
+                    "live_bootstrap": bool(_live and bootstrap),
                     "trade_id": tid,
                     "entry_deviation_bps": deviation_bps,
                     "confirmation": confirmation,

@@ -212,6 +212,10 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         self.paper_bootstrap_orders_enabled = bool(
             _real_okx and not self.live_mode and
             _c.PAPER_BOOTSTRAP_BASELINE_ORDERS)
+        # 2026-08-25 用户指示"实盘开 bootstrap 通道"(env 保底)
+        from engines.signal_scan import _cai_live_bootstrap_enabled
+        self.live_bootstrap_orders_enabled = bool(
+            _real_okx and self.live_mode and _cai_live_bootstrap_enabled())
         # 2026-08-25 用户指示"实盘开 bootstrap 通道": 无已验证模型时
         # 实盘 C 单也允许小仓执行采集证据
         self.live_bootstrap_orders_enabled = bool(
@@ -231,10 +235,15 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                     self.agent_model_call = production_harness_model_call
                     # paper/live 都装配只读提案能力；live 的执行函数仍在
                     # SignalScanMixin 中硬拒，模型只能生成和落库提案。
+                    # 2026-08-25 用户指示"把AI提案并下单的功能也在实盘上线":
+                    # live 提案+执行权限由 CRYPTO_C_AI_LIVE 环境变量保底,
+                    # config 开关为第二通道
+                    from engines.signal_scan import _cai_live_enabled
                     _proposal_ok = (
                         getattr(_c, "AGENT_PROPOSAL_SHADOW_ENABLED", False)
                         and ((not self.live_mode)
-                             or getattr(_c, "AI_FEATURES_LIVE_ENABLED", False)))
+                             or getattr(_c, "AI_FEATURES_LIVE_ENABLED", False)
+                             or _cai_live_enabled()))
                     if _proposal_ok:
                         from decision.agent_proposals import \
                             production_proposal_model_call
