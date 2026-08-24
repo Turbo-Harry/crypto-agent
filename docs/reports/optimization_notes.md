@@ -1573,3 +1573,13 @@
   生命周期 9/9、增量评价 10/10、legacy/provider 19/19 等）；决策闭环 61/61、策略 B 34/34；
   最终全量自动发现套件 57/57。AI 仓库检查、依赖图、参数集中化、测试隔离、23 条修复护栏、
   `py_compile` 和 `diff --check` 全绿。该证据只证明实现与安全边界，不证明自然拦亏效果。
+- 实现与部署：提交 `585c4be`。重启前 paper PID `5415`，空仓、今日零交易、未熔断、对账一致、
+  `/error` 为空；只 kickstart `com.crypto.paper` 到 PID `11748`，live PID `90574` 未变化。重启后
+  `/health=ok`、心跳正常、空仓、对账一致、无错误，configured=v7/v3，旧 lifecycle 仍 shadow、
+  `veto_enabled=false`、`/models/entry` 仍为空。
+- 首轮自然证据：15:30 收线轮形成 ZAMA A/B 候选。A 的首次模型响应引用不存在的 `:signal` evidence
+  锚，被既有锚校验拒绝；唯一一次语义修复后完成为 `shadow_reject`，风险/信心 0.72/0.75，引用真实
+  `:market` 锚。冻结字段支持两个当前风险族：`expected_slippage_bps=27.01/depth=0` 的流动性失败，
+  以及 `pullback_depth_atr=3.28/pullback_volume_confirmation=0` 的结构不一致。B 同轮为 abstain。
+  两条 evaluation 均 pending、零 Veto、零订单；这只证明 v7 自然运行和证据门生效，必须等待 4h
+  路径标签判断该 reject 是 saved loss 还是 missed profit。
