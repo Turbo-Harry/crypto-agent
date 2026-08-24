@@ -52,7 +52,14 @@ def check(name, ok, detail=""):
 
 
 def q(db, sql, params=()):
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    # 2026-08-25 fix: WAL 库在 -wal/-shm 被 checkpoint 清理后,mode=ro 只读
+    # 打开会因无法重建 shm 而报 "unable to open database file"(引擎空闲间隙
+    # 复现)。ro 失败退回普通连接(本工具只发 SELECT,不写)。
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        conn.execute("SELECT 1")
+    except sqlite3.OperationalError:
+        conn = sqlite3.connect(db, timeout=10)
     try:
         conn.row_factory = sqlite3.Row
         return [dict(r) for r in conn.execute(sql, params)]
