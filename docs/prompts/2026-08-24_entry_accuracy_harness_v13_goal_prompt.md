@@ -25,6 +25,11 @@
   形成完整 JSON。v5.0 在代码提交后、进程完整重启前被 config 热重载，产生 1 条“新身份+旧函数体”的
   schema error，已由 v5.1 身份隔离。完整重启后的首个 v5.1 自然批次已在 1585ms 内 completed，生成
   INJ long 与 ZRO short 两条有效 shadow 提案；两条均为 2:1、只有两个必要 evidence 锚且零执行权限。
+- `signal-features-v5` 已随提交 `bdee018` 完整重启 paper：首批 8 条自然 A 候选的方向化逐档 VWAP 滑点
+  为 0.52～15.18bps，普通一档可完成样本准确落在半价差，HBAR 的 150 USDT 跨档路径产生 15.18bps；
+  旧深度利用率 proxy 的数千 bps 已退出当前身份。C v6 首批 2/2 提案也冻结 v5 schema、固定 2:1 且
+  `execution_authority=0`。HBAR 的单族高摩擦样本两次重复同一 evidence ID 后被确定性校验失败关闭为
+  `baseline_pass`；该 Trace 不计作 reject，也不因为格式完成率而修改风险门。
 - 入场概率与极值模型按 long/short 分开训练；300/60/60 是每个拟训练方向的门，不是把双方向总数相加。
   当前 A long 成熟 130（TP 41/SL 64），A short 成熟 40（TP 6/SL 31），均未达到训练门；C v5.1
   当前为 2 条 pending，不能计入成熟样本。

@@ -2069,3 +2069,21 @@
 - 全量证据：按 CI 隔离数据库、事件文件和运行目录自动发现并通过 58/58 个测试脚本，失败 0；
   LangGraph 48/48、候选冻结 17/17、因子门 32/32、概率模型 29/29、过拟合护栏 8/8，参数集中、测试
   隔离、23 条修复护栏、code graph、AI repo check 与 diff check 全绿。
+- 部署证据：实现提交 `bdee018`。20:30 收线前先暂停且确认 paper 空仓；重启前数据库中 v5 A/B 样本
+  与 C v6 audit 均为 0，避免 config 热重载制造新身份配旧函数体。只完整重启 paper `93916→850`，live
+  PID `90574` 未变化。宿主侧复核 `/health=ok`、心跳 0.1s、未暂停、空仓、未熔断、对账 balanced、
+  `/error` 为空；`/models/entry` 仍为空、预算扩张 false，v13/v11 `veto_enabled=false`。
+- 自然 A 证据：重启后首批 8 条 `signal-features-v5` 分别为 INJ long `1.8544/0.9272bps`、ZRO short
+  `2.6020/1.3010bps`、SOL long `1.0472/0.5236bps`、ENA short `6.2325/3.1162bps`、HBAR long
+  `12.4766/15.1816bps`、LINK long `1.7112/0.8556bps`、BNB long `2.8401/1.4201bps`、LTC long
+  `3.7872/1.8936bps`（点差/逐档 VWAP 滑点）。普通 top-of-book 可完成的样本等于半价差；HBAR 因
+  150 USDT 实际跨档得到 15.18bps，数量级与成交路径一致，不再出现旧 proxy 的数千 bps。
+- 自然 C 证据：20:32:33 的 v6 批次 `proposal-run-e763bc3f953727634670c13a` 在 1519ms 内 completed，
+  2/2 valid；INJ long 为 `5.5540/2.7770bps`，ZAMA long 为 `1.6774/0.8387bps`，均冻结 v5 schema、
+  `reward_risk=2.0`、`execution_authority=0`，最终因 `no_validated_active_model` 保持 rejected。
+- 失败关闭边界：HBAR 是 8 条中唯一 schema error。两次 model step 都返回同一错误
+  `reject evidence_ids must be unique`；该冻结输入只有 `liquidity_failure` 一个合格普通风险族，模型重复
+  同一锚不能凑成两族。一次语义修复后仍违约，policy 正确回退 `baseline_pass`，总延迟 2746ms、零 Veto、
+  零订单。首次 Prompt 已声明重复事实/ID 不算独立，修复轮也收到精确 violation，因此该单次失败不另升
+  Prompt 身份；保留 Trace，若同因复现再按预声明规则立 challenger。上述只证明新特征语义与失败关闭
+  已自然生效，不证明 Harness 精准率、胜率或费用后 EV 已达门。
