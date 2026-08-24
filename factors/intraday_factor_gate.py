@@ -11,7 +11,7 @@ from decision.entry_probability import execution_cost_r
 from factors.overfit_guard import deflated_sharpe, pbo_cscv
 
 
-EVALUATION_VERSION = "intraday-factor-oos-v6-grouped-kline"
+EVALUATION_VERSION = "intraday-factor-oos-v7-runtime-isolated"
 
 
 def _dataset_hash(rows):

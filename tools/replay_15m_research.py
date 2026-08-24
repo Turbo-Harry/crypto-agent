@@ -27,7 +27,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "lib"))
 
 import config
 from decision.feature_transforms import (cross_sectional_snapshot,

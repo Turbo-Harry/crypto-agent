@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import config
-from factors.intraday_factor_gate import (evaluate_factor,
+from factors.intraday_factor_gate import (EVALUATION_VERSION, evaluate_factor,
                                           purged_walk_forward_splits)
 from factors.feature_registry import REGISTRY, extract_features
 from engines.signal_scan import _cancellation_imbalance, _dynamic_ofi
@@ -195,6 +195,11 @@ def main():
         good = evaluate_factor(
             "synthetic_edge", "单调信息变量仅用于验证门自测", data,
             total_candidates=10, db_path=db)
+        check("因子评价身份绑定隔离后的 Python 运行时",
+              good["evaluation_version"] ==
+              "intraday-factor-oos-v7-runtime-isolated" and
+              good["evaluation_version"] == EVALUATION_VERSION,
+              good["evaluation_version"])
         check("强且稳定的样本外因子通过", good["status"] == "validated", str(good))
         check("至少 4/5 折一致",
               good["fold_consistency"] >= config.FACTOR_MIN_CONSISTENT_FOLDS,

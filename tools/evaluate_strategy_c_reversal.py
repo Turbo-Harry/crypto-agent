@@ -23,7 +23,6 @@ from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "lib"))
 
 import config
 from decision.entry_probability import cost_breakdown_r

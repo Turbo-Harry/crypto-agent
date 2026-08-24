@@ -1659,3 +1659,28 @@
   心跳年龄 0.3 秒、空仓、对账一致、无错误，paper/live PID 仍为 27319/90574。v5 当前合法完成率仅
   1/5，锚修复目标已实证，但拦亏准确率必须等 4h 标签；其余语义失败与 timeout 保留为后续稳定性样本，
   不因单批结果降低门槛或直接授予执行权。
+
+## 2026-08-24 研究 Python 运行时隔离修复预声明
+
+- 触发证据：独立 90 天、10 币 OKX SWAP 重放已有 A 多/空 2,682/2,545、B 多/空
+  2,875/2,958 条成熟标签，远超 300/60/60 模型门；但 122 条 A/B 因子 trial 的 DSR/PBO 全为 NULL，
+  `model_artifacts` 为空。当前评价中 A 成本后 EV=-0.676742R、bootstrap multiclass Brier skill=-1.49%，
+  本身也不支持晋升，但“无 validated factor”还混入了统计运行时失效，必须先拆开事实。
+- 根因与冻结变更：`replay_15m_research.py`、`evaluate_15m_research.py`、
+  `evaluate_strategy_c_reversal.py` 把旧 Python 3.9 `lib/` 前置，导致 Python 3.12 numpy 导入失败并让
+  DSR/PBO 变成 None。移除三个旧路径注入，保留仓库根入口；评价身份升级为
+  `intraday-factor-oos-v7-runtime-isolated`，避免新数值被旧 trial 唯一键忽略。不改任何策略参数、因子门、
+  模型门、费用、样本或权限。新增子进程测试证明每个研究入口解析的 numpy 不在 legacy `lib/`。
+- 验收要求：先跑运行时隔离、重放、因子、overfit、概率/极值专项；随后在 90 天独立库重算 A/B，要求
+  每个可用因子都有数值 DSR/PBO，并按原 0.95/<0.3、t≥3、4/5 折和稳定性门诚实裁决。若仍无因子或
+  成本后 EV 非正，保持模型列表为空；严禁把修复统计引擎等同于策略获得正期望。
+- 重算证据：运行时隔离 1/1、重放 14/14、因子门 32/32、overfit 8/8 通过。十币 90 天库的 A/B
+  可用因子分别 46/35 个，DSR/PBO 从全 NULL 恢复为 0.0 与 0.0～0.56 的数值；Alt 五币库可用因子
+  44/33 个也全部恢复数值。四组最大 DSR 都是 0，validated 仍为 0；A 的 `trend_band_atr` 虽达到
+  t=3.6777、5/5 折增量为正、PBO=0.03，但被选候选的绝对费用后收益仍为负，因此 DSR=0。
+  十币 A/B 净 EV 仍为 -0.676742R/-0.650523R，Alt A/B 为 -0.300419R/-0.426201R，bootstrap
+  Brier skill 四组均为负。修复后的正确裁决仍是 `stop_no_promotion`、features=[]、不生成模型。
+- 回归证据：概率 29/29、极值 19/19、Alt/精度过滤各 2/2、策略 C 4/4 通过；新增隔离测试后全量
+  自动发现 58/58 脚本、红 0。AI 仓库与入口契约、依赖图、参数集中化、测试隔离、23 条修复护栏、
+  `py_compile`、`diff --check` 全绿。研究库写入只发生在 `/tmp` 的 research-only 数据库，运行库、
+  模型生命周期、风险预算、订单和 live 均未修改。
