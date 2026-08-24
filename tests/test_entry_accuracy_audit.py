@@ -124,6 +124,15 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         })
         self.assertEqual(result["counts"]["paper_closed"], 0)
         self.assertFalse(result["gates"]["paper_closed"]["passed"])
+        self.assertFalse(result["phases"]["model_bootstrap"]["complete"])
+        self.assertEqual(len(result["phases"]["model_bootstrap"]["blockers"]), 1)
+        self.assertIn("validated_factor", result["phases"][
+            "model_bootstrap"]["blockers"][0])
+        self.assertFalse(result["phases"][
+            "post_activation_paper_validation"]["complete"])
+        self.assertFalse(result["phases"]["order_eligibility"]["complete"])
+        self.assertEqual(result["phases"]["order_eligibility"]["reason"],
+                         "awaiting_validated_active_entry_model")
         self.assertFalse(result["statistically_complete"])
 
     def test_breakout_shadow_does_not_inflate_pullback_training_gate(self):

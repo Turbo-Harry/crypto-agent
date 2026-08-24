@@ -310,6 +310,7 @@ class EntryAccuracyAuditOut(BaseModel):
     agent_version: Optional[Dict] = None
     budget: Dict
     gates: Dict
+    phases: Dict
     blockers: List[str]
     statistically_complete: bool
     research_only_samples_do_not_count_as_paper: bool

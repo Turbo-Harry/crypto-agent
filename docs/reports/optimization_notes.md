@@ -3,6 +3,13 @@
 > 用途：主agent在等待调研员/质疑官报告期间自查发现的候选问题。
 > 合并后按收益/风险排序实施。每个条目：证据 → 危害 → 修法。
 
+### 2026-08-24 入场成熟度阶段语义修正
+- 证据：首个 entry 模型训练依赖每方向自然候选 300/TP 60/SL 60；模型 shadow 晋升可用训练截止点
+  后 60 个候选路径，均不要求成交。自然 paper 60 笔属于激活后完整计划验收。
+- 实施：`/research/readiness` 新增 `phases.model_bootstrap`、
+  `post_activation_paper_validation`、`enhancement_maturity` 与 `order_eligibility`；原 gates、blockers 和
+  statistically_complete 保持兼容。该改动纯观测，不放宽模型、EV、Harness 或交易风控门。
+
 ## 自查发现（代码审计）
 
 ### ✅ B1. realtime_okx.py — WebSocket 无自动重连【已实施 R1】

@@ -304,6 +304,46 @@ def audit_status(db_path: str | None = None,
         blockers = [f"{name}: {gate['reason']} "
                     f"({gate['actual']}/{gate['required']})"
                     for name, gate in gates.items() if not gate["passed"]]
+        # “完整研究计划”包含首模启动后才能自然产生的 paper/Agent 证据，不能
+        # 把它们与首模训练条件混成一个列表，否则零成交期看起来像循环死锁。
+        # 这里仅拆分只读语义，不改变训练、模型生命周期或开仓 fail-closed 门。
+        bootstrap_names = (
+            "candidate_training_sample", "tp_class_sample", "sl_class_sample",
+            "validated_factor",
+        )
+        post_activation_names = (
+            "paper_closed", "paper_six_dim_closed",
+        )
+        enhancement_names = (
+            "forecast_calibration", "entry_model_observed",
+            "extrema_model_observed", "agent_sample", "agent_reject_sample",
+            "agent_incremental_proven", "budget_lock_safe",
+        )
+
+        def _phase(names):
+            phase_gates = {name: gates[name] for name in names}
+            return {
+                "gates": phase_gates,
+                "blockers": [
+                    f"{name}: {gate['reason']} "
+                    f"({gate['actual']}/{gate['required']})"
+                    for name, gate in phase_gates.items() if not gate["passed"]
+                ],
+                "complete": all(gate["passed"] for gate in phase_gates.values()),
+            }
+
+        phases = {
+            "model_bootstrap": _phase(bootstrap_names),
+            "post_activation_paper_validation": _phase(post_activation_names),
+            "enhancement_maturity": _phase(enhancement_names),
+        }
+        phases["order_eligibility"] = {
+            "complete": bool(active_entry),
+            "active_model_id": active_entry.get("model_id") if active_entry else None,
+            "reason": ("validated_active_entry_model_available" if active_entry else
+                       "awaiting_validated_active_entry_model"),
+            "note": "paper 平仓门不参与首个模型训练或激活",
+        }
         return {
             "generated_ts": round(time.time(), 3),
             "db_path": str(Path(db_path).expanduser().resolve()),
@@ -336,6 +376,7 @@ def audit_status(db_path: str | None = None,
             "budget": {"expansion_allowed": budget_allowed,
                        "long_term_backtest_ev_r": long_term_ev},
             "gates": gates,
+            "phases": phases,
             "blockers": blockers,
             "statistically_complete": all(gate["passed"] for gate in gates.values()),
             "research_only_samples_do_not_count_as_paper": True,
