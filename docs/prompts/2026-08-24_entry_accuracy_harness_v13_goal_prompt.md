@@ -64,6 +64,7 @@
 6. 只在 paper 自然 shadow 收集 A/B 分策略 run→outcome→evaluation→version 证据；live 永久 shadow，
    B 无自动执行权限。A/B 都必须在自然候选形成的同一轮冻结盘口、点差、预期滑点和可用订单流；交易所
    提供盘口时不得以空字段进入 Harness，取数失败必须显式保留缺失并继续 shadow，不能用默认值制造证据。
+   依赖相邻快照的盘口、OI 或缓存状态必须按策略隔离，B 不得改写 A 的采样历史。
 7. 对 C v5 每个批次逐字冻结 `aligned_direction`、`eligible_candidates`、微观结构、input hash 和
    implementation identity；每条只回传 15m 与 microstructure 两个必要锚，模型只能选择确定性合格方向，
    JSON/Schema/证据/方向任一错误都失败关闭。
@@ -77,7 +78,8 @@
 - 当前完整 v13/v11 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
 - 所有 `liquidity_failure` 都满足冻结点差或预期滑点门；方向失衡不得冒充绝对深度不足。
 - A/B 分策略审计盘口、点差、预期滑点和订单流覆盖；FakeAdapter 提供盘口时端到端候选必须冻结非空
-  `book_imbalance/spread_bps/expected_slippage_bps`，同时保持 B 零订单、零执行权限。
+  `book_imbalance/spread_bps/expected_slippage_bps`，并验证 B 的盘口/OI 状态不会改写 A 的同名状态，
+  同时保持 B 零订单、零执行权限。
 - 总延迟不超过 4 秒；迟到、超时、Schema、网络或 Trace 错误均为零 Veto。
 - Brier skill 不低于频率基线，风险概率标准差至少 0.03，校准不得系统性反向。
 - saved loss 大于 missed profit 加模型成本，费用后增量 EV 单侧 95% 下界大于 0。

@@ -91,6 +91,7 @@ def test_breakout_microstructure_enrichment():
             "ofi_event_multilevel": 0.15,
             "ofi_event_cancel_imbalance": -0.05,
             "ofi_event_count": 24, "ofi_event_age_ms": 120.0,
+            "open_interest_change": 0.04, "basis": 0.001,
         })
     factors = enriched.get("factor_features") or {}
     check("B 复制盘口价差与预期滑点",
@@ -102,6 +103,12 @@ def test_breakout_microstructure_enrichment():
           factors.get("ofi_event_multilevel") == 0.15 and
           factors.get("ofi_event_count") == 24 and
           factors.get("ofi_event_age_ms") == 120.0,
+          str(factors))
+    check("B 复制独立持仓量与基差证据并生成价格交互",
+          factors.get("open_interest_change") == 0.04 and
+          factors.get("basis") == 0.001 and
+          abs(factors.get("oi_price_interaction") -
+              0.04 * factors.get("momentum_1h")) < 1e-12,
           str(factors))
 
 
@@ -185,6 +192,11 @@ def test_engine_shadow_no_orders(tmp):
             "bids": [[kl[-1][4] - .1, 10], [kl[-1][4] - .2, 8]],
             "asks": [[kl[-1][4] + .1, 6], [kl[-1][4] + .2, 5]],
         }
+        fake.open_interests["BTC-USDT-SWAP"] = 1000.0
+        fake.basis_values["BTC-USDT-SWAP"] = 0.001
+        dt._factor_book_state = {"BTC": (1.0, 2.0, 3.0, 4.0)}
+        dt._factor_oi_state = {"BTC": 777.0}
+        dt._strategy_b_factor_oi_state = {"BTC": 900.0}
         dt.watchlist = ["BTC"]
         dt.watch_scores = {"BTC": 0.9}
         dt._watch_date = time.strftime("%Y-%m-%d")
@@ -244,6 +256,14 @@ def test_engine_shadow_no_orders(tmp):
               factors.get("book_imbalance") is not None and
               factors.get("spread_bps") is not None and
               factors.get("expected_slippage_bps") is not None,
+              str(factors))
+        check("B 冻结持仓量变化与基差且不污染 A 的时序状态",
+              factors.get("open_interest_change") is not None and
+              factors.get("basis") == 0.001 and
+              dt._factor_book_state["BTC"] == (1.0, 2.0, 3.0, 4.0) and
+              dt._factor_oi_state["BTC"] == 777.0 and
+              getattr(dt, "_strategy_b_factor_book_state", {}).get("BTC")
+              is not None,
               str(factors))
         forecast = frozen.get("forecast") or {}
         check("B 冻结因果 4h 首触预测供独立校准",

@@ -407,7 +407,9 @@ class SignalScanMixin:
                     book, config.SHADOW_BOOK_DEPTH),
                 **_microstructure_features(book, config.SHADOW_BOOK_DEPTH),
             }
-            book_state = getattr(self, "_factor_book_state", {})
+            # A/B 的相邻快照状态必须隔离。同币同轮可能先形成 B、随后形成 A；
+            # 若共用状态，A 会把 B 刚写入的同一盘口误算成零 OFI。
+            book_state = getattr(self, "_strategy_b_factor_book_state", {})
             previous_book = book_state.get(base)
             ofi, current_book = _dynamic_ofi(book, previous_book)
             market_features["ofi_dynamic"] = ofi
@@ -416,7 +418,23 @@ class SignalScanMixin:
                 if current_book else None)
             if current_book:
                 book_state[base] = current_book
-                self._factor_book_state = book_state
+                self._strategy_b_factor_book_state = book_state
+            oi = basis = None
+            try:
+                oi = self.exchange.fetch_open_interest(self._inst_id(base))
+            except Exception:
+                oi = None
+            try:
+                basis = self.exchange.fetch_basis(self._inst_id(base))
+            except Exception:
+                basis = None
+            oi_state = getattr(self, "_strategy_b_factor_oi_state", {})
+            previous_oi = oi_state.get(base)
+            oi_change = ((float(oi) - float(previous_oi)) / float(previous_oi)
+                         if oi is not None and previous_oi else None)
+            if oi is not None:
+                oi_state[base] = float(oi)
+                self._strategy_b_factor_oi_state = oi_state
             event_flow = {}
             try:
                 get_orderflow = getattr(self.rt, "get_orderflow", None)
@@ -431,6 +449,8 @@ class SignalScanMixin:
                     "ofi_event_cancel_imbalance"),
                 "ofi_event_count": event_flow.get("ofi_event_count", 0),
                 "ofi_event_age_ms": event_flow.get("ofi_event_age_ms"),
+                "open_interest_change": oi_change,
+                "basis": basis,
             })
             sig_b = enrich_shadow_signal(
                 raw, kl_b, cross=cross, closes_4h=closes_4h,

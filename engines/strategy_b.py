@@ -131,8 +131,13 @@ def enrich_shadow_signal(sig, klines, cross=None, closes_4h=None,
             "depth_imbalance", "depth_slope", "expected_slippage_bps",
             "ofi_dynamic", "cancel_imbalance", "ofi_event_multilevel",
             "ofi_event_cancel_imbalance", "ofi_event_count",
-            "ofi_event_age_ms"):
+            "ofi_event_age_ms", "open_interest_change", "basis"):
         factor_features[name] = market_features.get(name)
+    oi_change = factor_features.get("open_interest_change")
+    momentum_1h = factor_features.get("momentum_1h")
+    factor_features["oi_price_interaction"] = (
+        float(oi_change) * float(momentum_1h)
+        if oi_change is not None and momentum_1h is not None else None)
     factor_features.update(technical_regime_features(kd))
     factor_features = materialize_derived_features(factor_features, {})
     factor_features["feature_missing_rate"] = (
