@@ -2342,3 +2342,13 @@
   中仅 AVAX `+0.1019R`，其余均负；成本降低不足以抵消更大量的 4h timeout 与跨期不稳定性。
 - 裁决：`stop_no_promotion`，后 30 天和 BNB/LTC 继续封存。不继续搜索 3ATR/6ATR 或其他倍数，不只挑
   AVAX，不修改现役固定 2:1、风险预算或订单链；否则会把单一开发集变成参数优化器。
+
+## 2026-08-24 入场概率独立温度校准
+
+- Logistic champion 与浅层 CatBoost challenger 共用严格三段时序：purged 拟合段、独立尾部校准段、
+  完全未见测试段；校准段为各训练折尾部 20%，至少 30 条，标签窗口跨界样本从拟合段剔除。
+- 三分类温度缩放在 Beta 先验收缩之后拟合，以校准 LogLoss 选择固定网格 T∈[0.5,3.0]；T=1 作为
+  不劣化兜底。至少 4/5 折有有效独立校准才可能进入 shadow，最终制品校准不足则不落库。
+- 制品版本升为 logit v6 / CatBoost v2，保存 temperature、校准样本数、校准前后 LogLoss；消费端
+  审计返回 temperature 与 `temperature_beta_shrink`。这只补齐概率可信度链，不降低 300/60/60、
+  正 EV 下界、precision、生命周期和订单风控门，也不使当前空模型自动获得下单权。

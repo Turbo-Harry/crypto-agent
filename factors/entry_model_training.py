@@ -11,6 +11,7 @@ from typing import List
 import config
 from decision.signal_identity import research_scope_version
 from decision.entry_probability import (execution_cost_r, fit_logistic,
+                                        fit_temperature,
                                         predict_from_artifact)
 from factors.feature_registry import extract_features
 from factors.intraday_factor_gate import purged_walk_forward_splits
@@ -54,6 +55,25 @@ def _impute(train_rows, test_rows, feature_names):
                if row["features"].get(name) is not None else medians[name]
                for name in feature_names] for row in test_rows]
     return train_x, test_x
+
+
+def _independent_calibration_split(rows):
+    """按时间留出尾段校准，并清除标签窗口与校准段重叠的训练样本。"""
+    calibration_n = max(
+        config.ENTRY_CALIBRATION_MIN_SAMPLES,
+        int(math.ceil(len(rows) * config.ENTRY_CALIBRATION_FRACTION)),
+    )
+    if calibration_n >= len(rows):
+        return list(rows), []
+    calibration = list(rows[-calibration_n:])
+    calibration_start = min(row["event_ts"] for row in calibration)
+    fit_rows = [row for row in rows[:-calibration_n]
+                if row["label_end_ts"] < calibration_start]
+    return fit_rows, calibration
+
+
+def _class_name(row):
+    return "tp" if row["tp_first"] else "sl" if row["sl_first"] else "timeout"
 
 
 def fit_catboost_artifact(train_x, train_rows, feature_names):
@@ -139,16 +159,21 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
     for fold, (train_idx, test_idx) in enumerate(splits):
         train = [rows[idx] for idx in train_idx]
         test = [rows[idx] for idx in test_idx]
-        train_x, test_x = _impute(train, test, feature_names)
+        fit_rows, calibration_rows = _independent_calibration_split(train)
+        train_x, holdout_x = _impute(
+            fit_rows, calibration_rows + test, feature_names)
         if train_x is None:
             continue
-        labels = [row["tp_first"] for row in train]
-        class_priors = {name: sum(row[f"{name}_first"] for row in train)
-                        / len(train) for name in ("tp", "sl")}
-        class_priors["timeout"] = sum(row["timeout"] for row in train) / len(train)
+        calibration_x = holdout_x[:len(calibration_rows)]
+        test_x = holdout_x[len(calibration_rows):]
+        labels = [row["tp_first"] for row in fit_rows]
+        class_priors = {name: sum(row[f"{name}_first"] for row in fit_rows)
+                        / len(fit_rows) for name in ("tp", "sl")}
+        class_priors["timeout"] = (sum(row["timeout"] for row in fit_rows) /
+                                    len(fit_rows))
         if model_family == "catboost_multiclass":
             fold_artifact = fit_catboost_artifact(
-                train_x, train, feature_names)
+                train_x, fit_rows, feature_names)
             if fold_artifact is None:
                 continue
         else:
@@ -157,12 +182,13 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
                 continue
             class_models = {
                 "tp": model,
-                "sl": fit_logistic(train_x, [row["sl_first"] for row in train]),
+                "sl": fit_logistic(
+                    train_x, [row["sl_first"] for row in fit_rows]),
                 "timeout": fit_logistic(
-                    train_x, [row["timeout"] for row in train])}
+                    train_x, [row["timeout"] for row in fit_rows])}
             if any(value is None for value in class_models.values()):
                 continue
-            timeouts = [row["pnl_r"] for row in train if row["timeout"]]
+            timeouts = [row["pnl_r"] for row in fit_rows if row["timeout"]]
             fold_artifact = {
                 "model_family": "logistic_ovr",
                 "feature_names": feature_names, "model": model,
@@ -171,6 +197,21 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
                 "mean_timeout_r": (sum(timeouts) / len(timeouts)
                                    if timeouts else 0.0),
             }
+        calibration_predictions = [predict_from_artifact(
+            fold_artifact, dict(zip(feature_names, values)),
+            cost_r_override=row["cost_r"])
+            for row, values in zip(calibration_rows, calibration_x)]
+        if (not calibration_predictions or
+                any(value is None for value in calibration_predictions)):
+            continue
+        calibration = fit_temperature(
+            [{name: prediction[f"p_{name}"]
+              for name in ("tp", "sl", "timeout")}
+             for prediction in calibration_predictions],
+            [_class_name(row) for row in calibration_rows])
+        if not calibration["passed"]:
+            continue
+        fold_artifact["temperature"] = calibration["temperature"]
         predictions = [predict_from_artifact(
             fold_artifact, dict(zip(feature_names, values)),
             cost_r_override=row["cost_r"])
@@ -234,7 +275,12 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
                       "precision": precision,
                       "baseline_precision": baseline_precision,
                       "population_precision": sum(truth) / len(truth),
-                      "precision_lift": precision - baseline_precision})
+                      "precision_lift": precision - baseline_precision,
+                      "calibration_n": calibration["n"],
+                      "temperature": calibration["temperature"],
+                      "calibration_raw_log_loss": calibration["raw_log_loss"],
+                      "calibration_log_loss": calibration["calibrated_log_loss"],
+                      "calibration_passed": calibration["passed"]})
         all_y.extend(truth)
         all_p.extend(probs)
         all_base.extend(baseline)
@@ -250,6 +296,7 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
                 "folds": folds,
                 "brier_skill": None, "good_brier_folds": 0,
                 "multiclass_brier_skill": None, "good_multiclass_folds": 0,
+                "good_calibration_folds": 0,
                 "good_ev_folds": 0, "good_precision_folds": 0,
                 "precision": None, "baseline_precision": None,
                 "population_precision": None, "precision_lift": None,
@@ -269,6 +316,7 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
                   fold["net_ev"] >= fold["baseline_ev"] for fold in folds)
     good_precision = sum(fold["precision"] > fold["baseline_precision"]
                          for fold in folds)
+    good_calibration = sum(fold["calibration_passed"] for fold in folds)
     precision = (sum(selected_truth) / len(selected_truth)
                  if selected_truth else 0.0)
     baseline_precision = (sum(baseline_selected_truth) /
@@ -291,6 +339,7 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
                 good_multi >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
                 good_ev >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
                 good_precision >= config.ENTRY_MODEL_MIN_GOOD_FOLDS and
+                good_calibration >= config.ENTRY_CALIBRATION_MIN_GOOD_FOLDS and
                 len(selected_net_returns) >=
                 config.MODEL_MIN_SELECTED_EVALUATIONS and
                 precision > baseline_precision and
@@ -305,6 +354,7 @@ def evaluate_rows(rows: List[dict], feature_names: List[str],
             "good_brier_folds": good_brier,
             "good_multiclass_folds": good_multi, "good_ev_folds": good_ev,
             "good_precision_folds": good_precision,
+            "good_calibration_folds": good_calibration,
             "precision": precision, "baseline_precision": baseline_precision,
             "population_precision": sum(all_y) / len(all_y),
             "precision_lift": precision - baseline_precision,
@@ -413,9 +463,9 @@ def train_entry_model(direction, db_path=None, feature_names=None,
         "champion": champion_evaluation,
         "challenger": challenger_evaluation,
     }
-    version = ("entry-catboost-multiclass-v1-purged-ci"
+    version = ("entry-catboost-multiclass-v2-purged-tempcal-ci"
                if selected_family == "catboost_multiclass" else
-               "entry-logit-ovr-v5-champion-ci")
+               "entry-logit-ovr-v6-champion-tempcal-ci")
     # 不能只哈希 signal_id：标签回填、成本口径或特征修正后，即使候选身份
     # 不变，也必须生成新的制品身份，避免错误复用旧模型。
     data_evidence = [{
@@ -450,6 +500,13 @@ def train_entry_model(direction, db_path=None, feature_names=None,
             "random_seed": config.ENTRY_CATBOOST_RANDOM_SEED,
             "minimum_relative_brier_gain":
                 config.ENTRY_CATBOOST_MIN_RELATIVE_BRIER_GAIN,
+        },
+        "calibration": {
+            "fraction": config.ENTRY_CALIBRATION_FRACTION,
+            "minimum_samples": config.ENTRY_CALIBRATION_MIN_SAMPLES,
+            "temperature_min": config.ENTRY_TEMPERATURE_MIN,
+            "temperature_max": config.ENTRY_TEMPERATURE_MAX,
+            "grid_size": config.ENTRY_TEMPERATURE_GRID_SIZE,
         }}
     if strategy_version:
         signature_data["strategy_version"] = strategy_version
@@ -466,43 +523,76 @@ def train_entry_model(direction, db_path=None, feature_names=None,
                 "n": len(rows), "tp_n": tp_n, "sl_n": sl_n,
                 "features": names, "model_family": selected_family,
                 "reused": True}
-    train_x, _ = _impute(rows, [], names)
-    non_tp = [row for row in rows if not row["tp_first"]]
+    fit_rows, calibration_rows = _independent_calibration_split(rows)
+    train_x, calibration_x = _impute(fit_rows, calibration_rows, names)
+    if (train_x is None or
+            len(calibration_rows) < config.ENTRY_CALIBRATION_MIN_SAMPLES):
+        return {"status": "insufficient_calibration",
+                "strategy_id": strategy_id, "n": len(rows),
+                "calibration_n": len(calibration_rows), "features": names}
+    fit_tp_n = sum(row["tp_first"] for row in fit_rows)
+    fit_sl_n = sum(row["sl_first"] for row in fit_rows)
+    non_tp = [row for row in fit_rows if not row["tp_first"]]
+    if not non_tp or fit_tp_n == 0 or fit_sl_n == 0:
+        return {"status": "insufficient_calibration_fit",
+                "strategy_id": strategy_id, "n": len(rows),
+                "fit_n": len(fit_rows), "calibration_n": len(calibration_rows),
+                "features": names}
     sl_given = sum(row["sl_first"] for row in non_tp) / len(non_tp)
-    timeouts = [row["pnl_r"] for row in rows if row["timeout"]]
+    timeouts = [row["pnl_r"] for row in fit_rows if row["timeout"]]
     common_artifact = {"version": version, "direction": direction,
                 "strategy_id": strategy_id,
                 "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
                 "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
                 "feature_names": names,
                 "class_priors": {
-                    "tp": tp_n / len(rows), "sl": sl_n / len(rows),
-                    "timeout": sum(row["timeout"] for row in rows) / len(rows)},
+                    "tp": fit_tp_n / len(fit_rows),
+                    "sl": fit_sl_n / len(fit_rows),
+                    "timeout": sum(row["timeout"] for row in fit_rows) /
+                    len(fit_rows)},
                 "prior_strength": config.ENTRY_MODEL_PRIOR_STRENGTH,
                 "cost_model_version": config.ENTRY_COST_MODEL_VERSION,
                 "sl_given_not_tp": sl_given,
                 "mean_timeout_r": sum(timeouts) / len(timeouts) if timeouts else 0.0,
-                "cost_r": sum(row["cost_r"] for row in rows) / len(rows)}
+                "cost_r": (sum(row["cost_r"] for row in fit_rows) /
+                           len(fit_rows))}
     if selected_family == "catboost_multiclass":
-        artifact = fit_catboost_artifact(train_x, rows, names)
+        artifact = fit_catboost_artifact(train_x, fit_rows, names)
         if artifact is None:
             selected_family = "logistic_ovr"
             evaluation = champion_evaluation
         else:
             artifact.update(common_artifact)
     if selected_family == "logistic_ovr":
-        labels = [row["tp_first"] for row in rows]
+        labels = [row["tp_first"] for row in fit_rows]
         model = fit_logistic(train_x, labels)
         artifact = dict(common_artifact, model_family="logistic_ovr",
                         model=model, class_models={
                             "tp": model,
                             "sl": fit_logistic(
-                                train_x, [row["sl_first"] for row in rows]),
+                                train_x, [row["sl_first"] for row in fit_rows]),
                             "timeout": fit_logistic(
-                                train_x, [row["timeout"] for row in rows]),
+                                train_x, [row["timeout"] for row in fit_rows]),
                         })
     artifact["model_family"] = selected_family
-    artifact["n_train"] = len(rows)
+    artifact["n_train"] = len(fit_rows)
+    raw_calibration = [predict_from_artifact(
+        artifact, dict(zip(names, values)), cost_r_override=row["cost_r"])
+        for row, values in zip(calibration_rows, calibration_x)]
+    if any(prediction is None for prediction in raw_calibration):
+        return {"status": "calibration_failed", "strategy_id": strategy_id,
+                "n": len(rows), "calibration_n": len(calibration_rows),
+                "features": names}
+    calibration = fit_temperature(
+        [{name: prediction[f"p_{name}"] for name in ("tp", "sl", "timeout")}
+         for prediction in raw_calibration],
+        [_class_name(row) for row in calibration_rows])
+    if not calibration["passed"]:
+        return {"status": "calibration_failed", "strategy_id": strategy_id,
+                "n": len(rows), "calibration_n": len(calibration_rows),
+                "features": names, "calibration": calibration}
+    artifact["temperature"] = calibration["temperature"]
+    artifact["calibration_metrics"] = calibration
     if strategy_version:
         artifact["strategy_version"] = strategy_version
     state = "validated" if evaluation["eligible_for_shadow"] else "rejected"

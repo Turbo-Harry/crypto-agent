@@ -12,11 +12,12 @@ import config
 from decision.signal_identity import config_identity
 from decision.entry_probability import (entry_gate_decision, fit_logistic,
                                         cost_breakdown_r, execution_cost_r,
-                                        expected_value_r,
+                                        expected_value_r, fit_temperature,
                                         preopen_2to1_decision,
                                         predict_signal as predict_entry_signal,
                                         predict_from_artifact, raw_probability,
-                                        signal_feature_values)
+                                        signal_feature_values,
+                                        temperature_scale)
 from factors.entry_model_training import (evaluate_rows,
                                           fit_catboost_artifact,
                                           select_model_family,
@@ -210,6 +211,31 @@ def main():
                         multi["p_timeout"] - 1) < 1e-6 and
           multi["probability_method"] == "ovr_multiclass_beta_shrink",
           str(multi))
+    overconfident, calibration_labels = [], []
+    for idx in range(60):
+        truth = "tp" if idx % 2 == 0 else "sl"
+        predicted = truth if idx % 5 else ("sl" if truth == "tp" else "tp")
+        overconfident.append({
+            "tp": .98 if predicted == "tp" else .01,
+            "sl": .98 if predicted == "sl" else .01,
+            "timeout": .01})
+        calibration_labels.append(truth)
+    temperature_fit = fit_temperature(overconfident, calibration_labels)
+    check("独立温度缩放可压低过度自信且改善校准 LogLoss",
+          temperature_fit["passed"] and temperature_fit["temperature"] > 1 and
+          temperature_fit["calibrated_log_loss"] <
+          temperature_fit["raw_log_loss"], str(temperature_fit))
+    check("不足独立校准样本时温度校准失败关闭",
+          not fit_temperature(overconfident[:29], calibration_labels[:29])["passed"])
+    scaled = temperature_scale({"tp": .9, "sl": .08, "timeout": .02}, 2.0)
+    calibrated_prediction = predict_from_artifact(
+        dict(multi_artifact, temperature=2.0), {"edge": 1.5})
+    check("制品温度在 Beta 收缩后生效并写入推理审计",
+          scaled and calibrated_prediction and
+          calibrated_prediction["temperature"] == 2.0 and
+          calibrated_prediction["calibration"] == "temperature_beta_shrink" and
+          calibrated_prediction["p_tp"] < multi["p_tp"],
+          str(calibrated_prediction))
 
     with tempfile.TemporaryDirectory() as td:
         db = os.path.join(td, "entry.db")

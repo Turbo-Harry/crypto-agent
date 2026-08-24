@@ -67,6 +67,61 @@ def expected_value_r(p_tp, p_sl, p_timeout, timeout_r=0.0, cost_r=0.0):
             float(p_timeout) * float(timeout_r) - float(cost_r))
 
 
+def temperature_scale(probabilities: Dict[str, float], temperature: float):
+    """对三分类概率做温度缩放；输入先裁剪，输出严格归一。"""
+    names = ("tp", "sl", "timeout")
+    try:
+        value = float(temperature)
+        if value <= 0:
+            return None
+        powered = {name: max(1e-12, float(probabilities[name])) ** (1 / value)
+                   for name in names}
+        total = sum(powered.values())
+        return ({name: powered[name] / total for name in names}
+                if total > 0 else None)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def fit_temperature(probabilities: List[Dict[str, float]], labels: List[str]):
+    """只在独立校准段网格拟合 T；没有改善时返回 T=1 与 passed=False。"""
+    if (len(probabilities) != len(labels) or
+            len(labels) < config.ENTRY_CALIBRATION_MIN_SAMPLES):
+        return {"temperature": 1.0, "n": len(labels),
+                "raw_log_loss": None, "calibrated_log_loss": None,
+                "passed": False, "reason": "insufficient_calibration"}
+
+    def _loss(temperature):
+        values = []
+        for prediction, label in zip(probabilities, labels):
+            scaled = temperature_scale(prediction, temperature)
+            if scaled is None or label not in scaled:
+                return None
+            values.append(-math.log(max(1e-12, scaled[label])))
+        return sum(values) / len(values)
+
+    raw_loss = _loss(1.0)
+    if raw_loss is None:
+        return {"temperature": 1.0, "n": len(labels),
+                "raw_log_loss": None, "calibrated_log_loss": None,
+                "passed": False, "reason": "invalid_probabilities"}
+    size = max(2, int(config.ENTRY_TEMPERATURE_GRID_SIZE))
+    low, high = (float(config.ENTRY_TEMPERATURE_MIN),
+                 float(config.ENTRY_TEMPERATURE_MAX))
+    candidates = [low + (high - low) * idx / (size - 1)
+                  for idx in range(size)]
+    candidates.append(1.0)
+    scored = [(loss, temperature) for temperature in candidates
+              if (loss := _loss(temperature)) is not None]
+    best_loss, best_temperature = min(scored, key=lambda item: item[0])
+    passed = best_loss <= raw_loss + 1e-12
+    return {"temperature": best_temperature if passed else 1.0,
+            "n": len(labels), "raw_log_loss": raw_loss,
+            "calibrated_log_loss": best_loss if passed else raw_loss,
+            "passed": passed,
+            "reason": "calibration_pass" if passed else "calibration_degraded"}
+
+
 def fit_logistic(features: List[List[float]], labels: List[int],
                  l2=None, learning_rate=None, epochs=None) -> Optional[dict]:
     if not features or len(features) != len(labels) or not features[0]:
@@ -255,6 +310,13 @@ def predict_from_artifact(artifact: dict, feature_values: Dict[str, float],
             p_sl = (1 - p_tp) * sl_given_not_tp
             p_timeout = max(0.0, 1 - p_tp - p_sl)
             probability_method = "binary_beta_shrink_legacy"
+        temperature = float(artifact.get("temperature") or 1.0)
+        scaled = temperature_scale(
+            {"tp": p_tp, "sl": p_sl, "timeout": p_timeout}, temperature)
+        if scaled is None:
+            return None
+        p_tp, p_sl, p_timeout = (scaled["tp"], scaled["sl"],
+                                 scaled["timeout"])
         timeout_r = float(artifact.get("mean_timeout_r", 0.0))
         cost_r = float(artifact.get("cost_r", 0.0) if cost_r_override is None
                        else cost_r_override)
@@ -273,7 +335,10 @@ def predict_from_artifact(artifact: dict, feature_values: Dict[str, float],
                 "binary_breakeven_win_rate": round((1 + cost_r) / 3, 6),
                 "baseline_p_tp": round(baseline_p_tp, 6),
                 "confidence": round(max(0.0, 1 - se), 6),
-                "calibration": "beta_shrink",
+                "temperature": round(temperature, 6),
+                "calibration": ("temperature_beta_shrink"
+                                if artifact.get("temperature") is not None
+                                else "beta_shrink"),
                 "probability_method": probability_method}
     except Exception:
         return None
