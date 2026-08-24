@@ -1448,3 +1448,11 @@
 - 验收要求：专项必须证明同一版本从 n=5 增至 n=34 时仍保持 shadow、readiness 快照更新为 34、
   `veto_effective=false`；随后跑 Agent 专项、entry accuracy audit、全量套件与静态护栏。只部署 paper，
   重启后再核对实时评价与持久快照一致，live PID 不得变化。
+- 离线证据：生命周期 7/7（含 shadow 指标增长与 validated 退化回滚）、Agent 增量 10/10、entry
+  accuracy audit 10/10；最终全量自动发现套件 57/57，隔离、23 条修复护栏、AI 仓库、代码图、参数、
+  `py_compile` 与 diff check 全绿。实现提交 `296b68f`。
+- 部署证据：重启前 paper PID `52249`，空仓、未熔断、对账一致、`/error` 为空；只 kickstart paper
+  到 PID `87753`，live PID `90574` 未变化。启动闭环完成后，当前完整 v5 A 的持久快照从 n=5 自动
+  刷新为 n=34，与只读实时评价一致，reason=`shadow_metrics_refresh`；状态仍为 shadow、reject=0、
+  Brier skill=-0.695105、模型成本后增量下界=-0.000715R，没有获得 Veto 或订单权限。部署后模拟盘
+  继续零持仓、今日零交易、对账一致、无错误。
