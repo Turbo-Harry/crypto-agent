@@ -229,14 +229,12 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 )
                 if harness_model_available():
                     self.agent_model_call = production_harness_model_call
-                    # 2026-08-25 用户指示"把他加进实盘里"+实盘 bootstrap 通道:
-                    # live 也装配提案模型能力,由独立开关门控执行权限。
+                    # paper/live 都装配只读提案能力；live 的执行函数仍在
+                    # SignalScanMixin 中硬拒，模型只能生成和落库提案。
                     _proposal_ok = (
                         getattr(_c, "AGENT_PROPOSAL_SHADOW_ENABLED", False)
                         and ((not self.live_mode)
-                             or getattr(_c,
-                                        "AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED",
-                                        False)))
+                             or getattr(_c, "AI_FEATURES_LIVE_ENABLED", False)))
                     if _proposal_ok:
                         from decision.agent_proposals import \
                             production_proposal_model_call

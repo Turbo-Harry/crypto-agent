@@ -369,12 +369,13 @@ def test_stop_adj_effect(tmp):
     sig = dt.scan_signal("BTC")
     assert sig, "前置：应出信号"
     base_stop_dist = abs(sig["entry"] - sig["stop"])
-    # 开仓带 stop_adj=0.2：止损距离应变为 1.2×
+    # 开仓带 stop_adj=0.2：兼容路径明确按 ATR 重建为 1.2×ATR；当基线为
+    # structure stop 时不能再错误地对整个结构距离乘 1.2。
     dt.open_position("BTC", sig, score=80, stop_adj=0.2, size_factor=0.5)
     t = dt.journal.trades[-1]
-    widened = abs(t["entry_price"] - t["stop_loss"])
+    widened = abs(t["signal_price"] - t["stop_loss"])
     check("stop_adj=0.2 后止损距离 = 1.2×ATR",
-          abs(widened - base_stop_dist * 1.2) < 0.01)
+          abs(widened - sig["atr"] * 1.2) < 0.01)
     # size_factor=0.5：数量减半（150/110=1.36 → 0.68）
     check("size_factor=0.5 后数量减半", abs(t["size"] - 0.68) < 0.01)
 
@@ -390,8 +391,8 @@ def test_stop_adj_effect(tmp):
     strict_trade = strict_dt.journal.trades[-1]
     actual_rr = (abs(strict_trade["take_profit"] - strict_trade["entry_price"]) /
                  abs(strict_trade["entry_price"] - strict_trade["stop_loss"]))
-    check("严格预测门忽略 stop_adj，实际订单仍为 2:1",
-          abs(actual_rr - 2.0) < 1e-9)
+    check("严格预测门忽略 stop_adj，成交滑点后几何仍约为 2:1",
+          abs(actual_rr - 2.0) < 0.02)
 
 
 def test_four_hour_time_exit(tmp):

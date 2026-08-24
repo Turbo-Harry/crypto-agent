@@ -11,11 +11,12 @@
 import os
 import sys
 import tempfile
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from decision.forecast import (forecast, _returns, _quantile, record_outcome,
-                               calibration)
+                               calibration, optimize_take_profit)
 
 _passed = _failed = 0
 
@@ -81,6 +82,36 @@ def main():
     check("atr=0 → None", forecast(entry=100, atr=0, direction="long",
                                     stop=99, tp=102,
                                     hourly_returns=rets) is None)
+
+    # ---- K线候选 + 订单流 + 成本后 EV 动态止盈 ----
+    bars = [{"open": 100, "high": 100 + (i % 4), "low": 99,
+             "close": 100, "volume": 10} for i in range(80)]
+    base_sig = {"dir": "long", "entry": 100.0, "stop": 99.0,
+                "tp": 102.0, "atr": 1.0}
+    missing_flow = optimize_take_profit(base_sig, "BTC", bars, {})
+    check("动态止盈缺订单流失败关闭",
+          not missing_flow["passed"] and
+          missing_flow["reason"] == "insufficient_orderflow")
+
+    def fake_candidate(candidate, *_args, **_kwargs):
+        rr = candidate["tp"] - candidate["entry"]
+        p_tp = max(0.05, 0.8 - 0.2 * (rr - 1))
+        return {"median": 101.0, "q05": 98.0, "q95": 104.0,
+                "p_hit_tp": p_tp, "p_hit_sl": 0.1,
+                "p_timeout": 0.9 - p_tp,
+                "expected_take_profit": candidate["tp"]}
+
+    with mock.patch("decision.forecast.forecast_for_trade",
+                    side_effect=fake_candidate), \
+            mock.patch("decision.entry_probability.execution_cost_r",
+                       return_value=0.05):
+        dynamic = optimize_take_profit(
+            base_sig, "BTC", bars,
+            {"ofi_event_multilevel": 0.4, "depth_imbalance": 0.2})
+    check("动态止盈选择正成本后EV候选并携带订单流审计",
+          dynamic["passed"] and dynamic["selected"]["ev_r"] > 0 and
+          dynamic["orderflow_score"] > 0 and
+          dynamic["selected"]["tp"] != 102.0, str(dynamic))
 
     # ---- 真实路径标签校准 + Brier ----
     tmp = tempfile.mkdtemp(prefix="fc_")

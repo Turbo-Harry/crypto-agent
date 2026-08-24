@@ -394,14 +394,12 @@ AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED = True
 AGENT_PROPOSAL_PAPER_SYMBOLS = ("BTC", "ETH", "SOL", "XRP", "DOGE")
 AGENT_PROPOSAL_PAPER_MAX_DAILY_ORDERS = 1
 AGENT_PROPOSAL_PAPER_MAX_ENTRY_DEVIATION_BPS = 20.0
-# 2026-08-25 用户指示"把他加进实盘里"+"实盘开 bootstrap 通道":
-# live 提案生成/执行独立开关;实盘符号限 BTC/ETH/SOL(XRP/DOGE 买不满
-# 最小张数),日限1笔;连亏冷却/风控熔断中不执行;复用实盘仓位链。
-AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED = True
+# live AI 只读信息与真实资金执行严格分权；当前仓库治理禁止 AI 实盘下单。
+AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED = False
 AGENT_PROPOSAL_LIVE_SYMBOLS = ("BTC", "ETH", "SOL")
 AGENT_PROPOSAL_LIVE_MAX_DAILY_ORDERS = 1
-# 无已验证入场模型时实盘 C 单也允许小仓执行(真实证据采集),其他硬门不变。
-AGENT_PROPOSAL_LIVE_BOOTSTRAP_ENABLED = True
+# 实盘不得用 bootstrap 绕过已验证模型门。
+AGENT_PROPOSAL_LIVE_BOOTSTRAP_ENABLED = False
 
 # A/B 候选身份最初把下列 C-only 提案字段一并写进哈希。这里冻结部署 v5
 # 时的兼容投影，使 A/B 当前哈希与既有自然样本连续；以后只升级 C 提案
@@ -448,6 +446,20 @@ FORECAST_MIN_EMP_N = 5                  # 历史样本 < N 笔不混合(纯 boot
 FORECAST_BLOCK_SIZE = 4                 # 移动区块 bootstrap 长度(保留短期相关)
 FORECAST_EMP_PRIOR_STRENGTH = 30        # 实证概率收缩先验等效样本量
 FORECAST_MIN_CALIBRATION = 30           # 少于该数明确标 uncalibrated
+# 动态止盈预测与执行分权：paper/live 均可生成只读预测，只有 paper 可把
+# 选中 TP 写入订单；没有订单流或没有正成本后 EV 时 paper 拒单，不回退 ATR TP。
+DYNAMIC_TP_ENABLED = True
+DYNAMIC_TP_PAPER_PREDICTION_ENABLED = True
+DYNAMIC_TP_LIVE_PREDICTION_ENABLED = True
+DYNAMIC_TP_PAPER_EXECUTION_ENABLED = True
+DYNAMIC_TP_LIVE_EXECUTION_ENABLED = False
+DYNAMIC_TP_VERSION = "kline-orderflow-ev-v1"
+DYNAMIC_TP_REWARD_RISK_GRID = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)
+DYNAMIC_TP_STRUCTURE_LOOKBACK_BARS = 48
+DYNAMIC_TP_MIN_ORDERFLOW_FIELDS = 2
+DYNAMIC_TP_ORDERFLOW_LOGIT_SCALE = 0.35
+DYNAMIC_TP_MIN_EV_R = 0.0
+DYNAMIC_TP_FORECAST_SEED = 20260825
 EXTREMA_MIN_BASELINE_SAMPLES = 30       # 分方向/regime 经验极值分位最少样本
 EXTREMA_MIN_MODEL_SAMPLES = 300         # 正则化分位模型训练门槛
 EXTREMA_MIN_FOLD_TRAIN_SAMPLES = 30     # 每折 purge 后最少训练样本

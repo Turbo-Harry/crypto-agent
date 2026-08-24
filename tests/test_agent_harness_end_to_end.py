@@ -332,13 +332,15 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
                 mock.patch.object(agent_judge, "harness_model_available",
                                   return_value=True), \
                 mock.patch.object(agent_judge, "production_harness_model_call",
-                                  callback):
+                                  callback), \
+                mock.patch.object(agent_proposals,
+                                  "production_proposal_model_call", callback):
             live_trader = DirectionalTrader(exchange=live, rt=object(),
                                             db_path=self.path)
         self.assertTrue(live_trader.live_mode)
         self.assertIs(live_trader.agent_model_call, callback)
-        # C 主动提案保持独立 paper-only 研究线。
-        self.assertIsNone(live_trader.agent_proposal_model_call)
+        # live 也生成只读提案，但执行层仍固定拒绝 live。
+        self.assertIs(live_trader.agent_proposal_model_call, callback)
 
         offline = DirectionalTrader(exchange=FakeAdapter(), rt=object(),
                                     db_path=self.path)

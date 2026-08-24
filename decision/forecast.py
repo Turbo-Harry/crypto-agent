@@ -345,6 +345,115 @@ def forecast_for_trade(sig, base, klines, db_path=None, *,
         return None
 
 
+def _directional_orderflow_score(features, direction):
+    """把冻结订单流压到 [-1,1]；数据不足返回 None，不伪造中性流。"""
+    if not isinstance(features, dict) or direction not in ("long", "short"):
+        return None
+    values = []
+    for name in ("ofi_dynamic", "ofi_event_multilevel",
+                 "ofi_event_cancel_imbalance", "depth_imbalance"):
+        value = features.get(name)
+        if value is not None:
+            try:
+                values.append(max(-1.0, min(1.0, float(value))))
+            except (TypeError, ValueError):
+                pass
+    microprice = features.get("microprice_bps")
+    if microprice is not None:
+        try:
+            values.append(max(-1.0, min(1.0, float(microprice) / 10.0)))
+        except (TypeError, ValueError):
+            pass
+    if len(values) < config.DYNAMIC_TP_MIN_ORDERFLOW_FIELDS:
+        return None
+    score = sum(values) / len(values)
+    return score if direction == "long" else -score
+
+
+def _adjust_passage_for_orderflow(fc, score):
+    """订单流仅作有界 odds 修正，timeout 权重保持不变后重新归一。"""
+    scale = float(config.DYNAMIC_TP_ORDERFLOW_LOGIT_SCALE)
+    tp = float(fc["p_hit_tp"]) * math.exp(scale * score)
+    sl = float(fc["p_hit_sl"]) * math.exp(-scale * score)
+    timeout = float(fc["p_timeout"])
+    total = tp + sl + timeout
+    if total <= 0:
+        return None
+    return {"p_hit_tp": tp / total, "p_hit_sl": sl / total,
+            "p_timeout": timeout / total}
+
+
+def optimize_take_profit(sig, base, klines, factor_features, db_path=None):
+    """模拟盘动态 TP：市场结构候选 × 路径首触概率 × 订单流 × 成本后 EV。"""
+    try:
+        entry = float(sig["entry"])
+        stop = float(sig["stop"])
+        direction = str(sig["dir"])
+        risk = abs(entry - stop)
+        if entry <= 0 or risk <= 0 or direction not in ("long", "short"):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        return {"passed": False, "reason": "invalid_geometry",
+                "version": config.DYNAMIC_TP_VERSION}
+    flow_score = _directional_orderflow_score(factor_features, direction)
+    if flow_score is None:
+        return {"passed": False, "reason": "insufficient_orderflow",
+                "version": config.DYNAMIC_TP_VERSION}
+
+    candidates = {round(float(rr), 8) for rr in
+                  config.DYNAMIC_TP_REWARD_RISK_GRID if float(rr) > 0}
+    for bar in list(klines or [])[-config.DYNAMIC_TP_STRUCTURE_LOOKBACK_BARS:]:
+        try:
+            level = float(bar["high"] if direction == "long" else bar["low"])
+            reward = level - entry if direction == "long" else entry - level
+            rr = reward / risk
+            if min(config.DYNAMIC_TP_REWARD_RISK_GRID) <= rr <= max(
+                    config.DYNAMIC_TP_REWARD_RISK_GRID):
+                candidates.add(round(rr, 8))
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            continue
+
+    from decision.entry_probability import execution_cost_r
+    ranked = []
+    for rr in sorted(candidates):
+        tp = entry + rr * risk if direction == "long" else entry - rr * risk
+        candidate = dict(sig, tp=tp)
+        fc = forecast_for_trade(
+            candidate, base, klines, db_path=db_path, empirical_enabled=False,
+            seed=config.DYNAMIC_TP_FORECAST_SEED)
+        if not fc:
+            continue
+        adjusted = _adjust_passage_for_orderflow(fc, flow_score)
+        cost_r = execution_cost_r(candidate)
+        if adjusted is None or cost_r is None:
+            continue
+        terminal_r = ((float(fc["median"]) - entry) / risk
+                      if direction == "long" else
+                      (entry - float(fc["median"])) / risk)
+        timeout_r = max(-1.0, min(rr, terminal_r))
+        ev_r = (rr * adjusted["p_hit_tp"] - adjusted["p_hit_sl"] +
+                timeout_r * adjusted["p_timeout"] - cost_r)
+        ranked.append({
+            "tp": round(tp, 8), "reward_risk": round(rr, 6),
+            "ev_r": round(ev_r, 6), "cost_r": round(cost_r, 6),
+            "timeout_r": round(timeout_r, 6),
+            **{name: round(value, 6) for name, value in adjusted.items()},
+            "forecast": dict(fc, expected_take_profit=round(tp, 6)),
+        })
+    if not ranked:
+        return {"passed": False, "reason": "no_evaluable_target",
+                "orderflow_score": round(flow_score, 6),
+                "version": config.DYNAMIC_TP_VERSION}
+    best = max(ranked, key=lambda item: (item["ev_r"], item["p_hit_tp"]))
+    return {"passed": best["ev_r"] > config.DYNAMIC_TP_MIN_EV_R,
+            "reason": ("positive_cost_adjusted_ev" if
+                       best["ev_r"] > config.DYNAMIC_TP_MIN_EV_R else
+                       "non_positive_cost_adjusted_ev"),
+            "orderflow_score": round(flow_score, 6),
+            "selected": best, "candidate_count": len(ranked),
+            "version": config.DYNAMIC_TP_VERSION}
+
+
 def describe(fc):
     if not fc:
         return "预测数据不足"

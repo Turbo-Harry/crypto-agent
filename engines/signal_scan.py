@@ -55,6 +55,23 @@ def _ai_feature_payload(run, sig, *, live_mode):
             "execution_authority": False, **selected}
 
 
+def _dynamic_tp_prediction_enabled(trader):
+    """真实 OKX paper/live 都生成预测；Fake/回放不生成。"""
+    adapter = str(getattr(getattr(trader, "exchange", None), "name", ""))
+    live = bool(getattr(trader, "live_mode", False))
+    mode_enabled = (config.DYNAMIC_TP_LIVE_PREDICTION_ENABLED if live else
+                    config.DYNAMIC_TP_PAPER_PREDICTION_ENABLED)
+    return bool(config.DYNAMIC_TP_ENABLED and mode_enabled and
+                adapter in ("okx", "okx-ccxt"))
+
+
+def _paper_dynamic_tp_enabled(trader):
+    """只有 paper 消费动态 TP；live 仅生成、落库和展示。"""
+    return (_dynamic_tp_prediction_enabled(trader) and
+            not getattr(trader, "live_mode", False) and
+            config.DYNAMIC_TP_PAPER_EXECUTION_ENABLED)
+
+
 def _refresh_config():
     """2026-08-21 热重载: config.maybe_reload 后由 worker 调用,
     把本模块别名刷新为新值(函数体裸名引用在调用时读模块全局)。"""
@@ -907,12 +924,32 @@ class SignalScanMixin:
             setup["touch"], setup["wick"], direction)
         _stop, _tp = resolve_stop_tp(entry_ref, atr_val, direction,
                                      swing_level=_swing)
+        _dynamic_tp = None
+        if _dynamic_tp_prediction_enabled(self):
+            try:
+                from decision.forecast import optimize_take_profit
+                _dynamic_tp = optimize_take_profit(
+                    {"dir": direction, "entry": entry_ref, "stop": _stop,
+                     "tp": _tp, "atr": atr_val,
+                     "factor_features": factors},
+                    base, klines, factors,
+                    db_path=getattr(self, "_db_path", None))
+                if (_dynamic_tp.get("passed") and
+                        _paper_dynamic_tp_enabled(self)):
+                    selected = _dynamic_tp["selected"]
+                    _tp = selected["tp"]
+                    _forecast = selected["forecast"]
+            except Exception as exc:
+                _dynamic_tp = {"passed": False,
+                               "reason": f"optimizer_error:{type(exc).__name__}",
+                               "version": config.DYNAMIC_TP_VERSION}
         return {"dir": direction, "entry": entry_ref,
                 "stop": _stop, "tp": _tp,
                 "atr": atr_val,
                 "shadow_score": score, "shadow_dims": dims,
                 "factor_features": factors,
                 "targets": _targets, "forecast": _forecast,
+                "dynamic_tp": _dynamic_tp,
                 "regime": regime,
                 "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
                 "market_regime": (regime or {}).get("market_state"),
@@ -1137,8 +1174,8 @@ class SignalScanMixin:
                                                   update_signal_decision)
             merge_sample_features(signal_id, {
                 "agent_proposal_execution": {
-                    "paper_only": not _live,
-                    "live_bootstrap": bool(_live and bootstrap),
+                    "paper_only": True,
+                    "live_bootstrap": False,
                     "trade_id": tid,
                     "entry_deviation_bps": deviation_bps,
                     "confirmation": confirmation,
@@ -1342,9 +1379,24 @@ class SignalScanMixin:
                 # 由 self.require_2to1_prediction 开启；所有候选（含拒绝）仍会
                 # 留样并在 4h 后结算，供模型继续训练、校准与晋升。
                 try:
-                    from decision.entry_probability import preopen_2to1_decision
-                    rr_prediction = preopen_2to1_decision(
-                        sig, prediction=None, db_path=self._db_path)
+                    if _paper_dynamic_tp_enabled(self):
+                        dynamic = sig.get("dynamic_tp") or {}
+                        selected = dynamic.get("selected") or {}
+                        rr_prediction = {
+                            "passed": bool(dynamic.get("passed")),
+                            "reason": "dynamic_tp:" + str(
+                                dynamic.get("reason") or "missing"),
+                            "prediction_source": config.DYNAMIC_TP_VERSION,
+                            "actual_reward_risk": selected.get("reward_risk"),
+                            "cost_adjusted_ev_r": selected.get("ev_r"),
+                            "predicted_win_rate": selected.get("p_hit_tp"),
+                            "predicted_stop_rate": selected.get("p_hit_sl"),
+                            "predicted_timeout_rate": selected.get("p_timeout"),
+                        }
+                    else:
+                        from decision.entry_probability import preopen_2to1_decision
+                        rr_prediction = preopen_2to1_decision(
+                            sig, prediction=None, db_path=self._db_path)
                     if signal_id:
                         from engines.signal_sampling import merge_sample_features
                         merge_sample_features(

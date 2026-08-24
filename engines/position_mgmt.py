@@ -347,8 +347,10 @@ class PositionMixin:
                 # 2026-08-25 结构位止损: stop/tp 距离以信号自带值为准
                 # (结构位口径已在上游算好),不再从 ATR 重推——重推会把
                 # 结构止损覆盖回纯 ATR。2:1 由上游保证(stop_adj 归零时)。
-                stop_off = (1 + stop_adj) * abs(float(sig.get("entry") or 0)
-                                               - float(sig.get("stop") or 0))
+                # stop_adj 已在下单前写进 sig.stop；成交重锚只搬移距离，不能
+                # 再乘一次，否则 +0.2 会从 1.2×ATR 复合放大成 1.44×ATR。
+                stop_off = abs(float(sig.get("entry") or 0)
+                               - float(sig.get("stop") or 0))
                 tp_off = abs(float(sig.get("entry") or 0)
                              - float(sig.get("tp") or 0))
                 if sig["dir"] == "long":
