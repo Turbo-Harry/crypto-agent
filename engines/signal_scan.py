@@ -393,11 +393,50 @@ class SignalScanMixin:
                      k5[-config.FACTOR_5M_LOOKBACK_BARS - 1:]])
             except Exception:
                 vol5 = None
+            # B 过去只冻结 K 线/资金费，导致全部自然候选的 spread、滑点、
+            # book 和连续订单流为空。这里复用 A 的同源只读转换；取数失败
+            # 只显式留空，不影响 B 的 shadow 留样，更不会获得执行权限。
+            book = None
+            try:
+                book = self.exchange.fetch_order_book(
+                    self._inst_id(base), config.SHADOW_BOOK_DEPTH)
+            except Exception:
+                book = None
+            market_features = {
+                "book_imbalance": _book_imbalance(
+                    book, config.SHADOW_BOOK_DEPTH),
+                **_microstructure_features(book, config.SHADOW_BOOK_DEPTH),
+            }
+            book_state = getattr(self, "_factor_book_state", {})
+            previous_book = book_state.get(base)
+            ofi, current_book = _dynamic_ofi(book, previous_book)
+            market_features["ofi_dynamic"] = ofi
+            market_features["cancel_imbalance"] = (
+                _cancellation_imbalance(current_book, previous_book)
+                if current_book else None)
+            if current_book:
+                book_state[base] = current_book
+                self._factor_book_state = book_state
+            event_flow = {}
+            try:
+                get_orderflow = getattr(self.rt, "get_orderflow", None)
+                if get_orderflow:
+                    event_flow = get_orderflow(base) or {}
+            except Exception:
+                event_flow = {}
+            market_features.update({
+                "ofi_event_multilevel": event_flow.get(
+                    "ofi_event_multilevel"),
+                "ofi_event_cancel_imbalance": event_flow.get(
+                    "ofi_event_cancel_imbalance"),
+                "ofi_event_count": event_flow.get("ofi_event_count", 0),
+                "ofi_event_age_ms": event_flow.get("ofi_event_age_ms"),
+            })
             sig_b = enrich_shadow_signal(
                 raw, kl_b, cross=cross, closes_4h=closes_4h,
                 funding_rate=funding, funding_change=funding_change,
                 funding_percentile=funding_percentile, vol5=vol5,
-                event_ts=event_ts)
+                event_ts=event_ts, market_features=market_features)
             # B 与 A/历史重放冻结同一 4h 首触预测。种子只绑定预测算法、
             # 标的、已收线 K 和方向，确保实时留样可与离线重放逐候选核对；
             # 预测仍是 shadow 证据，不改变 B 的拒绝态或执行权限。

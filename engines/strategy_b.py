@@ -61,7 +61,8 @@ def breakout_signal(klines):
 def enrich_shadow_signal(sig, klines, cross=None, closes_4h=None,
                          funding_rate=None, funding_change=None,
                          funding_percentile=None, vol5=None,
-                         event_ts=None, source_latency_ms=None):
+                         event_ts=None, source_latency_ms=None,
+                         market_features=None):
     """给 15m 突破候选补同时间行情状态；不读取未来、不授予执行权限。"""
     from decision.market_regime import classify_market_regime
     from decision.strategy_router import route_strategy
@@ -84,6 +85,7 @@ def enrich_shadow_signal(sig, klines, cross=None, closes_4h=None,
     atr_value = float(sig.get("atr") or 0)
     cross = dict(cross or {})
     vol5 = dict(vol5 or {})
+    market_features = dict(market_features or {})
     signal_ts = float(event_ts if event_ts is not None else
                       float(sig.get("kline_ts") or time.time() * 1000) / 1000)
     tm = time.gmtime(signal_ts)
@@ -122,6 +124,15 @@ def enrich_shadow_signal(sig, klines, cross=None, closes_4h=None,
         "market_breadth": cross.get("market_breadth"),
         "correlation_concentration": cross.get("correlation_concentration"),
     }
+    # B 与 A 使用同一批信号时点只读盘口/订单流字段。只复制注册或 Harness
+    # 已有语义的字段，避免任意上游 payload 静默进入模型特征。
+    for name in (
+            "book_imbalance", "spread_bps", "microprice_bps",
+            "depth_imbalance", "depth_slope", "expected_slippage_bps",
+            "ofi_dynamic", "cancel_imbalance", "ofi_event_multilevel",
+            "ofi_event_cancel_imbalance", "ofi_event_count",
+            "ofi_event_age_ms"):
+        factor_features[name] = market_features.get(name)
     factor_features.update(technical_regime_features(kd))
     factor_features = materialize_derived_features(factor_features, {})
     factor_features["feature_missing_rate"] = (

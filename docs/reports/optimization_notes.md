@@ -1988,3 +1988,19 @@
   结构化概率实际为 0.64 的文字矛盾；该文字不参与动作、没有产生 Veto，但说明解释准确率尚未完全稳定。
   先保留原 Trace 并观察是否复现，不把 10/10 schema 完成率冒充概率校准或胜率证明；仍须等待真实 4h
   标签与 100/30 门。
+
+## 2026-08-24 B 突破候选同轮微观结构证据补齐
+
+- 触发证据：生产候选覆盖审计显示，A_pullback 206/206 条有 spread、expected slippage 与 book，
+  订单流计数 190/206；B_breakout 112 条对应覆盖均为 0/112。19:45 的 10 条 v13 B 自然 Trace 虽全部
+  完成，但其流动性风险只能因缺证据 abstain，不能据此评价 Harness 的风险识别精度。
+- 冻结变更：B 只有在 15m 突破信号已经形成后才通过 ExchangeAdapter 读取同轮 order book，复用 A 的
+  `_book_imbalance`、`_microstructure_features`、动态 OFI 与撤单失衡转换，并读取 runtime 连续订单流。
+  `enrich_shadow_signal` 仅复制已注册的盘口、点差、预期滑点和订单流 allowlist；失败显式保留 None/0。
+- 安全边界：B 仍是 shadow-only，改动不参与突破信号形成，不恢复任何基线拒绝，不改固定 2:1、风险
+  预算、模型门、Harness 100/30、C 300/60/60、Prompt v13/Tool Policy v11 或 Veto 开关；live 不触碰。
+- 离线证据：策略 B 37/37，决策闭环 61/61，LangGraph 48/48，候选冻结 17/17，交易所层 51/51，
+  相关文件 py_compile 通过。端到端 FakeAdapter 在真实 B 候选形成时冻结非空 book/spread/slippage，
+  同时验证 `fake.orders==0`。按 CI 隔离数据库、事件文件与运行目录自动发现并通过 58/58 个测试脚本，
+  失败 0；参数集中、测试隔离、23 条修复护栏、code graph、AI repo check 与 diff check 全绿。paper 重启
+  与新自然 B 覆盖证据待本轮后续补齐。

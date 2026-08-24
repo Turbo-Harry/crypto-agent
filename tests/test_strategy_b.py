@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import engines.directional_trader as dt_mod
 import config
-from engines.strategy_b import breakout_signal, record_shadow
+from engines.strategy_b import (breakout_signal, enrich_shadow_signal,
+                                record_shadow)
 from tests.test_phase0_review import _make_trader, _silence_notify, \
     _restore_notify
 
@@ -74,6 +75,34 @@ def test_breakout_signal():
     kl3 = _flat_then_breakout()
     kl3[-1] = kl3[-2][:]
     check("无突破 → None", breakout_signal(kl3) is None)
+
+
+def test_breakout_microstructure_enrichment():
+    print("== 策略 B 冻结同轮微观结构证据 ==")
+    kl = _flat_then_breakout(n_flat=100)
+    sig = breakout_signal(kl)
+    enriched = enrich_shadow_signal(
+        sig, kl,
+        market_features={
+            "book_imbalance": 0.25, "spread_bps": 2.1,
+            "microprice_bps": 0.3, "depth_imbalance": 0.25,
+            "depth_slope": 0.4, "expected_slippage_bps": 3.2,
+            "ofi_dynamic": 0.1, "cancel_imbalance": -0.2,
+            "ofi_event_multilevel": 0.15,
+            "ofi_event_cancel_imbalance": -0.05,
+            "ofi_event_count": 24, "ofi_event_age_ms": 120.0,
+        })
+    factors = enriched.get("factor_features") or {}
+    check("B 复制盘口价差与预期滑点",
+          factors.get("book_imbalance") == 0.25 and
+          factors.get("spread_bps") == 2.1 and
+          factors.get("expected_slippage_bps") == 3.2,
+          str(factors))
+    check("B 复制连续订单流质量字段",
+          factors.get("ofi_event_multilevel") == 0.15 and
+          factors.get("ofi_event_count") == 24 and
+          factors.get("ofi_event_age_ms") == 120.0,
+          str(factors))
 
 
 def _downtrend_rejection(n=95, base=100.0, vol=1000.0):
@@ -152,6 +181,10 @@ def test_engine_shadow_no_orders(tmp):
                    volume=k[5]) for k in kl]
         fake.last_prices["BTC-USDT-SWAP"] = kl[-1][4]
         fake.last_prices["BTC-USDT"] = kl[-1][4]
+        fake.fetch_order_book = lambda _inst_id, _depth: {
+            "bids": [[kl[-1][4] - .1, 10], [kl[-1][4] - .2, 8]],
+            "asks": [[kl[-1][4] + .1, 6], [kl[-1][4] + .2, 5]],
+        }
         dt.watchlist = ["BTC"]
         dt.watch_scores = {"BTC": 0.9}
         dt._watch_date = time.strftime("%Y-%m-%d")
@@ -207,6 +240,11 @@ def test_engine_shadow_no_orders(tmp):
                   "has_execution_authority") is False and
               "funding_rate" in factors and "hour_sin" in factors,
               str(frozen))
+        check("B 冻结盘口、点差与滑点供 Harness 判定",
+              factors.get("book_imbalance") is not None and
+              factors.get("spread_bps") is not None and
+              factors.get("expected_slippage_bps") is not None,
+              str(factors))
         forecast = frozen.get("forecast") or {}
         check("B 冻结因果 4h 首触预测供独立校准",
               forecast.get("horizon_hours") == 4.0 and
@@ -330,6 +368,7 @@ def test_attribution_feedback():
 if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_sb_")
     test_breakout_signal()
+    test_breakout_microstructure_enrichment()
     test_record_shadow_dedup(os.path.join(tmp, "d1"))
     test_engine_shadow_no_orders(tmp)
     test_scan_signal_short()
