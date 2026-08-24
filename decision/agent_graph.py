@@ -300,6 +300,18 @@ def _has_position_risk_conflict(agent_input: AgentInput) -> bool:
     return bool(current is not None and maximum is not None and current >= maximum)
 
 
+def _has_liquidity_failure(agent_input: AgentInput) -> bool:
+    features = _frozen_factor_features(agent_input)
+    spread = _as_float(features.get("spread_bps"))
+    slippage = _as_float(features.get("expected_slippage_bps"))
+    return bool(
+        (spread is not None and spread >=
+         config.AGENT_HARNESS_LIQUIDITY_FAILURE_MIN_SPREAD_BPS) or
+        (slippage is not None and slippage >=
+         config.AGENT_HARNESS_LIQUIDITY_FAILURE_MIN_SLIPPAGE_BPS)
+    )
+
+
 def _cites_favorable_funding(decision: AgentDecision,
                              agent_input: AgentInput) -> bool:
     text = decision.reason.lower()
@@ -329,6 +341,12 @@ def _validate_directional_reject_evidence(decision: AgentDecision,
             _has_position_risk_conflict(agent_input):
         raise AgentSemanticError(
             "position_risk_conflict lacks frozen account or risk conflict")
+    if (agent_input.prompt_version in
+            config.AGENT_HARNESS_LIQUIDITY_EVIDENCE_PROMPT_VERSIONS and
+            ReasonCode.LIQUIDITY_FAILURE in codes and not
+            _has_liquidity_failure(agent_input)):
+        raise AgentSemanticError(
+            "liquidity_failure lacks severe frozen spread or expected slippage")
     if _cites_favorable_funding(decision, agent_input):
         raise AgentSemanticError(
             "reject cites funding that is favorable for the candidate direction")

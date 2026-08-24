@@ -326,6 +326,73 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
         self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
 
+    def test_v8_imbalance_cannot_masquerade_as_liquidity_failure(self):
+        calls = []
+        inp = replace(
+            make_input("v8-imbalance-not-liquidity"),
+            prompt_version="harness-risk-v8-liquidity-field-semantics",
+            signal={"base": "SOL", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.004, "momentum_4h": .005,
+                "spread_bps": 1.063, "expected_slippage_bps": 1.739,
+                "depth": .8496, "book": .9473,
+                "depth_imbalance": -.8946, "book_imbalance": -.8946,
+            }}},
+            field_provenance={"market": "signal:v8-imbalance-not-liquidity:market"},
+        )
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return {
+                    "verdict": "reject", "risk_probability": .78,
+                    "confidence": .75,
+                    "reason_codes": ["signal_inconsistency", "liquidity_failure"],
+                    "evidence_ids": ["signal:v8-imbalance-not-liquidity:market"],
+                    "missing_information": [], "abstain_reason": None,
+                    "reason": "positive 4H momentum conflicts with short; negative book imbalance means liquidity failure",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .6,
+                "confidence": .6, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "only directional inconsistency is qualified",
+                "reason": "spread and expected slippage are not severe",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("severe frozen spread or expected slippage", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_v8_severe_expected_slippage_is_valid_liquidity_evidence(self):
+        inp = replace(
+            make_input("v8-severe-slippage"),
+            prompt_version="harness-risk-v8-liquidity-field-semantics",
+            signal={"base": "LTC", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.001, "momentum_4h": .008,
+                "spread_bps": 7.136, "expected_slippage_bps": 18.152,
+            }}},
+            field_provenance={"market": "signal:v8-severe-slippage:market"},
+        )
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda _prompt: {
+                "verdict": "reject", "risk_probability": .75,
+                "confidence": .75,
+                "reason_codes": ["signal_inconsistency", "liquidity_failure"],
+                "evidence_ids": ["signal:v8-severe-slippage:market"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "negative 1H momentum conflicts with long and expected slippage is severe",
+            }, db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
     def test_structural_error_gets_one_bounded_repair(self):
         calls = []
 

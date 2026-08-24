@@ -163,7 +163,7 @@ AGENT_HARNESS_ENABLED = True
 # 且仅 paper 实例显式传入执行授权后才会真正否决；live 永远保持 shadow。
 # Harness 不能恢复任何基线拒单。
 AGENT_HARNESS_VETO_ENABLED = True
-AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v7-direction-evidence-consistency"
+AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v8-liquidity-field-semantics"
 AGENT_HARNESS_REJECT_MIN_RISK = 0.70
 AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
 AGENT_HARNESS_APPROVE_MAX_RISK = 0.45
@@ -173,7 +173,15 @@ AGENT_HARNESS_ABSTAIN_PRIOR_TOLERANCE = 0.02  # 仅供冻结 v5 身份重放
 AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES = 2
 AGENT_HARNESS_DIRECTIONAL_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v7-direction-evidence-consistency",
+    "harness-risk-v8-liquidity-field-semantics",
 )
+AGENT_HARNESS_LIQUIDITY_EVIDENCE_PROMPT_VERSIONS = (
+    "harness-risk-v8-liquidity-field-semantics",
+)
+# 固定“严重执行摩擦”语义，不按本轮 outcome 搜索；低于门槛仍可影响概率，
+# 但不能单独取得 liquidity_failure 风险族资格。
+AGENT_HARNESS_LIQUIDITY_FAILURE_MIN_SPREAD_BPS = 8.0
+AGENT_HARNESS_LIQUIDITY_FAILURE_MIN_SLIPPAGE_BPS = 10.0
 # Prompt 与版本集中维护，决策层只引用；身份变化必须与文本变化同批提交。
 AGENT_HARNESS_SYSTEM_PROMPT = """
 角色：你是日内 15 分钟、最长持有 4 小时交易系统的只读入场风险审查 Agent。
@@ -213,11 +221,17 @@ position_risk_conflict、insufficient_evidence。
 对 short，正的 1H/4H 动量才是逆向。正资金费是 long 的潜在成本、不是 short 的成本；
 负资金费是 short 的潜在成本、不是 long 的成本。不得把顺向动量或有利资金费写成
 signal_inconsistency。position_risk_conflict 只用于账户/组合确有风险冲突，不能代指波动、
-regime 或缺模型；liquidity_failure 只用于点差、滑点、深度、盘口或订单流。普通 reject
+regime 或缺模型；liquidity_failure 只用于达到下述固定门槛的严重点差或预期滑点。普通 reject
 至少包含两个不同的 reason_code 风险族；重复同一事实、重复 evidence_id 或把同一字段换种
-说法不算独立。只有 extreme_market_event 可凭单一严重事件形成 reject。完成判断后立即停止。
+说法不算独立。只有 extreme_market_event 可凭单一严重事件形成 reject。
+
+字段消歧：factor_features.depth 是“回踩位置质量分”，不是盘口绝对深度；book 是方向
+对齐后的盘口失衡分；book_imbalance/depth_imbalance 的正负表示买卖压力方向，不表示总深度
+充足或枯竭。上述字段不得支持 liquidity_failure。当前可核验的流动性失败只能由
+spread_bps≥8 或 expected_slippage_bps≥10 支持；低于门槛的执行摩擦可影响总体概率，但不取得
+独立风险族资格。完成判断后立即停止。
 """.strip()
-# v7 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
+# v8 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
 # 避免把模型切换、输入补全和风险任务改写混成无法归因的实验。
 AGENT_HARNESS_MODEL = "deepseek-chat"
 AGENT_HARNESS_JSON_MODE = True

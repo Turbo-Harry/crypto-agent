@@ -1604,3 +1604,21 @@
   心跳正常、空仓、对账一致、无错误，configured=v7/`tool-policy-v4-total-time-budget`，旧 lifecycle
   仍 shadow、`veto_enabled=false`。15:38/15:40/15:45 三轮无新结构候选，因此尚无 v4 自然 run；
   不用合成或旧 v3 结果冒充自然部署验收，继续等待下一条真实候选。
+
+## 2026-08-24 Harness v8 流动性字段消歧预声明
+
+- 触发证据：16:00 自然 v7/v4 形成 XRP/SOL/LTC 三条 A reject，均首次响应完成、无修复，端到端
+  1,780/2,033/1,377ms，证明 v4 总时限门生效；但 XRP 的点差/预期滑点仅 3.389/5.372 bps、
+  SOL 仅 1.063/1.739 bps，模型仍把负盘口失衡或高 `depth` 分写成 `liquidity_failure`。注册表事实是
+  `depth=1-|pullback-EMA20|/ATR` 的回踩质量，`book` 是方向对齐失衡，均非绝对盘口深度。LTC 的
+  预期滑点 18.152 bps 才具备严重执行摩擦证据。三条均 pending，不能作为绩效裁决。
+- 冻结变更：Prompt 升级 `harness-risk-v8-liquidity-field-semantics`；明确 depth/book/imbalance 的公式和
+  禁用语义。固定 `spread_bps≥8` 或 `expected_slippage_bps≥10` 才允许 liquidity risk family；门槛按
+  执行严重度预声明，不读取未来 outcome、不搜索最佳值。确定性校验拒绝不达门的流动性 reason code。
+  模型、Context、Schema、Retrieval、Tool Policy v4、4 秒总预算、0.70/0.70、100/30 与权限不变。
+- 验收要求：专项重放 SOL 假流动性反例必须触发修复/失败关闭，LTC 高滑点正例必须保留；全套 Agent、
+  57 脚本与静态护栏全绿。只重启 paper；首条 v8/v4 自然 run 的 liquidity code 必须逐条满足冻结门，
+  否则继续 shadow 修复，绝不靠人工解释放行。
+- 离线证据：LangGraph 专项扩至 25/25，SOL 低摩擦+负失衡反例触发语义修复并降为 abstain，LTC
+  18.152 bps 高滑点正例保留双风险族 reject；全部 `test_agent_*.py` 绿，最终全量自动发现 57/57。
+  AI 仓库、依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile` 与 `diff --check` 全绿。

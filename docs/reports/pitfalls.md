@@ -25,6 +25,12 @@
 - 修复：Tool Policy v4 将 4 秒定义为整个 Harness 的硬总预算；生产 provider 每次只取得剩余秒数，预算耗尽不再重试，迟到的合法结果也记 timeout 并保持量化基线结果。
 - 预防：任何“最多重试 N 次”的外部调用都必须同时有每次预算和端到端总预算；只限制单次 timeout 会把尾延迟按重试次数倍增。
 
+### 2026-08-24 Agent 把方向性盘口失衡和回踩质量误读为绝对深度
+- 现象：v7/v4 首轮 SOL short 的点差/预期滑点仅 1.063/1.739 bps、XRP 仅 3.389/5.372 bps，模型却把负 `book/depth_imbalance` 或高 `depth` 分解释为“流动性失败”，两条都形成 shadow reject。
+- 根因：冻结特征名 `depth` 容易被自然语言误解为盘口深度，但其公式实际是回踩位置质量；`book` 与 imbalance 是方向压力，不是绝对深度。Prompt 有字段歧义，机器语义门又没有核验点差/滑点。
+- 修复：v8 明确字段公式，禁止 depth/book/imbalance 支持 `liquidity_failure`；只有 `spread_bps≥8` 或 `expected_slippage_bps≥10` 才取得该风险族，低于门槛只能影响概率。
+- 预防：给 LLM 的特征名必须携带业务公式和单位；凡是能触发离散 reason code 的连续字段，都要有冻结、非 outcome 搜索的机器资格门。
+
 ## 交易所 API 类
 
 ### 2026-08-16 OKX 条件单挂单报 50015（triggerPx 参数错）
