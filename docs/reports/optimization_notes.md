@@ -2266,3 +2266,16 @@
   对账 balanced、错误为空。下一根自然 C 周期在 22:15 产生 AAVE/NEAR 两条新提案和两条 completed
   Harness Trace，均绑定 `4abf0977cd79`、evaluation pending、`execution_authority=0`、Veto false；C 当前
   候选由 10 增至 12，旧 10 条没有追溯补跑，首批完整 4h 标签仍需自然等待。
+
+## 2026-08-24 C 极端反转预注册开发集停止裁决
+
+- 冻结规则：只读研究工具 `evaluate_strategy_c_reversal.py` 在查看本轮结果前已固定 15m RSI 14
+  `<=25/>=75`、布林带 20/2 外侧、ADX 14 `<=20`、同向影线至少等于实体；下一分钟开盘、1 ATR
+  止损、2 ATR 止盈、4h 超时，分钟内同时触发时按止损优先，并扣除现役双边手续费、滑点和不利资金费。
+- 90 天核心开发集结果：BTC/ETH/SOL/XRP/DOGE/LINK/ADA/AVAX 仅形成 6 条完整路径，TP/SL/timeout
+  为 `0/5/1`，毛 EV `-0.7149R`、费用后 EV `-1.2286R`，按同一时点聚类的 95% 下界
+  `-1.7247R`，5/5 时间折均为负。样本量和绝对费用后期望均远低于门槛。
+- 裁决：`stop_no_promotion`。按预注册顺序，开发集失败后 BNB/LTC 留出保持
+  `sealed_not_opened`，第二套独立行情库也不打开；不把该规则接入 C 提案、不修改参数、不生成模型，
+  更不计入自然 paper 的 300/60/60 或 Harness 100/30。当前提速仍只允许 A/B/C 自然并行采样，不能以
+  搜索更多 RSI/ADX/布林阈值替代独立证据。
