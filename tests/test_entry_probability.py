@@ -22,6 +22,7 @@ from factors.entry_model_training import (evaluate_rows,
                                           fit_catboost_artifact,
                                           select_model_family,
                                           train_entry_model)
+from factors.preregistered_groups import PREREGISTERED_GROUPS
 
 passed = failed = 0
 
@@ -54,6 +55,11 @@ def synthetic_rows(n=720):
 
 
 def main():
+    group_names = [group.name for group in PREREGISTERED_GROUPS]
+    check("五组机制因子在看结果前固定且没有重复成员组",
+          len(group_names) == 5 and len(set(group_names)) == 5 and
+          all(3 <= len(group.features) <= 4 for group in PREREGISTERED_GROUPS),
+          str(PREREGISTERED_GROUPS))
     check("EV 权威口径固定",
           abs(expected_value_r(0.4, 0.3, 0.3, 0.1, 0.05) - 0.48) < 1e-9)
     x = [[-2.0], [-1.0], [-0.5], [0.5], [1.0], [2.0]] * 60

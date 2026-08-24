@@ -585,6 +585,7 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
     from factors.intraday_factor_mining import run_mining
     from factors.entry_model_training import train_entry_model
     from factors.extrema_model_training import train_extrema_model
+    from factors.preregistered_groups import evaluate_preregistered_groups
 
     sdb.init_db(db_path)
     strategy_version = research_scope_version(strategy_id)
@@ -622,6 +623,8 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
 
     factor_results = run_mining(db_path=db_path, strategy_id=strategy_id)
     factor_status = Counter(result["status"] for result in factor_results)
+    factor_groups = evaluate_preregistered_groups(
+        db_path=db_path, strategy_id=strategy_id)
     entry = {direction: train_entry_model(
                 direction, db_path=db_path, strategy_id=strategy_id)
              for direction in ("long", "short")}
@@ -666,7 +669,8 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
         "forecast_risk_prior": forecast_risk_prior,
         "factors": {"tested": len(factor_results),
                     "status_counts": dict(sorted(factor_status.items())),
-                    "validated": validated},
+                    "validated": validated,
+                    "preregistered_groups": factor_groups},
         "calibration": calibration,
         "models": {"entry": entry, "extrema": extrema},
         "decision": {

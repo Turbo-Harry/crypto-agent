@@ -387,7 +387,7 @@ def _validated_features(db_path=None, strategy_id=None):
     return [row["name"] for row in rows[:config.ENTRY_MODEL_MAX_FEATURES]]
 
 
-def _load_rows(direction, feature_names, db_path=None, strategy_id=None):
+def load_entry_rows(direction, feature_names, db_path=None, strategy_id=None):
     import storage.db as sdb
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
     scope_version = research_scope_version(strategy_id)
@@ -425,6 +425,10 @@ def _load_rows(direction, feature_names, db_path=None, strategy_id=None):
     return rows
 
 
+# 兼容旧研究测试导入；跨模块新调用统一使用公开名称。
+_load_rows = load_entry_rows
+
+
 def train_entry_model(direction, db_path=None, feature_names=None,
                       strategy_id=None):
     """训练候选制品；不足门槛返回 insufficient，不写可用模型。"""
@@ -436,7 +440,7 @@ def train_entry_model(direction, db_path=None, feature_names=None,
     names = names[:config.ENTRY_MODEL_MAX_FEATURES]
     # 即使尚无 validated 特征也要读取标签样本，报告真实 n/tp_n/sl_n；
     # “不能训练”和“没有数据”是两个不同阻塞原因，不能都伪装成 n=0。
-    rows = _load_rows(direction, names, db_path, strategy_id)
+    rows = load_entry_rows(direction, names, db_path, strategy_id)
     tp_n = sum(row["tp_first"] for row in rows)
     sl_n = sum(row["sl_first"] for row in rows)
     if (len(rows) < config.ENTRY_MODEL_MIN_SAMPLES or
