@@ -2010,3 +2010,12 @@
   重启后 `/health=ok`、空仓、未熔断、对账 balanced、`/error` 为空，configured=v13/v11、Veto=false，
   `/models/entry` 仍为空且预算扩张为 false。20:00 自然扫描没有形成 A/B 入场候选，只形成 2 条零权限
   C shadow 提案，因此本轮没有可用于生产非空覆盖验收的新 B 样本；不得用离线 FakeAdapter 证据替代。
+- 状态隔离补强与自然证据：覆盖审计发现首版 B 误用了 A 的相邻盘口状态后，提交 `34a4337` 改为 B
+  独立 book/OI 状态并补 OI 变化、价格交互和 basis；同一套 58/58 全量与护栏再次通过。paper 在空仓暂停
+  后从 PID 91595 完整重启为 93916，live PID 90574 未变化；健康、空仓、对账、错误、v13/v11、Veto=false
+  和空模型门均正常。20:15:16 自然形成 GRASS short B 候选：`book_imbalance=0.601534`、
+  `spread_bps=2.904022`、`expected_slippage_bps=8.039784` 均非空；交易所本轮无 OI/basis，冻结 payload
+  明确记录 null 与 missing，`ofi_event_count=0`，没有用默认值制造证据。Harness 在 1924ms、retry=0 首次
+  completed，没有把低于 8/10 bps 门的流动性写成失败；只用正新闻冲突与正 `trend_band_atr` 逆 short
+  两个可复算风险族得到 `shadow_reject`，policy 仍为 `baseline_pass`。evaluation pending、零 Veto、零订单，
+  这证明生产证据面和语义门生效，不证明该 reject 拦住了亏损；需等待真实 4h outcome。
