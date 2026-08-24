@@ -500,8 +500,13 @@ FEE_ACCOUNTING_ENABLED = True  # 开关: 实盘盈亏扣费(硬止损累计也�
 FEE_RATE_TAKER = 0.0005        # OKX 基础 taker 费率 0.05%(VIP0,双边收)
 FUNDING_EXPECTED_INTERVAL_HOURS = 8  # 信号时点费率按持有时长折算；收益不抵扣成本
 REJECT_WICK_RATIO = 1.0      # 拒绝K线: 影线/实体 最小比（激进第二档 1.5→1.0,信号更多）
-STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR
-TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比）
+STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR(结构位模式下的下限)
+TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比,结构模式随止损距）
+# 2026-08-25 用户质疑"ATR 不靠谱": 止损锚定结构位(近20根摆动低/高点外扩
+# 缓冲),ATR 距离作为【下限】(结构位太近时取 ATR);止盈 = 止损距离×2,
+# 2:1 口径恒定。STOP_MODE="atr" 可回滚到纯 ATR 旧口径。
+STOP_MODE = "structure"      # "structure" | "atr"
+STOP_STRUCTURE_BUFFER_ATR = 0.2   # 结构位外缓冲 = 0.2 × ATR
 RISK_PER_TRADE = 0.01        # 单笔风险 1%（红线,改动需用户明确拍板）
 MAX_NOTIONAL_PER_TRADE = 150 # 单笔名义上限 USDT（红线）
 MAX_TOTAL_NOTIONAL = 600     # 组合总敞口上限 USDT（红线,PositionLedger 共用）

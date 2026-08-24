@@ -344,8 +344,13 @@ class PositionMixin:
                 # BNB 空单 fill 偏离 0.7 后实际 R:R 仅 0.90)。重锚后无论滑点
                 # 多少,止损/止盈都重新锚定成交价；严格 paper 已在上游把
                 # stop_adj 归零，因此最终订单仍精确为 1×ATR / 2×ATR。
-                stop_off = (1 + stop_adj) * config.STOP_ATR_MULT * sig["atr"]
-                tp_off = config.TP_ATR_MULT * sig["atr"]
+                # 2026-08-25 结构位止损: stop/tp 距离以信号自带值为准
+                # (结构位口径已在上游算好),不再从 ATR 重推——重推会把
+                # 结构止损覆盖回纯 ATR。2:1 由上游保证(stop_adj 归零时)。
+                stop_off = (1 + stop_adj) * abs(float(sig.get("entry") or 0)
+                                               - float(sig.get("stop") or 0))
+                tp_off = abs(float(sig.get("entry") or 0)
+                             - float(sig.get("tp") or 0))
                 if sig["dir"] == "long":
                     sig = dict(sig, stop=fill_px - stop_off, tp=fill_px + tp_off)
                 else:

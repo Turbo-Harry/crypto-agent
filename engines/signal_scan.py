@@ -118,6 +118,29 @@ def compute_shadow_score(wick, body, price_near_ema, ema20_val, ema50_val,
         return None, None
 
 
+def resolve_stop_tp(entry, atr_val, direction, swing_level=None):
+    """止损/止盈口径(2026-08-25 用户质疑'ATR 不靠谱'):
+    structure 模式 → 止损锚定近20根摆动结构位(外扩 0.2×ATR 缓冲),
+    纯 ATR 距离仅作下限(结构位太近时取 ATR);止盈 = 止损距离×2,2:1 恒定。
+    atr 模式 → 纯 1×ATR / 2×ATR(旧口径,可回滚)。swing_level 缺失回退 ATR。"""
+    atr_stop = (entry - config.STOP_ATR_MULT * atr_val
+                if direction == "long" else
+                entry + config.STOP_ATR_MULT * atr_val)
+    mode = getattr(config, "STOP_MODE", "atr")
+    if mode != "structure" or swing_level is None or atr_val <= 0:
+        stop = atr_stop
+    else:
+        buf = getattr(config, "STOP_STRUCTURE_BUFFER_ATR", 0.2) * atr_val
+        s_struct = (swing_level - buf if direction == "long"
+                    else swing_level + buf)
+        # 取更远(更宽)者: 结构位止损不能比纯 ATR 更紧
+        stop = (min(atr_stop, s_struct) if direction == "long"
+                else max(atr_stop, s_struct))
+    risk = abs(entry - stop)
+    tp = entry + 2 * risk if direction == "long" else entry - 2 * risk
+    return round(stop, 8), round(tp, 8)
+
+
 def compute_targets(entry, atr, direction, swing_level=None):
     """目标价位带(2026-08-23 用户问"会预测会升到什么价位吗"):
     T1=1×ATR(第一目标) / T2=2×ATR(现役止盈位) / T3=结构位(近20根摆动高低点,
@@ -865,13 +888,10 @@ class SignalScanMixin:
         _forecast = None
         try:
             from decision.forecast import forecast_for_trade
+            _fc_stop, _fc_tp = resolve_stop_tp(entry_ref, atr_val, _direction,
+                                             swing_level=_swing)
             _fc_sig = {"dir": _direction, "entry": entry_ref, "atr": atr_val,
-                       "stop": (entry_ref - config.STOP_ATR_MULT * atr_val
-                                if _direction == "long" else
-                                entry_ref + config.STOP_ATR_MULT * atr_val),
-                       "tp": (entry_ref + config.TP_ATR_MULT * atr_val
-                              if _direction == "long" else
-                              entry_ref - config.TP_ATR_MULT * atr_val)}
+                       "stop": _fc_stop, "tp": _fc_tp}
             _forecast = forecast_for_trade(
                 _fc_sig, base, klines, db_path=getattr(self, "_db_path", None),
                 as_of_ts=as_of_ts)
@@ -885,13 +905,10 @@ class SignalScanMixin:
         direction = setup["direction"]
         score, dims, regime, factors = _shadow(
             setup["touch"], setup["wick"], direction)
+        _stop, _tp = resolve_stop_tp(entry_ref, atr_val, direction,
+                                     swing_level=_swing)
         return {"dir": direction, "entry": entry_ref,
-                "stop": (entry_ref - config.STOP_ATR_MULT * atr_val
-                         if direction == "long" else
-                         entry_ref + config.STOP_ATR_MULT * atr_val),
-                "tp": (entry_ref + config.TP_ATR_MULT * atr_val
-                       if direction == "long" else
-                       entry_ref - config.TP_ATR_MULT * atr_val),
+                "stop": _stop, "tp": _tp,
                 "atr": atr_val,
                 "shadow_score": score, "shadow_dims": dims,
                 "factor_features": factors,
