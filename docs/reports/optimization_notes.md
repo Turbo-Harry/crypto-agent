@@ -1622,3 +1622,11 @@
 - 离线证据：LangGraph 专项扩至 25/25，SOL 低摩擦+负失衡反例触发语义修复并降为 abstain，LTC
   18.152 bps 高滑点正例保留双风险族 reject；全部 `test_agent_*.py` 绿，最终全量自动发现 57/57。
   AI 仓库、依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile` 与 `diff --check` 全绿。
+- 实现与部署：提交 `81a3ecd`。重启前 paper PID `14762`，空仓、今日零交易、未熔断、对账一致、
+  `/error` 为空；只 kickstart paper 到 PID `22707`，live PID `90574` 未变化。重启后 `/health=ok`、
+  心跳正常、空仓、对账一致、无错误，configured=v8/v4、旧 lifecycle 仍 shadow、Veto=false。
+- 首条自然 v8/v4：16:15 A/SOL run 总/模型延迟 3,827/3,770ms，低于 4 秒硬预算。首响应把三个
+  evidence_id 自造为字段级路径而非 `field_provenance` 原样锚，唯一修复仍自造字段级锚；最终明确
+  `schema_error → baseline_pass`，evaluation pending、Veto=0、订单=0。部署后健康、空仓、对账和
+  `/error` 继续正常。该条证明超时与证据锚会失败关闭，不证明 v8 已有拦亏能力；保持版本冻结继续
+  采样，不因一次 provider 格式失败再次重置身份。
