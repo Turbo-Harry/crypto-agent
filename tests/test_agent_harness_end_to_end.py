@@ -225,6 +225,8 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         self.assertEqual(captured["timeout"], config.AGENT_HARNESS_TIMEOUT_MS / 1000.0)
         self.assertEqual(captured["model"], config.AGENT_HARNESS_MODEL)
         self.assertIs(captured["json_mode"], True)
+        self.assertNotIn("max_tokens", captured)
+        self.assertNotIn("temperature", captured)
         self.assertIn("evidence_ids", captured["system_prompt"])
         self.assertIn("insufficient_evidence", captured["system_prompt"])
         self.assertEqual(raw.pricing_version, config.AGENT_HARNESS_PRICING_VERSION)
@@ -245,6 +247,21 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
                 url="https://provider.invalid/chat", json_mode=True)
         payload = json.loads(opened.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(payload["max_tokens"],
+                         config.AGENT_JUDGE_MAX_OUTPUT_TOKENS)
+        self.assertEqual(payload["temperature"], config.AGENT_JUDGE_TEMPERATURE)
+
+        with mock.patch("urllib.request.urlopen", return_value=response) as opened:
+            agent_judge._request_llm(
+                "proposal-context", key="test-key",
+                url="https://provider.invalid/chat", json_mode=True,
+                max_tokens=config.AGENT_PROPOSAL_MAX_OUTPUT_TOKENS,
+                temperature=config.AGENT_PROPOSAL_TEMPERATURE)
+        payload = json.loads(opened.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(payload["max_tokens"],
+                         config.AGENT_PROPOSAL_MAX_OUTPUT_TOKENS)
+        self.assertEqual(payload["temperature"],
+                         config.AGENT_PROPOSAL_TEMPERATURE)
 
         with mock.patch("urllib.request.urlopen", return_value=response) as opened:
             agent_judge._request_llm(

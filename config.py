@@ -147,6 +147,7 @@ AGENT_JUDGE_API_URL = "https://api.deepseek.com/chat/completions"
 AGENT_JUDGE_MODEL = "deepseek-chat"
 AGENT_JUDGE_TIMEOUT_SECONDS = 20        # 单次判断超时(信号稀疏,阻塞可控)
 AGENT_JUDGE_TEMPERATURE = 0.2           # 低温度: 判断要稳,不要创作
+AGENT_JUDGE_MAX_OUTPUT_TOKENS = 200     # legacy/Harness 默认输出预算
 # 真实交易适配器通知白名单；FakeAdapter/测试不触碰外部通知通道。
 TRADE_NOTIFY_ADAPTERS = ("okx", "okx-ccxt")
 # AI 记忆(2026-08-23 用户问"AI会学习历史经验吗"): 每次把关把判断+后续结果
@@ -260,12 +261,11 @@ AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 # 2R 止盈全部由确定性代码计算。提案只进入反事实标签链，永不调用执行层。
 AGENT_PROPOSAL_SHADOW_ENABLED = True
 AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
-# v4 keeps the audited microstructure contract and additionally freezes the
-# deterministic three-timeframe eligible direction.  The model judges edge;
-# it no longer recomputes eligibility from raw decimals.  Still paper shadow.
-AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v4-deterministic-eligibility"
+# v5 保留确定性方向资格，并压缩重复 evidence，避免双提案被共享 200-token
+# 上限截断。仍仅 paper shadow，协议变化重新计自然样本。
+AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v5-compact-evidence"
 AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
-    "agent-proposal-impl-v4.2-json-mode"
+    "agent-proposal-impl-v5.0-compact-json-budget"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",
@@ -283,6 +283,8 @@ AGENT_PROPOSAL_MAX_PROPOSALS = 2
 AGENT_PROPOSAL_MIN_CONFIDENCE = 0.60
 AGENT_PROPOSAL_MIN_BARS = 60
 AGENT_PROPOSAL_THESIS_MAX_CHARS = 240
+AGENT_PROPOSAL_MAX_OUTPUT_TOKENS = 400
+AGENT_PROPOSAL_TEMPERATURE = 0.0
 # 记忆退层：证据保留在库中，过期只标 stale 并退出检索；重新验证可重新提升。
 AGENT_HARNESS_EPISODIC_TTL_DAYS = 90
 AGENT_HARNESS_SEMANTIC_TTL_DAYS = 180

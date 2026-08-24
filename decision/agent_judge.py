@@ -49,7 +49,8 @@ def _read_key():
 
 
 def _request_llm(user_prompt, key=None, url=None, model=None, timeout=None,
-                 system_prompt=None, json_mode=False):
+                 system_prompt=None, json_mode=False, max_tokens=None,
+                 temperature=None):
     key = key or _read_key()
     if not key:
         return None
@@ -60,8 +61,12 @@ def _request_llm(user_prompt, key=None, url=None, model=None, timeout=None,
         "model": model,
         "messages": [{"role": "system", "content": system_prompt or SYSTEM_PROMPT},
                      {"role": "user", "content": user_prompt}],
-        "max_tokens": 200,
-        "temperature": getattr(config, "AGENT_JUDGE_TEMPERATURE", 0.2),
+        "max_tokens": int(
+            config.AGENT_JUDGE_MAX_OUTPUT_TOKENS
+            if max_tokens is None else max_tokens),
+        "temperature": float(
+            config.AGENT_JUDGE_TEMPERATURE
+            if temperature is None else temperature),
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}

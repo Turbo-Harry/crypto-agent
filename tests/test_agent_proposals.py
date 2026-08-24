@@ -136,6 +136,29 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
                                 db_path=self.db_path)["n"], 1)
 
+    def test_two_compact_proposals_fit_same_strict_schema(self):
+        btc = snapshot()
+        eth = build_market_snapshot(
+            "ETH", market_rows(base=200.0),
+            market_rows(timeframe_seconds=3600, base=200.0),
+            market_rows(timeframe_seconds=14400, base=200.0),
+            market_features={"spread_bps": 1.0, "book_imbalance": 0.2},
+            market_snapshot_ts=int(time.time() * 1000))
+        output = {"proposals": [
+            {"base": item.base, "direction": item.aligned_direction,
+             "confidence": 0.7, "thesis": "趋势与盘口同向，动量反转则失效",
+             "evidence_ids": [item.evidence_ids[0],
+                              item.microstructure_evidence_id]}
+            for item in (btc, eth)], "abstain_reason": None}
+        result = run_proposal_cycle(
+            [btc, eth], model_call=lambda _prompt: output,
+            db_path=self.db_path)
+        self.assertEqual(result["run"]["runtime_status"], "completed")
+        self.assertEqual(result["run"]["proposal_count"], 2)
+        self.assertEqual(result["run"]["valid_count"], 2)
+        self.assertTrue(all(len(item["evidence_ids"]) == 2
+                            for item in output["proposals"]))
+
     def test_unknown_evidence_is_rejected_before_signal_sampling(self):
         snap = snapshot()
         result = run_proposal_cycle(
@@ -213,9 +236,14 @@ class AgentProposalTest(unittest.TestCase):
             raw = production_proposal_model_call("frozen-proposal-input")
         self.assertEqual(captured["prompt"], "frozen-proposal-input")
         self.assertIs(captured["json_mode"], True)
+        self.assertEqual(captured["max_tokens"],
+                         config.AGENT_PROPOSAL_MAX_OUTPUT_TOKENS)
+        self.assertEqual(captured["temperature"],
+                         config.AGENT_PROPOSAL_TEMPERATURE)
         self.assertEqual(captured["timeout"],
                          config.AGENT_HARNESS_TIMEOUT_MS / 1000.0)
         self.assertIn("aligned_direction", captured["system_prompt"])
+        self.assertIn("恰好两个必要锚", captured["system_prompt"])
         self.assertIn('"proposals":[]', raw)
 
     def test_empty_proposal_requires_reason_and_freezes_exact_input(self):

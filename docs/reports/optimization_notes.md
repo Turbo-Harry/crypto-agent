@@ -1827,3 +1827,18 @@
   168 冒充任一方向已达到 300，也不宣称模型已经可生成。
 - 目标契约勘误：权威 Prompt 原先把 C 写成总计 300/60/60，和既定 long/short 分开训练实现不一致；
   已修正为每个拟训练方向各自 300 且该方向 TP/SL 各 60，另一方向不得借样本。此勘误不改变配置或门槛。
+
+## 2026-08-24 C 紧凑 JSON 输出预算预声明
+
+- 触发证据：v4.2 四个自然批次仅 1 completed、3 schema error；新本地诊断确认最新错误为
+  `proposal output must be a JSON object`。该批有 3 个 eligible，调用耗时 3229ms；现有 provider
+  `max_tokens=200`，而两条仅含必要字段和两个长 evidence ID 的紧凑 JSON 已有约 388 字符，截断风险明确。
+- 冻结变更：Prompt/implementation 升级新身份；每条提案明确只需引用同标的 15m 与 microstructure
+  两个必要锚，不重复 1h/4h 长 ID（资格已由代码冻结）；proposal 专用输出 token 上限与温度独立配置，
+  主 Harness/legacy judge 仍保持原 200 tokens。解析、证据子集、方向、2:1 和零执行权限不变。
+- 安全与验收：旧 v4.2 全部保留但不计入新协议；生产 payload 必须命中 proposal 专属 token/temperature，
+  主 Harness payload 不变。专项覆盖双提案紧凑响应与 provider 参数；自然批次必须在 4s 内 completed，若仍
+  schema/timeout 则保留诊断并继续失败关闭，禁止通过宽松解析或人工补 outcome 制造样本。
+- 离线证据：双紧凑提案专项 17/17，Harness 端到端 13/13，judge 19/19、采样 17/17；测试直接解码
+  provider request body，确认 proposal 为 400 tokens/temperature 0，Harness 默认仍为 200/0.2。最终
+  CI 自动发现 58/58 脚本通过，参数、依赖、隔离、fix guard 与 AI repo 全绿；自然 v5 仍待部署后验收。

@@ -79,7 +79,14 @@ PROPOSAL_SYSTEM_PROMPT_V4 = (
     "no_clear_edge。有提案时abstain_reason必须为null。不得输出额外字段或Markdown。"
 )
 
-PROPOSAL_SYSTEM_PROMPT = PROPOSAL_SYSTEM_PROMPT_V4
+PROPOSAL_SYSTEM_PROMPT_V5 = (
+    PROPOSAL_SYSTEM_PROMPT_V4 +
+    "为保证JSON在输出预算内完整闭合，每条提案的evidence_ids只列恰好两个必要锚："
+    "该标的逐字存在的15m证据ID和microstructure证据ID；不要重复1h或4h证据ID。"
+    "thesis最多一句，保持简短。"
+)
+
+PROPOSAL_SYSTEM_PROMPT = PROPOSAL_SYSTEM_PROMPT_V5
 
 MICROSTRUCTURE_FIELDS = config.AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS
 ABSTAIN_REASONS = config.AGENT_PROPOSAL_ABSTAIN_REASONS
@@ -542,7 +549,9 @@ def production_proposal_model_call(prompt: str):
                      "agent-proposal-v1" else PROPOSAL_SYSTEM_PROMPT)
     data = _request_llm(
         prompt, timeout=max(0.001, config.AGENT_HARNESS_TIMEOUT_MS / 1000.0),
-        system_prompt=system_prompt, json_mode=True)
+        system_prompt=system_prompt, json_mode=True,
+        max_tokens=config.AGENT_PROPOSAL_MAX_OUTPUT_TOKENS,
+        temperature=config.AGENT_PROPOSAL_TEMPERATURE)
     if not data:
         return None
     return data["choices"][0]["message"]["content"].strip()

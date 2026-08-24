@@ -1,4 +1,4 @@
-# 入场准确率、Harness v8/v6 与主动提案 v4.2 目标 Prompt
+# 入场准确率、Harness v8/v6 与主动提案 v5 目标 Prompt
 
 > 状态：权威实施稿；仅 OKX 模拟盘 shadow，不是已验证模型或下单许可
 > 日期：2026-08-24
@@ -9,8 +9,9 @@
   `/models/entry` 为空；不得把“模型为空”当成需要绕过的故障。
 - Harness 当前冻结身份为 Prompt v8 + Tool Policy v6；首批 3 条自然 run 均首次完成且零重试，
   但成熟结果不足，`veto_enabled=false`。
-- 主动提案当前冻结 implementation 为 `agent-proposal-impl-v4.2-json-mode`；首个自然批次 completed、
-  1 条 ZRO short 通过几何与证据门，但 `execution_authority=0`、`prediction_passed=0`，尚无 4h 成熟结果。
+- 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.0-compact-json-budget`；v4.2 四个自然
+  批次仅 1 completed、3 schema error，最新错误被定位为双提案长 evidence 在 200-token 共享预算下没有
+  形成完整 JSON。v5 只压缩重复 evidence 并独立输出预算，仍须从零收集当前身份的自然证据。
 - 入场概率与极值模型按 long/short 分开训练；300/60/60 是每个拟训练方向的门，不是把双方向总数相加。
   当前 A long 成熟 128（TP 41/SL 62），A short 成熟 40（TP 6/SL 31），均未达到训练门。
 
@@ -38,8 +39,9 @@
    资格，修复轮继续复用同一契约。最多修复一次，仍不合格或总耗时超过 4 秒就失败关闭并保持量化基线。
 6. 只在 paper 自然 shadow 收集 A/B 分策略 run→outcome→evaluation→version 证据；live 永久 shadow，
    B 无自动执行权限。
-7. 对 C v4.2 每个批次逐字冻结 `aligned_direction`、`eligible_candidates`、微观结构、input hash 和
-   implementation identity；模型只能选择确定性合格方向，JSON/Schema/证据/方向任一错误都失败关闭。
+7. 对 C v5 每个批次逐字冻结 `aligned_direction`、`eligible_candidates`、微观结构、input hash 和
+   implementation identity；每条只回传 15m 与 microstructure 两个必要锚，模型只能选择确定性合格方向，
+   JSON/Schema/证据/方向任一错误都失败关闭。
 8. C 提案只写 `rule_decision=shadow`、`final_decision=rejected`、`execution_authority=0`，按固定 1R:2R
    结算完整 4h/1m 首触、MFE/MAE；与 A/B、旧 C 版本、历史回放严格隔离。
 9. 每轮先做数据与身份审计，再做 purged walk-forward、概率校准和费用后 EV；结果不通过就记录停止裁决，
