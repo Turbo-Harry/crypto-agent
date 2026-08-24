@@ -1768,3 +1768,6 @@
   v8/v6 Harness run，均在首次模型 step 完成、`retry_count=0`，动作分别为 1 次 shadow_reject、2 次
   agent_abstain；policy 均保持 `baseline_pass`，因为 `veto_enabled=false`。这证明首次契约可用性改善，
   但 `/models/entry` 仍为空、当前评估仍 `insufficient_data`，不得据此宣称胜率改善或启用 veto/下单。
+- 目标契约同步：把权威目标 Prompt 更新为 Harness v8/v6 + C v4.2 的统一版本，写入当前负基线、
+  C 独立 300/60/60 训练门、60 shadow/30 closed/30 selected 生命周期门、费用后 EV/Brier/DSR/PBO/
+  分段稳定性和 input hash/零执行权限验收。该文档更新不改变配置、阈值、模型状态或订单权限。

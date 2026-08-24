@@ -1,7 +1,16 @@
-# 入场准确率与 Harness v8 目标 Prompt
+# 入场准确率、Harness v8/v6 与主动提案 v4.2 目标 Prompt
 
 > 状态：权威实施稿；仅 OKX 模拟盘 shadow，不是已验证模型或下单许可
 > 日期：2026-08-24
+
+## 当前事实基线
+
+- 10 币与 Alt 独立 90 天重放的 A/B 费用后 EV 和 Brier skill 均为负，validated factor=0，
+  `/models/entry` 为空；不得把“模型为空”当成需要绕过的故障。
+- Harness 当前冻结身份为 Prompt v8 + Tool Policy v6；首批 3 条自然 run 均首次完成且零重试，
+  但成熟结果不足，`veto_enabled=false`。
+- 主动提案当前冻结 implementation 为 `agent-proposal-impl-v4.2-json-mode`；首个自然批次 completed、
+  1 条 ZRO short 通过几何与证据门，但 `execution_authority=0`、`prediction_passed=0`，尚无 4h 成熟结果。
 
 ## 目标
 
@@ -9,6 +18,7 @@
 2. 只拦至少两个独立、方向正确且字段语义可机器验证的普通风险族，或一个可核验严重事件。
 3. 用自然 paper 的 4h 路径证明相对量化基线的费用后增量，而不是用减少交易数冒充精准率。
 4. 保持固定 2:1、单笔风险 1%、名义 150 USDT、组合 600 USDT 与交易所侧止损；Agent 只否决不放行。
+5. 让 C 主动提案扩大可审计候选来源，但在独立概率模型与自然 shadow 全部门通过前永远保持零执行权限。
 
 ## 步骤
 
@@ -26,6 +36,12 @@
    资格，修复轮继续复用同一契约。最多修复一次，仍不合格或总耗时超过 4 秒就失败关闭并保持量化基线。
 6. 只在 paper 自然 shadow 收集 A/B 分策略 run→outcome→evaluation→version 证据；live 永久 shadow，
    B 无自动执行权限。
+7. 对 C v4.2 每个批次逐字冻结 `aligned_direction`、`eligible_candidates`、微观结构、input hash 和
+   implementation identity；模型只能选择确定性合格方向，JSON/Schema/证据/方向任一错误都失败关闭。
+8. C 提案只写 `rule_decision=shadow`、`final_decision=rejected`、`execution_authority=0`，按固定 1R:2R
+   结算完整 4h/1m 首触、MFE/MAE；与 A/B、旧 C 版本、历史回放严格隔离。
+9. 每轮先做数据与身份审计，再做 purged walk-forward、概率校准和费用后 EV；结果不通过就记录停止裁决，
+   不搜索新阈值、不打开 sealed holdout、不修改活体数据库。
 
 ## 验收标准
 
@@ -35,6 +51,13 @@
 - Brier skill 不低于频率基线，风险概率标准差至少 0.03，校准不得系统性反向。
 - saved loss 大于 missed profit 加模型成本，费用后增量 EV 单侧 95% 下界大于 0。
 - reject 不得由单一币种、方向、regime 或月份贡献超过 80%。
+- C 当前完整身份至少取得 300 条自然成熟提案，TP-first/SL-first 各至少 60；5 折中至少 4 折通过，
+  Brier skill 至少 0.05，费用后 EV 单侧 95% 下界大于 0，且 DSR/PBO 与分方向、币种、regime、月份
+  稳定性全部通过，才允许生成 shadow 入场模型。
+- C 模型生成后仍需至少 60 条独立 shadow 候选、30 条已关闭、30 条被模型选择的完整评估；实际费用后
+  EV 继续为正、Brier 不恶化、最大回撤不超过门限，才可另提人工批准。本文不授予该批准。
+- 当前协议的每个提案 input hash 必须从冻结 payload 逐字复算一致，2:1 几何严格成立，任何记录的
+  `execution_authority` 非 0、或 Agent 恢复基线拒绝，均为立即失败。
 - Agent 专项、全量自动发现测试、依赖图、参数、隔离和修复护栏全绿；只重启 paper，并验证健康、
   心跳、持仓衔接、对账和错误接口。
 
@@ -42,6 +65,8 @@
 
 - 样本不足继续 shadow，不降低 100/30。
 - Brier、绝对费用后 EV、增量下界或分段稳定任一失败，停止晋升。
+- A/B/C 的独立 90 天或自然 paper 费用后 EV 下界非正时，模型列表保持为空；不得用降低样本门、删亏损、
+  换费用口径、增加同一行情的重叠候选或只报胜率来制造通过。
 - 不得改活体数据库、伪造 outcome、混历史重放、直接标 active 或让 Harness 恢复基线拒绝。
 
 ## v8 冻结反例
