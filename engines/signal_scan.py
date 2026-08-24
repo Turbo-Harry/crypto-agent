@@ -870,10 +870,11 @@ class SignalScanMixin:
         return trades_budget(self.watch_scores.get(base))
 
     def _run_agent_proposal_shadow(self, scan_pool, as_of_ts=None):
-        """每根 15m K 一次批量主动提案；只留样，不进入开仓分支。"""
+        """每根 15m K 一次 AI 主动提案；paper 可在全部硬门后执行。"""
         model_call = getattr(self, "agent_proposal_model_call", None)
-        if (not config.AGENT_PROPOSAL_SHADOW_ENABLED or
-                getattr(self, "live_mode", False) or model_call is None):
+        if (not config.AGENT_PROPOSAL_SHADOW_ENABLED or model_call is None):
+            return None
+        if getattr(self, "live_mode", False):
             return None
         try:
             from decision.agent_proposals import (build_market_snapshot,
@@ -985,8 +986,9 @@ class SignalScanMixin:
                 db_path=self._db_path)
             # C 与 A/B 使用同一风险 critic，但仍是完全独立的生命周期。
             # 只有本轮刚冻结的提案才调用 Harness：对历史 deduplicated 行用
-            # 当前新闻/账户补跑会造成时点泄漏。C 永远传 allow_veto=False，
-            # 因而这里只生成可结算的 shadow Trace，不可能获得下单权限。
+            # 当前新闻/账户补跑会造成时点泄漏。C 在 paper 执行开启时允许已验证
+            # critic 额外否决，但 critic 永远不能放行未过确定性硬门的提案。
+            harness_by_signal = {}
             if not result.get("deduplicated"):
                 for proposal in result.get("proposals") or ():
                     if (not proposal or
@@ -1003,18 +1005,95 @@ class SignalScanMixin:
                             "tp": proposal.get("tp"),
                             "atr": proposal.get("atr"),
                             "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
-                        }, str(proposal["signal_id"]), allow_veto=False)
+                        }, str(proposal["signal_id"]),
+                        allow_veto=bool(
+                            config.AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED))
                     if harness_runner is not None:
-                        harness_runner()
+                        harness_by_signal[str(proposal["signal_id"])] = harness_runner()
             if result.get("proposals") and not result.get("deduplicated"):
                 valid = sum(row.get("geometry_valid") == 1
                             for row in result["proposals"] if row)
-                print(f"Agent主动提案 shadow: {len(result['proposals'])} 条，"
-                      f"确定性2:1有效 {valid} 条，无执行权限")
+                print(f"Agent主动提案: {len(result['proposals'])} 条，"
+                      f"确定性2:1有效 {valid} 条")
+            SignalScanMixin._execute_agent_proposals(
+                self, result, harness_by_signal)
             return result
         except Exception as exc:
             print(f"Agent主动提案 shadow failed: {type(exc).__name__}: {exc}")
             return None
+
+    def _execute_agent_proposals(self, result, harness_by_signal):
+        """真实 OKX paper-only：AI提案通过确定性门后才能复用开仓链。"""
+        if (not config.AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED or
+                getattr(self, "live_mode", False) or
+                getattr(self.exchange, "name", "") not in ("okx", "okx-ccxt") or
+                result.get("deduplicated")):
+            return
+        today = time.strftime("%Y-%m-%d")
+        used = sum(
+            1 for row in self.journal.trades
+            if row.get("strategy_id") == config.AGENT_PROPOSAL_STRATEGY_ID
+            and row.get("entry_time")
+            and time.strftime("%Y-%m-%d", time.localtime(row["entry_time"])) == today)
+        for proposal in result.get("proposals") or ():
+            if used >= config.AGENT_PROPOSAL_PAPER_MAX_DAILY_ORDERS:
+                break
+            if (str(proposal.get("base") or "").upper() not in
+                    config.AGENT_PROPOSAL_PAPER_SYMBOLS):
+                continue
+            signal_id = str(proposal.get("signal_id") or "")
+            if int(proposal.get("geometry_valid") or 0) != 1 or not signal_id:
+                continue
+            harness = harness_by_signal.get(signal_id)
+            if harness is not None and harness.policy.veto:
+                continue
+            sig = {
+                "dir": proposal.get("direction"),
+                "entry": float(proposal.get("reference_entry")),
+                "stop": float(proposal.get("stop")),
+                "tp": float(proposal.get("tp")),
+                "atr": float(proposal.get("atr")),
+                "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
+                "shadow_dims": {},
+            }
+            current = self._ticker_last(str(proposal["base"]), prefer_swap=True)
+            if not current or sig["entry"] <= 0:
+                continue
+            deviation_bps = abs(float(current) / sig["entry"] - 1.0) * 10_000
+            if deviation_bps > config.AGENT_PROPOSAL_PAPER_MAX_ENTRY_DEVIATION_BPS:
+                continue
+            confirmation = self._paper_intraday_entry_confirmation(
+                str(proposal["base"]), sig)
+            if not confirmation.get("passed"):
+                continue
+            from decision.entry_probability import preopen_2to1_decision
+            rr = preopen_2to1_decision(sig, db_path=self._db_path)
+            bootstrap = (self.paper_bootstrap_orders_enabled and
+                         rr.get("reason") == "no_validated_active_model")
+            if not rr.get("passed") and not bootstrap:
+                continue
+            tid = self.open_position(
+                str(proposal["base"]), sig, score=0,
+                size_factor=float(confirmation.get("size_factor") or 1.0))
+            if not tid:
+                continue
+            from engines.signal_sampling import (merge_sample_features,
+                                                  update_signal_decision)
+            merge_sample_features(signal_id, {
+                "agent_proposal_execution": {
+                    "paper_only": True, "trade_id": tid,
+                    "entry_deviation_bps": deviation_bps,
+                    "confirmation": confirmation,
+                }}, db_path=self._db_path)
+            update_signal_decision(
+                signal_id, db_path=self._db_path, rule_decision="pass",
+                ai_verdict="proposal", final_decision="opened", trade_id=tid,
+                reject_reason="")
+            import storage.db as sdb
+            sdb.x("UPDATE agent_proposals SET execution_authority=1 "
+                  "WHERE signal_id=?", [signal_id], db_path=self._db_path)
+            used += 1
+            break
 
     def _paper_intraday_entry_confirmation(self, base, sig):
         """模拟盘最终确认：已收线 1m/5m + 连续成交/OFI + 当前执行成本。"""
@@ -1025,10 +1104,13 @@ class SignalScanMixin:
             last_open_ms = int((time.time() -
                                 config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) //
                                seconds * seconds * 1000) - seconds * 1000
+            def value(row, index, name):
+                return getattr(row, name) if hasattr(row, name) else row[index]
             usable = [row for row in candles
-                      if int(row.ts) <= last_open_ms]
-            return [{"ts": int(row.ts), "open": float(row.open),
-                     "close": float(row.close)}
+                      if int(value(row, 0, "ts")) <= last_open_ms]
+            return [{"ts": int(value(row, 0, "ts")),
+                     "open": float(value(row, 1, "open")),
+                     "close": float(value(row, 4, "close"))}
                     for row in usable[-required:]]
 
         try:

@@ -224,10 +224,11 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 )
                 if harness_model_available():
                     self.agent_model_call = production_harness_model_call
-                    # 主动候选 C 仍是独立 paper-only 研究线；这里只统一
-                    # 风险评审 Harness，不把主动提案接入 live。
-                    if (not self.live_mode and
-                            getattr(_c, "AGENT_PROPOSAL_SHADOW_ENABLED", False)):
+                    # C 主动提案与执行严格限于 OKX paper；live 连模型调用能力
+                    # 都不装配，避免把配置误改演变为真实资金权限。
+                    _proposal_ok = (not self.live_mode and getattr(
+                        _c, "AGENT_PROPOSAL_SHADOW_ENABLED", False))
+                    if _proposal_ok:
                         from decision.agent_proposals import \
                             production_proposal_model_call
                         self.agent_proposal_model_call = \

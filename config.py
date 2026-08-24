@@ -337,16 +337,15 @@ AGENT_HARNESS_TIMEOUT_MS = 4000  # 整个 Harness 总预算；修复重试只能
 AGENT_HARNESS_MAX_SEMANTIC_RETRIES = 1 # 合法 JSON 但违背证据语义时最多修复一次
 AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 
-# Agent 主动候选提案（仅真实 OKX 模拟盘 shadow）：每根已收线 15m K 最多
-# 批量调用一次。模型只能从给定候选池选择方向和证据；入场参考、1R 止损、
-# 2R 止盈全部由确定性代码计算。提案只进入反事实标签链，永不调用执行层。
+# Agent 主动候选提案：模型自主选择 long/short/flat；入场参考、1R 止损、
+# 2R 止盈仍由确定性代码计算。只有真实 OKX 模拟盘可在全部硬门后执行。
 AGENT_PROPOSAL_SHADOW_ENABLED = True
 AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
 # v5 保留确定性方向资格，并压缩重复 evidence；v6 把盘口冲击从
 # notional/visible-depth 代理改为逐档 VWAP。仍仅 paper shadow，协议变化重计样本。
-AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v5-compact-evidence"
+AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v6-ai-direction"
 AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
-    "agent-proposal-impl-v6-directional-vwap-slippage"
+    "agent-proposal-impl-v9-major-only-unhinted-ai-direction-paper-gated"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",
@@ -366,6 +365,10 @@ AGENT_PROPOSAL_MIN_BARS = 60
 AGENT_PROPOSAL_THESIS_MAX_CHARS = 240
 AGENT_PROPOSAL_MAX_OUTPUT_TOKENS = 400
 AGENT_PROPOSAL_TEMPERATURE = 0.0
+AGENT_PROPOSAL_PAPER_EXECUTION_ENABLED = True
+AGENT_PROPOSAL_PAPER_SYMBOLS = ("BTC", "ETH", "SOL", "XRP", "DOGE")
+AGENT_PROPOSAL_PAPER_MAX_DAILY_ORDERS = 1
+AGENT_PROPOSAL_PAPER_MAX_ENTRY_DEVIATION_BPS = 20.0
 
 # A/B 候选身份最初把下列 C-only 提案字段一并写进哈希。这里冻结部署 v5
 # 时的兼容投影，使 A/B 当前哈希与既有自然样本连续；以后只升级 C 提案
@@ -445,6 +448,17 @@ SIGNAL_OUTCOME_BAR = "1m"
 SIGNAL_OUTCOME_LABEL_VERSION = "first-passage-15m-4h-v1"
 SIGNAL_OUTCOME_SWEEP_SECONDS = 900
 SIGNAL_OUTCOME_MAX_FETCH_BARS = 300   # 4h 1m + 边界/接口分页余量
+# Research-only：止损 ATR 尺度与 reward:risk 分开定义。生产仍保持
+# STOP_ATR_MULT=1.0 + ENTRY_REQUIRED_REWARD_RISK=2.0；下列网格没有订单权限。
+EXIT_BARRIER_RESEARCH_VERSION = "exit-barrier-grid-v1"
+EXIT_BARRIER_RESEARCH_GRID = (
+    ("stop075_rr200", 0.75, 2.00),
+    ("stop100_rr150", 1.00, 1.50),
+    ("stop100_rr200", 1.00, 2.00),
+    ("stop100_rr300", 1.00, 3.00),
+    ("stop150_rr150", 1.50, 1.50),
+    ("stop200_rr150", 2.00, 1.50),
+)
 
 # ============ 费率与手续费（2026-08-23 用户问"会计算费率和手续费吗"） ============
 # 平仓时优先按账户账单(fetch_bills)取【实际】手续费与资金费;
@@ -653,6 +667,9 @@ MODEL_OBSERVE_MIN_CLOSED = 30
 MODEL_MIN_SELECTED_EVALUATIONS = 30  # 防止仅凭极少数放行样本通过 EV/胜率观察门
 MODEL_MAX_BRIER_DEGRADE = 0.02
 MODEL_MAX_EV_DEGRADE_R = 0.10
+# 二层组权重任一组在 OOS 折间的归一权重极差不得超过 50 个百分点；
+# 否则视为 regime 追逐而非稳定机制。只用于 research-only stacking 门。
+GROUP_WEIGHT_MAX_FOLD_RANGE = 0.50
 MODEL_MAX_DRAWDOWN_R = 3.0
 MODEL_BUDGET_EXPANSION_MIN_LONG_TERM_EV_R = 0.0
 
@@ -768,6 +785,15 @@ SENTIMENT_BULL_WORDS = ("rally", "surge", "soar", "bull", "breakout", "record",
 SENTIMENT_BEAR_WORDS = ("crash", "plunge", "bear", "liquidat", "fear", "dump",
                         "hack", "ban", "lawsuit", "selloff", "fall", "drop",
                         "loss")
+
+# Chrome OKX 页面采集只进入研究证据库，不直接改变信号或下单权限。
+CHROME_CAPTURE_MAX_TEXT_CHARS = 20_000
+CHROME_CAPTURE_MAX_TITLE_CHARS = 500
+CHROME_CAPTURE_MAX_URL_CHARS = 2_000
+CHROME_CAPTURE_LIST_LIMIT = 100
+CHROME_CAPTURE_ALLOWED_URL_PREFIXES = (
+    "https://www.okx.com/", "https://my.okx.com/",
+)
 
 # ============ 热重载机制（2026-08-21 用户要求'配置动态读取'） ============
 # 改 config.py 保存后,引擎下一拍(≤1s,worker tick 调用 maybe_reload)
