@@ -554,6 +554,172 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
                 "position_risk_conflict_qualified": True,
             })
 
+    def test_v7_contract_uses_news_sign_and_explicit_extreme_flag(self):
+        calls = []
+        inp = replace(
+            make_input("v7-news-contract"),
+            prompt_version="harness-risk-v9-news-extreme-event-semantics",
+            tool_policy_version="tool-policy-v7-news-extreme-event-contract",
+            signal={"base": "GRASS", "direction": "long"},
+            news={"news_score": .5714, "composite": .5157,
+                  "news_bull": 11, "news_bear": 3},
+            field_provenance={"news": "signal:v7-news-contract:news"})
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda prompt: calls.append(json.loads(prompt)) or
+            approve(prompt), db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        qualifiers = calls[0]["decision_contract"]["deterministic_qualifiers"]
+        self.assertFalse(qualifiers["news_direction_conflict_qualified"])
+        self.assertFalse(qualifiers["extreme_market_event_qualified"])
+
+    def test_v9_repairs_favorable_news_misread_as_long_conflict(self):
+        calls = []
+        inp = replace(
+            make_input("v9-favorable-news"),
+            prompt_version="harness-risk-v9-news-extreme-event-semantics",
+            tool_policy_version="tool-policy-v7-news-extreme-event-contract",
+            signal={"base": "GRASS", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.01, "momentum_4h": .02,
+            }}},
+            news={"news_score": .5714, "composite": .5157,
+                  "news_bull": 11, "news_bear": 3},
+            field_provenance={
+                "market": "signal:v9-favorable-news:market",
+                "news": "signal:v9-favorable-news:news",
+            })
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return {
+                    "verdict": "reject", "risk_probability": .72,
+                    "confidence": .75,
+                    "reason_codes": ["news_direction_conflict",
+                                     "signal_inconsistency"],
+                    "evidence_ids": ["signal:v9-favorable-news:news",
+                                     "signal:v9-favorable-news:market"],
+                    "missing_information": [], "abstain_reason": None,
+                    "reason": "bullish news conflicts with the long signal",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .6,
+                "confidence": .6, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "only one qualified ordinary risk family",
+                "reason": "positive news is aligned with the long candidate",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("opposite-sign frozen sentiment", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_v9_routine_volatility_cannot_claim_extreme_event(self):
+        calls = []
+        inp = replace(
+            make_input("v9-not-extreme"),
+            prompt_version="harness-risk-v9-news-extreme-event-semantics",
+            tool_policy_version="tool-policy-v7-news-extreme-event-contract",
+            signal={"base": "HOOD", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": .02, "momentum_4h": -.01,
+                "vol_of_vol": .02,
+            }}, "regime": {"state": "vol_expansion"}},
+            field_provenance={"market": "signal:v9-not-extreme:market"})
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return {
+                    "verdict": "reject", "risk_probability": .75,
+                    "confidence": .75,
+                    "reason_codes": ["extreme_market_event"],
+                    "evidence_ids": ["signal:v9-not-extreme:market"],
+                    "missing_information": [], "abstain_reason": None,
+                    "reason": "vol_expansion and high volatility are extreme",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .62,
+                "confidence": .6, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "no explicit severe event flag",
+                "reason": "routine volatility is not an extreme event",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("explicit frozen event flag", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_v9_explicit_extreme_event_remains_valid_single_family(self):
+        inp = replace(
+            make_input("v9-explicit-extreme"),
+            prompt_version="harness-risk-v9-news-extreme-event-semantics",
+            tool_policy_version="tool-policy-v7-news-extreme-event-contract",
+            news={"extreme_market_event": True},
+            field_provenance={"news": "signal:v9-explicit-extreme:news"})
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda _prompt: {
+                "verdict": "reject", "risk_probability": .9,
+                "confidence": .9, "reason_codes": ["extreme_market_event"],
+                "evidence_ids": ["signal:v9-explicit-extreme:news"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "explicit frozen severe event flag is true",
+            }, db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
+    def test_v9_repairs_duplicate_reject_evidence_ids(self):
+        calls = []
+        inp = replace(
+            make_input("v9-duplicate-evidence"),
+            prompt_version="harness-risk-v9-news-extreme-event-semantics",
+            tool_policy_version="tool-policy-v7-news-extreme-event-contract",
+            signal={"base": "ADA", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": .01, "momentum_4h": -.01,
+                "spread_bps": 9.0, "expected_slippage_bps": 12.0,
+            }}},
+            field_provenance={"market": "signal:v9-duplicate-evidence:market"})
+
+        def model(prompt):
+            calls.append(prompt)
+            evidence = (["signal:v9-duplicate-evidence:market"] * 2
+                        if len(calls) == 1 else
+                        ["signal:v9-duplicate-evidence:market"])
+            return {
+                "verdict": "reject", "risk_probability": .78,
+                "confidence": .75,
+                "reason_codes": ["signal_inconsistency",
+                                 "liquidity_failure"],
+                "evidence_ids": evidence, "missing_information": [],
+                "abstain_reason": None,
+                "reason": "positive short momentum conflicts and costs are severe",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("evidence_ids must be unique", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+        self.assertEqual(result.run.evidence_ids,
+                         ("signal:v9-duplicate-evidence:market",))
+
     def test_read_only_tool_trace_and_single_model_call(self):
         calls = []
         router = ReadOnlyToolRouter(

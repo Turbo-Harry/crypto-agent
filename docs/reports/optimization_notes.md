@@ -1853,3 +1853,26 @@
 - 边界说明：这证明紧凑 JSON/400-token 修复已打通自然 Harness 提案链，不证明入场模型成熟或提高胜率。
   `/models/entry` 仍为空且预算扩张为 false；两条提案需等待真实 4h 首触标签，并按当前 v5.1 身份从零累计
   每方向 300/60/60 与后续 shadow 门，禁止借旧 C 样本或直接下单。
+
+## 2026-08-24 Harness v9 新闻与严重事件资格预声明
+
+- 触发证据：当前 v8/v6 自然 run 12 条（6 reject、5 abstain、1 schema error，全部 pending）。GRASS
+  long 在 `news_score=0.5714/composite=0.5157`、bull 11/bear 3 时仍把偏多消息写成
+  `news_direction_conflict`；DOGE/HOOD 把普通高波动或 `vol_expansion` 写成
+  `extreme_market_event`，HOOD 还重复同一 market evidence ID。三者均为可由冻结输入直接判定的语义
+  错误，不用未来 4h outcome 也能确认；若直接激活会制造不可靠错杀。
+- 冻结变更：Prompt 升 `harness-risk-v9-news-extreme-event-semantics`，Tool Policy 升
+  `tool-policy-v7-news-extreme-event-contract`。首次请求新增与 validator 同源的
+  `news_direction_conflict_qualified` 与 `extreme_market_event_qualified`；news_score 优先、composite
+  回退，按生成契约 [-1,+1] 与固定中性 0 解释。严重事件只接受冻结 news/health/market 中显式布尔
+  `extreme_market_event=true`，routine volatility/regime/forecast 永远不能自动取得资格；reject evidence
+  ID 必须唯一。旧 v8/v6 规则与 Trace 保留，不混入新身份。
+- 安全边界：不改模型、Context、Schema、Retrieval、0.70/0.70、两个普通风险族、4 秒总预算、100/30、
+  Brier、费用后 EV、生命周期或风险预算。新身份仍只在 paper shadow，从零等待自然 4h 路径；任何语义
+  修复失败或超时继续 baseline pass，Agent 不恢复基线拒绝，也不取得下单权限。
+- 离线证据：LangGraph 33/33，新增 GRASS 正新闻反例、routine volatility 假严重事件、显式严重事件
+  正例、重复 evidence 修复和 v7 初始契约断言；旧 v6 contract 的四字段形状保持原样。全部 Agent
+  专项 135/135、决策闭环 61/61、策略 B 34/34；按 CI 独立数据库自动发现并通过 58/58 个脚本，红 0。
+  参数集中、测试隔离、23 条修复护栏、code graph、AI repo check、py_compile 与 diff check 全绿。
+  代码变更期间先确认 paper 空仓后暂停扫描，数据库没有任何 v9/v7 混合身份 run；提交后只完整重启
+  paper，再等待首批自然 v9/v7 Trace，不能用合成正例冒充自然准确率。

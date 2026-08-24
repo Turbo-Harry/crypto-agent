@@ -164,7 +164,8 @@ AGENT_HARNESS_ENABLED = True
 # 且仅 paper 实例显式传入执行授权后才会真正否决；live 永远保持 shadow。
 # Harness 不能恢复任何基线拒单。
 AGENT_HARNESS_VETO_ENABLED = True
-AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v8-liquidity-field-semantics"
+AGENT_HARNESS_PROMPT_VERSION = \
+    "harness-risk-v9-news-extreme-event-semantics"
 AGENT_HARNESS_REJECT_MIN_RISK = 0.70
 AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
 AGENT_HARNESS_APPROVE_MAX_RISK = 0.45
@@ -175,10 +176,18 @@ AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES = 2
 AGENT_HARNESS_DIRECTIONAL_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v7-direction-evidence-consistency",
     "harness-risk-v8-liquidity-field-semantics",
+    "harness-risk-v9-news-extreme-event-semantics",
 )
 AGENT_HARNESS_LIQUIDITY_EVIDENCE_PROMPT_VERSIONS = (
     "harness-risk-v8-liquidity-field-semantics",
+    "harness-risk-v9-news-extreme-event-semantics",
 )
+AGENT_HARNESS_NEWS_EVENT_EVIDENCE_PROMPT_VERSIONS = (
+    "harness-risk-v9-news-extreme-event-semantics",
+)
+# sentiment.news_score/composite 的生成契约是 [-1,+1]；0 是固定中性语义，
+# 不是用 outcome 搜索出来的交易阈值。
+AGENT_HARNESS_NEWS_NEUTRAL_SCORE = 0.0
 # 固定“严重执行摩擦”语义，不按本轮 outcome 搜索；低于门槛仍可影响概率，
 # 但不能单独取得 liquidity_failure 风险族资格。
 AGENT_HARNESS_LIQUIDITY_FAILURE_MIN_SPREAD_BPS = 8.0
@@ -226,6 +235,12 @@ regime 或缺模型；liquidity_failure 只用于达到下述固定门槛的严�
 至少包含两个不同的 reason_code 风险族；重复同一事实、重复 evidence_id 或把同一字段换种
 说法不算独立。只有 extreme_market_event 可凭单一严重事件形成 reject。
 
+新闻与严重事件语义：news_score/composite 的范围是 [-1,+1]，大于 0 偏多、小于 0 偏空、
+等于 0 中性；偏多消息只与 short 冲突，偏空消息只与 long 冲突。新闻计数中 bull 多于 bear
+不能支持 long 的 news_direction_conflict。高波动、vol_expansion、disorder、较高 p_loss_prior
+或普通技术冲突都不是 extreme_market_event；只有冻结上下文存在显式、机器可核验的
+extreme_market_event=true 资格时才能使用该 code。deterministic_qualifiers 中 false 的资格不得引用。
+
 字段消歧：factor_features.depth 是“回踩位置质量分”，不是盘口绝对深度；book 是方向
 对齐后的盘口失衡分；book_imbalance/depth_imbalance 的正负表示买卖压力方向，不表示总深度
 充足或枯竭。上述字段不得支持 liquidity_failure。当前可核验的流动性失败只能由
@@ -240,9 +255,14 @@ AGENT_HARNESS_JSON_MODE = True
 # paper/live 共用同一编排实现，但模型仍固定 shadow、无执行权限。
 AGENT_HARNESS_CONTEXT_VERSION = "context-v3-accuracy-evidence"
 AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
-AGENT_HARNESS_TOOL_POLICY_VERSION = "tool-policy-v6-initial-decision-contract"
+AGENT_HARNESS_TOOL_POLICY_VERSION = \
+    "tool-policy-v7-news-extreme-event-contract"
 AGENT_HARNESS_INITIAL_CONTRACT_TOOL_POLICIES = (
     "tool-policy-v6-initial-decision-contract",
+    "tool-policy-v7-news-extreme-event-contract",
+)
+AGENT_HARNESS_NEWS_EVENT_CONTRACT_TOOL_POLICIES = (
+    "tool-policy-v7-news-extreme-event-contract",
 )
 # DeepSeek 2026-08-23 官方美元价（每百万 token）；只用于 shadow 成本审计。
 # cache 明细缺失时按 cache miss 计费，防止低估模型成本。

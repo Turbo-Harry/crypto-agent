@@ -13,6 +13,12 @@
 
 ---
 
+### 2026-08-24 Agent 把正新闻和普通波动误报为拒绝风险族
+- 现象：v8/v6 自然 GRASS long 在 `news_score=0.5714`、`composite=0.5157`、bull 11/bear 3 时仍使用 `news_direction_conflict`；DOGE/HOOD 又把普通 `vol_expansion` 或高波动写成 `extreme_market_event`，HOOD 还重复同一 market evidence ID。
+- 根因：Prompt 没写清情感分的 [-1,+1] 符号契约，初次判断契约和确定性校验也没有新闻方向及严重事件资格；模型可把 routine volatility 当作单一严重事件，从而绕过两个普通风险族要求。
+- 修复：v9/v7 把新闻方向、显式严重事件和 evidence 唯一性提升为机器语义门；正新闻只冲突 short、负新闻只冲突 long，且只有冻结布尔 `extreme_market_event=true` 才允许单事件 reject。
+- 预防：任何能绕过多证据门的特殊 reason code 必须由显式机器字段授权；归一化分数必须把区间、中性点和方向写进 Prompt 与同源 validator contract。
+
 ### 2026-08-24 Agent 把顺向空头动量与有利资金费误判成风险冲突
 - 现象：Harness v6 首批 ADA short Trace 把负的 1H/4H 动量描述为“正动量冲突”，并把正资金费当成空单成本；AAVE 在账户空仓、风控可交易时把市场波动标为 `position_risk_conflict`。两条均形成尚未生效的 `shadow_reject`。
 - 根因：Prompt 只要求按方向检查特征，没有明确 long/short 的符号语义；确定性校验只检查概率门和 evidence_id 是否存在，没有核验风险族数量、动量方向和 reason-code 与冻结账户事实的一致性。

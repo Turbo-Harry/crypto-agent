@@ -139,6 +139,12 @@ def test_engine_shadow_no_orders(tmp):
     _silence_notify()
     try:
         dt, fake = _make_trader(tmp)
+        import storage.db as sdb
+        sdb.x(
+            "INSERT OR REPLACE INTO kv (key,value) VALUES "
+            "('sentiment_latest',?)",
+            [json.dumps({"ts": time.time(), "extreme_market_event": True})],
+            db_path=dt._db_path)
         from exchange.models import Candle
         kl = _flat_then_breakout(n_flat=100)
         fake.candles["BTC-USDT-SWAP"] = [

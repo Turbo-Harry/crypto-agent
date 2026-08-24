@@ -138,7 +138,8 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
 
     def test_legacy_entry_can_use_explicit_harness_callback(self):
         result = harness_judge(
-            {"dir": "long", "stop": 95, "tp": 110}, "BTC", 60, 100, {},
+            {"dir": "long", "stop": 95, "tp": 110}, "BTC", 60, 100,
+            {"extreme_market_event": True},
             model_call=anchored_reject,
             db_path=self.path)
         self.assertEqual(result.run.final_action.value, "shadow_reject")
@@ -163,7 +164,7 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         agent_lifecycle.activate(version, db_path=self.path)
         result = harness_judge(
             {"dir": "long", "stop": 95, "tp": 110},
-            "BTC", 60, 100, {},
+            "BTC", 60, 100, {"extreme_market_event": True},
             model_call=anchored_reject,
             db_path=self.path, allow_veto=True)
         self.assertEqual(result.run.final_action, FinalAction.AGENT_REJECT)
@@ -171,7 +172,7 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
 
         live_shadow = harness_judge(
             {"dir": "long", "stop": 95, "tp": 110},
-            "ETH", 60, 100, {},
+            "ETH", 60, 100, {"extreme_market_event": True},
             model_call=anchored_reject,
             db_path=self.path, allow_veto=False)
         self.assertEqual(live_shadow.run.final_action, FinalAction.SHADOW_REJECT)
@@ -187,10 +188,14 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         def reject(prompt):
             return anchored_reject(prompt)
 
-        first = harness_judge(sig, "BTC", 60, 100, {}, model_call=reject,
-                              db_path=self.path, signal_id=signal_id)
-        second = harness_judge(sig, "BTC", 60, 100, {}, model_call=reject,
-                               db_path=self.path, signal_id=signal_id)
+        first = harness_judge(
+            sig, "BTC", 60, 100, {"extreme_market_event": True},
+            model_call=reject,
+            db_path=self.path, signal_id=signal_id)
+        second = harness_judge(
+            sig, "BTC", 60, 100, {"extreme_market_event": True},
+            model_call=reject,
+            db_path=self.path, signal_id=signal_id)
         self.assertEqual(first.run.run_id, second.run.run_id)
         self.assertEqual(db.q1("SELECT COUNT(*) n FROM agent_runs",
                                db_path=self.path)["n"], 1)

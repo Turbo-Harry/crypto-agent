@@ -324,22 +324,55 @@ def _funding_is_adverse_cost(agent_input: AgentInput) -> bool | None:
                 (direction == "short" and rate < 0))
 
 
+def _has_news_direction_conflict(agent_input: AgentInput) -> bool | None:
+    """Interpret the frozen [-1,+1] sentiment score from candidate direction."""
+
+    direction = str(agent_input.signal.get("direction") or
+                    agent_input.signal.get("dir") or "").lower()
+    score = _as_float(agent_input.news.get("news_score"))
+    if score is None:
+        score = _as_float(agent_input.news.get("composite"))
+    if score is None or direction not in ("long", "short"):
+        return None
+    neutral = config.AGENT_HARNESS_NEWS_NEUTRAL_SCORE
+    return bool((direction == "long" and score < neutral) or
+                (direction == "short" and score > neutral))
+
+
+def _has_explicit_extreme_market_event(agent_input: AgentInput) -> bool:
+    """Require an explicit frozen boolean; routine volatility is not an event."""
+
+    for source in (agent_input.news, agent_input.health, agent_input.market):
+        if source.get("extreme_market_event") is True:
+            return True
+    return False
+
+
 def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
     """Expose validator-owned facts before the first bounded model call."""
 
     agent_input = state["agent_input"]
+    qualifiers = {
+        "directional_momentum_conflict":
+            _has_directional_momentum_conflict(agent_input),
+        "position_risk_conflict_qualified":
+            _has_position_risk_conflict(agent_input),
+        "liquidity_failure_qualified":
+            _has_liquidity_failure(agent_input),
+        "funding_is_adverse_cost":
+            _funding_is_adverse_cost(agent_input),
+    }
+    if (agent_input.tool_policy_version in
+            config.AGENT_HARNESS_NEWS_EVENT_CONTRACT_TOOL_POLICIES):
+        qualifiers.update({
+            "news_direction_conflict_qualified":
+                _has_news_direction_conflict(agent_input),
+            "extreme_market_event_qualified":
+                _has_explicit_extreme_market_event(agent_input),
+        })
     return {
         "allowed_evidence_ids": sorted(_evidence_ids(state)),
-        "deterministic_qualifiers": {
-            "directional_momentum_conflict":
-                _has_directional_momentum_conflict(agent_input),
-            "position_risk_conflict_qualified":
-                _has_position_risk_conflict(agent_input),
-            "liquidity_failure_qualified":
-                _has_liquidity_failure(agent_input),
-            "funding_is_adverse_cost":
-                _funding_is_adverse_cost(agent_input),
-        },
+        "deterministic_qualifiers": qualifiers,
         "reject_thresholds": {
             "minimum_risk_probability":
                 config.AGENT_HARNESS_REJECT_MIN_RISK,
@@ -354,7 +387,11 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             "allowed_evidence_ids. A false qualifier cannot support its named "
             "risk family; directional_momentum_conflict only governs 1H/4H "
             "momentum claims. funding_is_adverse_cost=false means funding "
-            "cannot be cited as a cost for this candidate direction."),
+            "cannot be cited as a cost for this candidate direction. "
+            "news_direction_conflict_qualified uses the frozen [-1,+1] "
+            "sentiment sign. extreme_market_event_qualified requires an "
+            "explicit frozen boolean and is never implied by volatility or "
+            "regime alone."),
     }
 
 
@@ -396,6 +433,19 @@ def _validate_directional_reject_evidence(decision: AgentDecision,
     if _cites_favorable_funding(decision, agent_input):
         raise AgentSemanticError(
             "reject cites funding that is favorable for the candidate direction")
+    if (agent_input.prompt_version in
+            config.AGENT_HARNESS_NEWS_EVENT_EVIDENCE_PROMPT_VERSIONS):
+        if (ReasonCode.NEWS_DIRECTION_CONFLICT in codes and
+                _has_news_direction_conflict(agent_input) is not True):
+            raise AgentSemanticError(
+                "news_direction_conflict lacks opposite-sign frozen sentiment")
+        if (ReasonCode.EXTREME_MARKET_EVENT in codes and not
+                _has_explicit_extreme_market_event(agent_input)):
+            raise AgentSemanticError(
+                "extreme_market_event lacks explicit frozen event flag")
+        if len(set(decision.evidence_ids)) != len(decision.evidence_ids):
+            raise AgentSemanticError(
+                "reject evidence_ids must be unique")
     ordinary = codes - {
         ReasonCode.EXTREME_MARKET_EVENT,
         ReasonCode.INSUFFICIENT_EVIDENCE,

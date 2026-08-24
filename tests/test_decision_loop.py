@@ -44,6 +44,16 @@ def _anchored_harness_reject(prompt):
         "reason": "verified severe market event",
     }
 
+
+def _seed_explicit_extreme_event(dt):
+    """Freeze the machine-readable severe-event fact used by reject fixtures."""
+    import storage.db as sdb
+    sdb.x(
+        "INSERT OR REPLACE INTO kv (key,value) VALUES "
+        "('sentiment_latest',?)",
+        [json.dumps({"ts": time.time(), "extreme_market_event": True})],
+        db_path=dt._db_path)
+
 passed = failed = 0
 
 
@@ -395,6 +405,7 @@ def test_strict_2to1_preopen_wiring(tmp):
     work = os.path.join(tmp, "strict_2to1")
     os.makedirs(work, exist_ok=True)
     dt, fake = _make_trader(work)
+    _seed_explicit_extreme_event(dt)
     dt.require_2to1_prediction = True
     dt.agent_model_call = _anchored_harness_reject
     fake.candles["BTC-USDT-SWAP"] = _make_candles()
@@ -541,6 +552,7 @@ def test_harness_shadow_keeps_legacy_authority(tmp):
 
     def setup(work):
         dt, fake = _make_trader(work)
+        _seed_explicit_extreme_event(dt)
         fake.candles["BTC-USDT-SWAP"] = _make_candles()
         fake.last_prices["BTC-USDT-SWAP"] = 110.0
         fake.last_prices["BTC-USDT"] = 110.0
