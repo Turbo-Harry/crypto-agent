@@ -2192,4 +2192,8 @@
 - 安全边界：纯只读观测修复，不注册/推进 lifecycle，不改变 shadow、Veto、模型或订单权限。定向证据为
   服务 API 64/64、接口边界 17/17、Harness 生命周期 9/9；按 CI 独立数据库、事件文件和运行目录
   自动发现并通过 58/58 个测试脚本，失败 0。参数集中、测试隔离、23 条修复护栏、code graph、
-  AI repo 9/9、py_compile 与 diff check 全绿；部署证据待本批次后续补记。
+  AI repo 9/9、py_compile 与 diff check 全绿。
+- 部署证据：实现提交 `777fdea`。确认 paper 空仓、未熔断、对账 balanced、错误为空并暂停后，仅重启
+  `com.crypto.paper`：PID `19558→21109`；live PID `90574` 未变化。重启后 health ok、心跳持续、未暂停、
+  空仓、对账 balanced、错误为空。A 当前身份统计 9 runs（8 completed/1 failed），B 为 8（7/1），C
+  为 0；三者 `configured_version` 均正确，当前 lifecycle 全部 null、Veto 全部 false，未知策略 422。
