@@ -1977,3 +1977,14 @@
   强制 reject；决策闭环 61/61、策略 B 34/34。按 CI 隔离数据库、事件文件和运行目录自动发现并通过
   58/58 个测试脚本，失败 0；参数集中化、测试隔离、23 条 fix guard、code graph、AI repo check、
   py_compile 与 diff check 全绿。paper 暂停期间 v13/v11 run 数为 0，没有热重载混样。
+- 部署证据：实现提交 `d9d5d88`；paper 完整重启 `81510→86444`，live PID `90574` 未变化。重启后
+  `/health=ok`、心跳正常、未暂停、空仓、未熔断、对账 balanced、`/error` 为空；configured=v13/v11、
+  `veto_enabled=false`，模型列表仍为空。
+- 首批自然证据：19:45 收线形成 10 条 B_breakout long run，10/10 completed、全部 retry=0、平均总延迟
+  1826ms、schema error 0。ETH/SOL/DOGE 的风险概率均为 0.72、信心 0.75；前两条无合格普通风险族，
+  DOGE 只有 `signal_inconsistency` 一族，三条都在地板 false 时首次诚实 abstain，直接覆盖 v13 修复目标。
+  全批零 Veto、零订单，evaluation 均 pending；运行态仍空仓、对账平衡、错误为空。
+- 诚实边界：ZAMA 的动作与末句理由正确为 abstain，但 `abstain_reason` 出现“风险概率未超过 0.45”而
+  结构化概率实际为 0.64 的文字矛盾；该文字不参与动作、没有产生 Veto，但说明解释准确率尚未完全稳定。
+  先保留原 Trace 并观察是否复现，不把 10/10 schema 完成率冒充概率校准或胜率证明；仍须等待真实 4h
+  标签与 100/30 门。
