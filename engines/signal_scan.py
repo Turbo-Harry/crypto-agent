@@ -1247,6 +1247,21 @@ class SignalScanMixin:
                          rr.get("reason") == "no_validated_active_model")
             if not rr.get("passed") and not bootstrap:
                 continue
+            # 2026-08-25 用户指示"让AI也预测涨到哪": 提案带 expected_target
+            # 且盈亏比 ≥2 时,止盈位采用 AI 预测目标(只会比默认 2R 更远,
+            # 全部硬门已按默认 2R 通过,此覆盖不绕门)
+            try:
+                _ai_target = proposal.get("expected_target")
+                if _ai_target:
+                    _risk = abs(float(sig["entry"]) - float(sig["stop"]))
+                    _rr = ((float(_ai_target) - float(sig["entry"])) / _risk
+                           if sig["dir"] == "long" else
+                           (float(sig["entry"]) - float(_ai_target)) / _risk)
+                    if _rr >= 2.0:
+                        sig["tp"] = float(_ai_target)
+                        sig["ai_target"] = True
+            except Exception:
+                pass
             tid = self.open_position(
                 str(proposal["base"]), sig, score=0,
                 size_factor=float(confirmation.get("size_factor") or 1.0))

@@ -443,6 +443,7 @@ CREATE TABLE IF NOT EXISTS agent_proposals (
     validation_reason TEXT,
     signal_id TEXT,
     execution_authority INTEGER NOT NULL DEFAULT 0,
+    expected_target REAL,             -- 2026-08-25 v7: AI 预测目标位
     UNIQUE(run_id, base, direction),
     FOREIGN KEY(run_id) REFERENCES agent_proposal_runs(run_id),
     FOREIGN KEY(signal_id) REFERENCES signal_samples(signal_id)
@@ -1175,6 +1176,11 @@ def _migrate_v36_browser_page_events(conn):
     """)
 
 
+def _migrate_v38_agent_proposal_target(conn):
+    """v38: AI 提案目标位预测(2026-08-25 用户指示'让AI也预测涨到哪')。"""
+    _add_column_if_missing(conn, "agent_proposals", "expected_target", "REAL")
+
+
 def _migrate_v37_net_usdt_labels(conn):
     """v37: 成本后 USDT 盈亏比标签；旧 ATR 标签保持 NULL 隔离。"""
     for table, fields in {
@@ -1229,6 +1235,7 @@ MIGRATIONS = (
     (35, _migrate_v35_research_strategy_version),
     (36, _migrate_v36_browser_page_events),
     (37, _migrate_v37_net_usdt_labels),
+    (38, _migrate_v38_agent_proposal_target),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

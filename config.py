@@ -368,14 +368,16 @@ AGENT_PROPOSAL_SHADOW_ENABLED = True
 AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
 # v5 保留确定性方向资格，并压缩重复 evidence；v6 把盘口冲击从
 # notional/visible-depth 代理改为逐档 VWAP。仍仅 paper shadow，协议变化重计样本。
-AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v6-ai-direction"
+# 2026-08-25 用户指示"让AI也预测涨到哪": v7 提案带 expected_target
+# (只能从快照给出的结构位候选中选,不允许编点位)
+AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v7-ai-direction-target"
 AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
     "agent-proposal-impl-v9-major-only-unhinted-ai-direction-paper-gated"
 # 2026-08-25 实盘启用(用户指示): 实盘侧提示词用 live 版协议字符串——
 # "paper-gated" 字样会让模型在实盘系统性弃权(实测 5/5 次 no_aligned_candidate)
 AGENT_PROPOSAL_LIVE_IMPLEMENTATION_VERSION = \
     "agent-proposal-impl-v9-major-only-unhinted-ai-direction-live-enabled"
-AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
+AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v3-target"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",
     "expected_slippage_bps", "funding_rate", "book_imbalance", "basis",
