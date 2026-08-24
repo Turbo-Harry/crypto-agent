@@ -1087,3 +1087,15 @@
   治理近义标记；旧 v5 身份仍保留原先验容差以便重放。所有权限和 100/30 门不变。
 - 预防：Prompt 验收必须同时检查 verdict 分布、概率分辨率、Brier、证据来源和费用后决策价值；模型
   连续只输出单一 verdict 时先审查任务定义是否把常规案例排除在可判范围，不能靠降低阈值强行造 reject。
+
+### 2026-08-24 要求 JSON 的 Prompt 不等于 provider 已启用 JSON Output
+
+- 现象：首条 v6 自然 run 的第一次模型响应不是 JSON，语义图只能再调用一次修复；累计模型延迟
+  3,933ms、input/output token 5,529/398，几乎耗尽 A 策略同步把关的时点预算。
+- 根因：系统 Prompt 虽给出 JSON 字段，但 Chat Completions 请求没有设置 provider 原生
+  `response_format={"type":"json_object"}`；格式正确性完全依赖模型遵循文字指令。
+- 修复：仅 Harness provider 回调显式启用 JSON Output，legacy 判断保持原 text 默认；Prompt 同时保留
+  json 字样和完整对象样例。运行身份升级为 `tool-policy-v3-provider-json-output`，新旧格式可靠性和
+  100/30 证据不混计；空 content、字段缺失和语义错误仍走既有一次修复后失败关闭。
+- 预防：结构化输出必须同时验证请求参数、响应 JSON 和领域语义三层；provider 模式变化属于运行身份，
+  不能只改 HTTP body 却沿用旧版本成熟度。自然验收还要比较修复次数、模型延迟和错误率，不能只看最终成功。

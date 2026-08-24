@@ -49,20 +49,23 @@ def _read_key():
 
 
 def _request_llm(user_prompt, key=None, url=None, model=None, timeout=None,
-                 system_prompt=None):
+                 system_prompt=None, json_mode=False):
     key = key or _read_key()
     if not key:
         return None
     url = url or getattr(config, "AGENT_JUDGE_API_URL", "")
     model = model or getattr(config, "AGENT_JUDGE_MODEL", "deepseek-chat")
     timeout = timeout or getattr(config, "AGENT_JUDGE_TIMEOUT_SECONDS", 20)
-    body = json.dumps({
+    payload = {
         "model": model,
         "messages": [{"role": "system", "content": system_prompt or SYSTEM_PROMPT},
                      {"role": "user", "content": user_prompt}],
         "max_tokens": 200,
         "temperature": getattr(config, "AGENT_JUDGE_TEMPERATURE", 0.2),
-    }).encode("utf-8")
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers={
         "Content-Type": "application/json",
         "Authorization": f"Bearer {key}",
@@ -95,6 +98,7 @@ def production_harness_model_call(prompt):
         timeout=max(0.001, config.AGENT_HARNESS_TIMEOUT_MS / 1000.0),
         model=config.AGENT_HARNESS_MODEL,
         system_prompt=HARNESS_SYSTEM_PROMPT,
+        json_mode=config.AGENT_HARNESS_JSON_MODE,
     )
     if not data:
         return None

@@ -1506,3 +1506,15 @@
   5,529/398 input/output tokens、成本 0.00053427 USD、模型延迟 3,933ms。部署后健康心跳正常、零持仓、
   今日零交易、未熔断、对账一致、无错误、`veto_enabled=false`、`/models/entry` 仍为空。该首条只证明
   v6 能产生可追溯常规风险 reject，不能证明其拦亏正确或有正 EV，必须等待 4h 标签与 100/30 自然门。
+
+## 2026-08-24 Harness provider JSON Output 预声明
+
+- 触发证据：首条自然 v6 run 第一次响应非 JSON，触发唯一一次修复后才得到合法 reject；累计模型延迟
+  3,933ms。该问题不改变 verdict 阈值，但会增加成本、失败率和 A 策略同步下单前延迟。
+- 冻结变更：Harness 请求显式增加 `response_format={"type":"json_object"}`，legacy judge 仍保持 text；
+  `AGENT_HARNESS_JSON_MODE` 集中在 config，工具策略身份升级为
+  `tool-policy-v3-provider-json-output`。Prompt、模型、Context、风险/信心门、100/30、费用后 EV 和
+  paper-only 权限均不变；provider 偶发空 content 或领域语义错误仍最多修复一次后失败关闭。
+- 验收要求：专项必须断言 Harness 请求包含 JSON Output 且 legacy 默认不含；全量与静态护栏全绿；
+  先用无账户/市场隐私的合成 fixture 做一次 provider smoke，再只重启 paper。新身份的自然 run 必须
+  有完整 Trace、零订单，并记录首次响应是否无需结构修复；单次成功不能证明准确率或允许晋升。

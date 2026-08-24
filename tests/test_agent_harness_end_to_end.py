@@ -224,10 +224,28 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         self.assertEqual(captured["prompt"], "immutable-context")
         self.assertEqual(captured["timeout"], config.AGENT_HARNESS_TIMEOUT_MS / 1000.0)
         self.assertEqual(captured["model"], config.AGENT_HARNESS_MODEL)
+        self.assertIs(captured["json_mode"], True)
         self.assertIn("evidence_ids", captured["system_prompt"])
         self.assertIn("insufficient_evidence", captured["system_prompt"])
         self.assertEqual(raw.pricing_version, config.AGENT_HARNESS_PRICING_VERSION)
         self.assertGreater(raw.estimated_cost, 0)
+
+    def test_provider_json_mode_is_explicit_and_legacy_default_is_text(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"choices":[]}'
+        with mock.patch("urllib.request.urlopen", return_value=response) as opened:
+            agent_judge._request_llm(
+                "immutable-context", key="test-key",
+                url="https://provider.invalid/chat", json_mode=True)
+        payload = json.loads(opened.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+
+        with mock.patch("urllib.request.urlopen", return_value=response) as opened:
+            agent_judge._request_llm(
+                "legacy-context", key="test-key",
+                url="https://provider.invalid/chat")
+        payload = json.loads(opened.call_args.args[0].data.decode("utf-8"))
+        self.assertNotIn("response_format", payload)
 
     def test_provider_availability_never_exposes_key(self):
         with mock.patch.object(agent_judge, "_read_key", return_value="secret"):
