@@ -7,6 +7,8 @@ import tempfile
 import unittest
 
 import config
+from decision.agent_lifecycle import version_for_identity
+from decision.signal_identity import config_identity
 from storage import db
 from tools.entry_accuracy_audit import audit_status
 
@@ -26,6 +28,8 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                 pass
 
     def _insert_candidates(self, n=300):
+        strategy_version, config_hash = config_identity(
+            config.ENTRY_SIGNAL_STRATEGY_ID)
         samples, outcomes = [], []
         for idx in range(n):
             signal_id = f"sig-{idx:04d}"
@@ -34,7 +38,8 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                 signal_id, ("BTC", "ETH", "SOL")[idx % 3],
                 "long" if idx % 2 else "short", event_ts,
                 int(event_ts * 1000), config.SIGNAL_SAMPLE_TIMEFRAME,
-                "swap", config.ENTRY_STRATEGY_VERSION, "cfg", "features-v1",
+                "swap", strategy_version, config_hash,
+                config.SIGNAL_FEATURE_SCHEMA_VERSION,
                 100.0, 99.0, 102.0, 1.0,
                 config.SIGNAL_OUTCOME_HORIZON_HOURS,
                 .5, .5, .5, .5, .5, .5, "{}", event_ts, event_ts))
@@ -56,6 +61,17 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                 "sl_first,timeout,ambiguous,pnl_r,mfe_r,mae_r,high_ret_h,low_ret_h,"
                 "settled_at,bar_resolution,label_version) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", outcomes)
+
+    def _harness_version(self, strategy_id=None):
+        return version_for_identity(
+            strategy_id=strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID,
+            model_version=config.AGENT_HARNESS_MODEL,
+            prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
+            context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
+            schema_version=config.SIGNAL_FEATURE_SCHEMA_VERSION,
+            retrieval_version=config.AGENT_HARNESS_RETRIEVAL_VERSION,
+            tool_policy_version=config.AGENT_HARNESS_TOOL_POLICY_VERSION,
+            pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
 
     def test_empty_runtime_is_explicitly_incomplete(self):
         result = audit_status(self.path)
@@ -135,10 +151,10 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         self.assertEqual(result["counts"]["outcomes"], 299)
         self.assertFalse(result["gates"]["candidate_training_sample"]["passed"])
 
-    def test_config_version_duplicate_does_not_inflate_training_gate(self):
+    def test_old_config_duplicate_exits_current_training_scope(self):
         self._insert_candidates(299)
         # 与 sig-0000 是同一策略/币/方向/15m K，只是配置版本更新。
-        # 原始审计轨迹保留两行，但统计与训练只能算一个自然机会。
+        # 原始审计轨迹保留两行；旧身份不得进入当前研究 scope。
         event_ts = 1_800_000_000
         with db.tx(db_path=self.path) as conn:
             conn.execute(
@@ -164,8 +180,8 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                       db_path=self.path)["n"]
         result = audit_status(self.path)
         self.assertEqual(raw_n, 300)
-        self.assertEqual(result["counts"]["raw_candidate_snapshots"], 300)
-        self.assertEqual(result["counts"]["duplicate_version_snapshots"], 1)
+        self.assertEqual(result["counts"]["raw_candidate_snapshots"], 299)
+        self.assertEqual(result["counts"]["duplicate_version_snapshots"], 0)
         self.assertEqual(result["counts"]["candidates"], 299)
         self.assertEqual(result["counts"]["outcomes"], 299)
         self.assertFalse(result["gates"]["candidate_training_sample"]["passed"])
@@ -230,7 +246,8 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                 "INSERT INTO agent_versions "
                 "(version,strategy_id,role,status,created_ts,metrics_json) "
                 "VALUES (?,?,?,?,?,?)",
-                ("b-agent", config.BREAKOUT_SIGNAL_STRATEGY_ID,
+                (self._harness_version(config.BREAKOUT_SIGNAL_STRATEGY_ID),
+                 config.BREAKOUT_SIGNAL_STRATEGY_ID,
                  "challenger", "validated", 1, agent_metrics))
 
         pullback = audit_status(
@@ -240,7 +257,9 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         self.assertEqual(pullback["counts"]["paper_closed"], 59)
         self.assertEqual(breakout["counts"]["paper_closed"], 1)
         self.assertIsNone(pullback["agent_version"])
-        self.assertEqual(breakout["agent_version"]["version"], "b-agent")
+        self.assertEqual(
+            breakout["agent_version"]["version"],
+            self._harness_version(config.BREAKOUT_SIGNAL_STRATEGY_ID))
         self.assertIn(config.BREAKOUT_SIGNAL_STRATEGY_ID,
                       breakout["scope"]["strategy_version"])
         self.assertNotEqual(pullback["scope"]["strategy_version"],
@@ -272,11 +291,14 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                  json.dumps(metrics)))
         result = audit_status(self.path)
         self.assertEqual(result["counts"]["legacy_agent_valid"], 100)
-        self.assertEqual(result["counts"]["agent_valid_distinct_signals"], 1)
+        self.assertEqual(result["counts"]["agent_valid_distinct_signals"], 0)
+        self.assertIsNone(result["agent_version"])
         self.assertFalse(result["gates"]["agent_sample"]["passed"])
 
     def test_all_statistical_gates_can_be_proven_without_writes(self):
         self._insert_candidates()
+        strategy_version = config_identity(
+            config.ENTRY_SIGNAL_STRATEGY_ID)[0]
         complete_dims = json.dumps({name: .5 for name in config.SHADOW_DIMS})
         with db.tx(db_path=self.path) as conn:
             conn.executemany(
@@ -293,17 +315,21 @@ class EntryAccuracyAuditTest(unittest.TestCase):
                   .6, .3, int(idx % 2 == 0), int(idx % 2 == 1), 0.0)
                  for idx in range(config.FORECAST_MIN_CALIBRATION)])
             conn.execute(
-                "INSERT INTO factor_trials (ts,name,status,timeframe,horizon_hours) "
-                "VALUES (?,?,?,?,?)", (1, "validated-edge", "validated",
-                                        config.SIGNAL_SAMPLE_TIMEFRAME,
-                                        config.SIGNAL_OUTCOME_HORIZON_HOURS))
+                "INSERT INTO factor_trials (ts,name,status,timeframe,horizon_hours,"
+                "strategy_version) VALUES (?,?,?,?,?,?)",
+                (1, "validated-edge", "validated",
+                 config.SIGNAL_SAMPLE_TIMEFRAME,
+                 config.SIGNAL_OUTCOME_HORIZON_HOURS, strategy_version))
             conn.executemany(
                 "INSERT INTO model_artifacts (model_id,model_type,version,state,"
-                "created_at,feature_names,artifact,metrics) VALUES (?,?,?,?,?,?,?,?)",
+                "created_at,feature_names,artifact,metrics,strategy_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 [("entry-kept", "entry_probability", "v1", "kept", 1,
-                  "[]", "{}", json.dumps({"brier_skill": .1})),
+                  "[]", "{}", json.dumps({"brier_skill": .1}),
+                  strategy_version),
                  ("extrema-shadow-accepted", "extrema", "v1", "accepted", 2,
-                  "[]", "{}", json.dumps({"pinball_improvement": .1}))])
+                  "[]", "{}", json.dumps({"pinball_improvement": .1}),
+                  strategy_version)])
             for idx in range(config.AGENT_EVAL_MIN_VALID):
                 reject = idx < config.AGENT_EVAL_MIN_REJECT
                 conn.execute(
@@ -320,7 +346,7 @@ class EntryAccuracyAuditTest(unittest.TestCase):
             conn.execute(
                 "INSERT INTO agent_versions (version,role,status,created_ts,metrics_json) "
                 "VALUES (?,?,?,?,?)",
-                ("agent-v1", "challenger", "validated", 1,
+                (self._harness_version(), "challenger", "validated", 1,
                  json.dumps({"n": config.AGENT_EVAL_MIN_VALID,
                              "reject_n": config.AGENT_EVAL_MIN_REJECT,
                              "incremental_ev_lower_bound": .1,
@@ -344,11 +370,11 @@ class EntryAccuracyAuditTest(unittest.TestCase):
         with db.tx(db_path=self.path) as conn:
             metrics = json.loads(conn.execute(
                 "SELECT metrics_json FROM agent_versions WHERE version=?",
-                ("agent-v1",)).fetchone()[0])
+                (self._harness_version(),)).fetchone()[0])
             metrics["probability_std"] = 0.0
             conn.execute(
                 "UPDATE agent_versions SET metrics_json=? WHERE version=?",
-                (json.dumps(metrics), "agent-v1"))
+                (json.dumps(metrics), self._harness_version()))
 
         no_resolution = audit_status(self.path)
         self.assertFalse(no_resolution["gates"]["agent_incremental_proven"]["passed"])

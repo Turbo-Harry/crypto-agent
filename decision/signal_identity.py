@@ -69,14 +69,15 @@ def config_identity(strategy_id: Optional[str] = None) -> Tuple[str, str]:
     return version, config_hash
 
 
-def research_scope_version(strategy_id: Optional[str] = None) -> str | None:
+def research_scope_version(strategy_id: Optional[str] = None) -> str:
     """Return the exact sample identity required by versioned research lines.
 
-    A/B retain their established rolling canonical research behavior.  C is an
-    LLM protocol experiment, so prompt/implementation changes define a new
-    population and must never borrow prior protocol outcomes.
+    Feature formulas, strategy parameters and C prompt/implementation versions
+    all participate in ``config_identity``.  Every research line must therefore
+    consume only the exact identity that produced its frozen samples.  Within
+    one identity the signal table's unique key already enforces one row per
+    natural event; the cross-version canonical view remains an audit view and
+    is not a valid source for current-identity training.
     """
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
-    if strategy_id == config.AGENT_PROPOSAL_STRATEGY_ID:
-        return config_identity(strategy_id)[0]
-    return None
+    return config_identity(strategy_id)[0]

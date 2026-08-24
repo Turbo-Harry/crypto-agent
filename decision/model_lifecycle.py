@@ -16,7 +16,7 @@ def _shadow_rows(model_id, db_path=None, after_ts=None):
     sql = ("SELECT s.event_ts,s.trade_id,s.entry,s.stop,s.direction,"
            "s.horizon_hours,s.features,"
            "o.tp_first,o.sl_first,o.timeout,o.pnl_r "
-           "FROM signal_samples_canonical s "
+           "FROM signal_samples s "
            "JOIN signal_outcomes o ON o.signal_id=s.signal_id "
            "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? ")
     params = [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
@@ -110,7 +110,7 @@ def _extrema_shadow_metrics(model_id, db_path=None, after_ts=None):
     strategy_id = (model.get("strategy_id") if model else None) or \
         config.ENTRY_SIGNAL_STRATEGY_ID
     sql = ("SELECT s.features,o.high_ret_h,o.low_ret_h "
-           "FROM signal_samples_canonical s "
+           "FROM signal_samples s "
            "JOIN signal_outcomes o ON o.signal_id=s.signal_id "
            "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? ")
     params = [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,

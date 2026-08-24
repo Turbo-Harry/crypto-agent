@@ -9,6 +9,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import config
+from decision.signal_identity import config_identity
 from decision.entry_probability import (entry_gate_decision, fit_logistic,
                                         cost_breakdown_r, execution_cost_r,
                                         expected_value_r,
@@ -184,6 +185,46 @@ def main():
         check("不足 300 候选不训练", insufficient["status"] == "insufficient_data",
               str(insufficient))
         import storage.db as sdb
+        current_version, current_hash = config_identity(
+            config.ENTRY_SIGNAL_STRATEGY_ID)
+        with sdb.tx(db_path=db) as conn:
+            conn.executemany(
+                "INSERT INTO signal_samples (signal_id,symbol,direction,event_ts,"
+                "kline_ts,timeframe,venue,strategy_version,config_hash,"
+                "feature_schema_version,entry,stop,tp,atr,horizon_hours,wick,"
+                "features,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,"
+                "?,?,?,?,?,?,?)",
+                [("scope-current", "BTC", "long", 1_700_000_000, 1,
+                  config.SIGNAL_SAMPLE_TIMEFRAME, "swap", current_version,
+                  current_hash, config.SIGNAL_FEATURE_SCHEMA_VERSION,
+                  100.0, 99.0, 102.0, 1.0,
+                  config.SIGNAL_OUTCOME_HORIZON_HOURS, .5,
+                  '{"shadow_dims":{"wick":0.5}}', 1_700_000_000,
+                  1_700_000_000),
+                 ("scope-old", "ETH", "long", 1_700_000_900, 2,
+                  config.SIGNAL_SAMPLE_TIMEFRAME, "swap", "old-strategy",
+                  "old-config", "signal-features-v4", 100.0, 99.0, 102.0,
+                  1.0, config.SIGNAL_OUTCOME_HORIZON_HOURS, .5,
+                  '{"shadow_dims":{"wick":0.5}}', 1_700_000_900,
+                  1_700_000_900)])
+            conn.executemany(
+                "INSERT INTO signal_outcomes (signal_id,horizon_hours,tp_first,"
+                "sl_first,timeout,ambiguous,pnl_r,mfe_r,mae_r,high_ret_h,"
+                "low_ret_h,settled_at,bar_resolution,label_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [("scope-current", config.SIGNAL_OUTCOME_HORIZON_HOURS,
+                  1, 0, 0, 0, 2.0, 2.0, .1, .02, -.01,
+                  1_700_020_000, "1m", "path-v1"),
+                 ("scope-old", config.SIGNAL_OUTCOME_HORIZON_HOURS,
+                  0, 1, 0, 0, -1.0, .1, 1.0, .01, -.02,
+                  1_700_020_900, "1m", "path-v1")])
+        scoped_training = train_entry_model(
+            "long", db_path=db, feature_names=["wick"])
+        check("概率训练只统计当前完整 identity，旧 v4 不得补样本门",
+              scoped_training["n"] == 1 and
+              scoped_training["tp_n"] == 1 and
+              scoped_training["sl_n"] == 0,
+              str(scoped_training))
         old_scope = dict(artifact, timeframe="1H", horizon_hours=24)
         sdb.x("INSERT INTO model_artifacts (model_id,model_type,direction,version,"
               "state,created_at,feature_names,artifact,metrics) "
@@ -226,25 +267,31 @@ def main():
         sdb.init_db(scoped_db)
         scoped_a = dict(
             multi_artifact, strategy_id=config.ENTRY_SIGNAL_STRATEGY_ID,
+            strategy_version=config_identity(
+                config.ENTRY_SIGNAL_STRATEGY_ID)[0],
             timeframe=config.SIGNAL_SAMPLE_TIMEFRAME,
             horizon_hours=config.SIGNAL_OUTCOME_HORIZON_HOURS,
             cost_model_version=config.ENTRY_COST_MODEL_VERSION)
         scoped_b = dict(
-            scoped_a, strategy_id=config.BREAKOUT_SIGNAL_STRATEGY_ID)
+            scoped_a, strategy_id=config.BREAKOUT_SIGNAL_STRATEGY_ID,
+            strategy_version=config_identity(
+                config.BREAKOUT_SIGNAL_STRATEGY_ID)[0])
         sdb.x(
             "INSERT INTO model_artifacts (model_id,model_type,strategy_id,direction,"
-            "version,state,created_at,feature_names,artifact,metrics) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "version,state,created_at,feature_names,artifact,metrics,"
+            "strategy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             ["a-active", "entry_probability", config.ENTRY_SIGNAL_STRATEGY_ID,
              "long", "v", "active", 1, '["edge"]',
-             json.dumps(scoped_a), "{}"], db_path=scoped_db)
+             json.dumps(scoped_a), "{}", scoped_a["strategy_version"]],
+            db_path=scoped_db)
         sdb.x(
             "INSERT INTO model_artifacts (model_id,model_type,strategy_id,direction,"
-            "version,state,created_at,feature_names,artifact,metrics) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "version,state,created_at,feature_names,artifact,metrics,"
+            "strategy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             ["b-active", "entry_probability",
              config.BREAKOUT_SIGNAL_STRATEGY_ID, "long", "v", "active", 2,
-             '["edge"]', json.dumps(scoped_b), "{}"], db_path=scoped_db)
+             '["edge"]', json.dumps(scoped_b), "{}",
+             scoped_b["strategy_version"]], db_path=scoped_db)
         common = {"dir": "long", "entry": 100, "stop": 99,
                   "factor_features": {"edge": 1.0}, "shadow_dims": {}}
         a_prediction = predict_entry_signal(

@@ -380,6 +380,27 @@ class Replay15mResearchTest(unittest.TestCase):
                 "settled_at": 30_000, "bar_resolution": "1m",
                 "label_version": config.SIGNAL_OUTCOME_LABEL_VERSION,
             }, db_path=self.output)
+        from storage import db
+        db.x(
+            "INSERT INTO signal_samples (signal_id,symbol,direction,event_ts,"
+            "kline_ts,timeframe,venue,strategy_version,config_hash,"
+            "feature_schema_version,entry,stop,tp,atr,horizon_hours,features,"
+            "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ["old-forecast-scope", "ETH", "long", 2.0, 2_000,
+             config.SIGNAL_SAMPLE_TIMEFRAME, "swap", "old-strategy",
+             "old-config", "signal-features-v4", 100.0, 99.0, 102.0, 1.0,
+             config.SIGNAL_OUTCOME_HORIZON_HOURS, "{}", 2.0, 2.0],
+            db_path=self.output)
+        persist_outcome({
+            "signal_id": "old-forecast-scope", "horizon_hours": 4,
+            "tp_first": 1, "sl_first": 0, "timeout": 0, "ambiguous": 0,
+            "pnl_r": 2, "mfe_r": 2, "mae_r": .1,
+            "high_ret_h": .02, "low_ret_h": -.01,
+            "time_to_tp_sec": 1, "time_to_sl_sec": None,
+            "time_to_high_sec": 1, "time_to_low_sec": 1,
+            "settled_at": 30_000, "bar_resolution": "1m",
+            "label_version": config.SIGNAL_OUTCOME_LABEL_VERSION,
+        }, db_path=self.output)
         historical = empirical_first_passage(
             self.output, "long", as_of_ts=15_000)
         self.assertEqual(historical["n"], 1)

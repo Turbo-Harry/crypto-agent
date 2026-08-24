@@ -268,7 +268,7 @@ def empirical_first_passage(db_path=None, direction=None, as_of_ts=None,
     params.append(cutoff)
     rows = sdb.q(
         "SELECT o.tp_first,o.sl_first,o.timeout FROM signal_outcomes o "
-        "JOIN signal_samples_canonical s ON s.signal_id=o.signal_id WHERE " +
+        "JOIN signal_samples s ON s.signal_id=o.signal_id WHERE " +
         " AND ".join(conditions), params, db_path=db_path)
     n = len(rows)
     if not n:
@@ -421,7 +421,7 @@ def calibration(db_path=None, min_n=10, as_of_ts=None, strategy_id=None):
             params.append(float(as_of_ts))
         rows = sdb.q(
             "SELECT c.p_hit_tp,c.p_hit_sl,c.p_timeout,c.hit_tp,c.hit_sl,c.timeout "
-            "FROM forecast_calibration c JOIN signal_samples_canonical s "
+            "FROM forecast_calibration c JOIN signal_samples s "
             "ON s.signal_id=c.signal_id WHERE " + " AND ".join(conditions),
             params, db_path=db_path)
         n = len(rows)

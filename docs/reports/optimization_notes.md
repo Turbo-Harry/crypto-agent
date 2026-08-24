@@ -2087,3 +2087,24 @@
   零订单。首次 Prompt 已声明重复事实/ID 不算独立，修复轮也收到精确 violation，因此该单次失败不另升
   Prompt 身份；保留 Trace，若同因复现再按预声明规则立 challenger。上述只证明新特征语义与失败关闭
   已自然生效，不证明 Harness 精准率、胜率或费用后 EV 已达门。
+
+## 2026-08-24 当前 feature identity 全研究链隔离
+
+- 触发证据：v5 部署后的物理样本为 A 8、B 0、C 4，outcome 均为 0；旧 readiness 却把 A 的 v1～v4
+  滚动样本合并为候选 204/outcome 179，并把 v7/v4 Harness 的 3 条成熟判断展示为当前门进度。若继续，
+  A 达到 300 时会把旧深度利用率 proxy 与 v5 逐档 VWAP 混进同一因子/概率/极值模型。
+- 修复范围：`research_scope_version` 对 A/B/C 均返回当前 `config_identity`。因子挖掘、入场概率、极值、
+  经验首触/极值、forecast calibration、模型 shadow 生命周期、readiness 与独立 replay evaluator 全部只读
+  该 identity 的原始样本；表级唯一约束负责同身份幂等，跨版本 canonical view 不再作为训练源。
+- Harness 同步隔离：readiness 的 Agent 门按当前 v13/v11/v5/DeepSeek/Context/Retrieval/Pricing 完整版本
+  精确查询；旧 v7/v4 生命周期仍保留审计，但不再把 3/100、3/30 冒充当前进度。
+- 只读复算：修复后 A 为候选 8/outcome 0、B 为 0/0、C 为 4/0；A 当前 Harness 成熟门为 0/100、
+  reject 0/30。旧物理行、outcome、制品与 Trace 均未删除或改写，只退出当前训练和晋升统计。
+- 安全边界：不降低 300/60/60、100/30、Brier、4/5 折、费用后 EV 下界或稳定性门，不新增订单权限，
+  不修改风险预算和固定 2:1。该修复会诚实延后产模，但避免以口径污染换取“更快有模型”。专项、全量、
+  paper 重启与部署后 API 证据在同批后续补齐。
+- 离线证据：readiness 10/10、概率 30/30、因子门 6/6、日内因子 33/33、极值 19/19、生命周期 12/12、
+  forecast 15/15、replay 14/14、决策闭环 64/64、服务 60/60 与接口边界 17/17 通过；回归反例分别证明
+  旧 v4 不能进入当前 readiness、因子 observation、概率/极值训练、经验首触、模型加载或 Harness 门。
+  按 CI 的隔离数据库/事件/运行目录自动发现并通过 58/58 个脚本，失败 0；参数、隔离、23 条修复护栏、
+  code graph、AI repo、py_compile 与 diff check 全绿。提交、paper 重启和宿主 API 复核待后续完成。

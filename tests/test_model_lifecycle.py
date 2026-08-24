@@ -8,8 +8,10 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+import config
 from decision.model_lifecycle import (advance, budget_expansion_allowed,
                                       rollback, snapshot)
+from decision.signal_identity import config_identity
 
 passed = failed = 0
 
@@ -26,27 +28,34 @@ def check(name, cond, detail=""):
 
 def insert_model(db, model_id, state, parent=None, metrics=None):
     import storage.db as sdb
+    strategy_version = config_identity(config.ENTRY_SIGNAL_STRATEGY_ID)[0]
     artifact = {"version": "v1", "feature_names": ["edge"],
+                "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+                "strategy_version": strategy_version,
                 "model": {"weights": [1], "means": [0], "scales": [1],
                           "bias": 0, "n_train": 300, "base_rate": 0.5}}
     sdb.x(
         "INSERT INTO model_artifacts (model_id,model_type,direction,version,state,"
-        "created_at,training_cutoff,data_hash,feature_names,artifact,metrics,parent_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "created_at,training_cutoff,data_hash,feature_names,artifact,metrics,parent_id,"
+        "strategy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [model_id, "entry_probability", "long", "v1", state, time.time(),
          1_700_000_000, "hash", '["edge"]', json.dumps(artifact),
-         json.dumps(metrics or {}), parent], db_path=db)
+         json.dumps(metrics or {}), parent, strategy_version], db_path=db)
 
 
 def insert_extrema_model(db, model_id, state):
     import storage.db as sdb
-    artifact = {"version": "extrema-v1", "feature_names": ["trend"]}
+    strategy_version = config_identity(config.ENTRY_SIGNAL_STRATEGY_ID)[0]
+    artifact = {"version": "extrema-v1", "feature_names": ["trend"],
+                "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+                "strategy_version": strategy_version}
     sdb.x(
         "INSERT INTO model_artifacts (model_id,model_type,direction,version,state,"
-        "created_at,training_cutoff,data_hash,feature_names,artifact,metrics) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "created_at,training_cutoff,data_hash,feature_names,artifact,metrics,"
+        "strategy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         [model_id, "extrema", "long", "extrema-v1", state, time.time(),
-         1_700_000_000, "extrema-hash", '["trend"]', json.dumps(artifact), "{}"],
+         1_700_000_000, "extrema-hash", '["trend"]', json.dumps(artifact), "{}",
+         strategy_version],
         db_path=db)
 
 
@@ -71,7 +80,6 @@ def main():
         from engines.signal_sampling import (merge_sample_features,
                                              record_signal_sample)
         from decision.signal_outcomes import persist_outcome
-        import config
         for i in range(config.MODEL_SHADOW_MIN_CANDIDATES):
             win = i % 2 == 0
             sig = {"dir": "long", "entry": 100.0, "stop": 99.0, "tp": 102.0,

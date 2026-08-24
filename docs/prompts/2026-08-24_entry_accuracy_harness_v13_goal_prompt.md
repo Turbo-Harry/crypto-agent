@@ -31,8 +31,9 @@
   `execution_authority=0`。HBAR 的单族高摩擦样本两次重复同一 evidence ID 后被确定性校验失败关闭为
   `baseline_pass`；该 Trace 不计作 reject，也不因为格式完成率而修改风险门。
 - 入场概率与极值模型按 long/short 分开训练；300/60/60 是每个拟训练方向的门，不是把双方向总数相加。
-  当前 A long 成熟 130（TP 41/SL 64），A short 成熟 40（TP 6/SL 31），均未达到训练门；C v5.1
-  当前为 2 条 pending，不能计入成熟样本。
+  研究链现已按完整 `config_identity` 隔离：当前 v5 为 A 8 条 pending（long 6、short 2）、B 0 条、
+  C 4 条 pending，outcome 均为 0。旧 A 的 179 个 outcome 与旧 v7/v4 Harness 的 3 条成熟判断只保留
+  审计，不再补当前训练、校准或 100/30 门。
 
 ## 目标
 
@@ -44,8 +45,9 @@
 
 ## 步骤
 
-1. 冻结完整身份：Prompt v13、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v11 和价格口径
-   任一变化都重新计样本，旧版本只保留审计。
+1. 冻结完整身份：策略配置、Prompt v13、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v11
+   和价格口径任一变化都重新计样本，旧版本只保留审计。采样、因子试验、概率/极值训练、经验预测、
+   校准、模型生命周期与 readiness 必须逐层使用同一 `config_identity`，不得只在接口展示层隔离。
 2. 按方向解释动量和资金费：long 的负动量、short 的正动量才是逆向；正资金费不是 short 成本，
    负资金费不是 long 成本。
 3. 消除流动性字段歧义：`depth` 是回踩位置质量，`book` 是方向对齐盘口失衡，
@@ -84,6 +86,8 @@
 - 当前完整 v13/v11 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
 - 所有 `liquidity_failure` 都满足冻结点差或预期滑点门；方向失衡不得冒充绝对深度不足。
 - 当前样本必须是 `signal-features-v5`；旧 v4 的深度利用率 proxy 不得与逐档 VWAP 语义混入同一验收。
+- A/B/C 当前候选、outcome、因子试验、模型制品、校准和生命周期的 strategy identity 必须逐项相同；
+  readiness 的 Harness 门必须等于当前 v13/v11/v5 完整版本，旧版本计数非零也不能补当前 100/30。
 - A/B 分策略审计盘口、点差、预期滑点和订单流覆盖；FakeAdapter 提供盘口时端到端候选必须冻结非空
   `book_imbalance/spread_bps/expected_slippage_bps`，并验证 B 的盘口/OI 状态不会改写 A 的同名状态，
   同时保持 B 零订单、零执行权限。

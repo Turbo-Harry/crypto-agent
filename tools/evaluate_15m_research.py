@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import config
+from decision.signal_identity import research_scope_version
 
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
 _MINUTE_MS = 60_000
@@ -578,25 +579,27 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
     from factors.extrema_model_training import train_extrema_model
 
     sdb.init_db(db_path)
+    strategy_version = research_scope_version(strategy_id)
     scope = [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
-             config.SIGNAL_OUTCOME_HORIZON_HOURS]
+             config.SIGNAL_OUTCOME_HORIZON_HOURS, strategy_version]
     rows = sdb.q(
         "SELECT s.signal_id,s.event_ts,s.symbol,s.direction,s.entry,s.stop,s.tp,"
         "s.horizon_hours,s.features,o.pnl_r,o.tp_first,o.sl_first,o.timeout "
-        "FROM signal_samples_canonical s "
+        "FROM signal_samples s "
         "JOIN signal_outcomes o ON o.signal_id=s.signal_id "
         "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? "
+        "AND s.strategy_version=? "
         "ORDER BY s.event_ts",
         scope, db_path=db_path)
     calibration_rows = sdb.q(
         "SELECT c.p_hit_tp,c.p_hit_sl,c.p_timeout,c.hit_tp,c.hit_sl,c.timeout "
-        "FROM forecast_calibration c JOIN signal_samples_canonical s "
+        "FROM forecast_calibration c JOIN signal_samples s "
         "ON s.signal_id=c.signal_id WHERE s.strategy_id=? "
-        "AND s.timeframe=? AND s.horizon_hours=?",
+        "AND s.timeframe=? AND s.horizon_hours=? AND s.strategy_version=?",
         scope, db_path=db_path)
     candidates = int(sdb.q1(
-        "SELECT COUNT(*) n FROM signal_samples_canonical WHERE strategy_id=? "
-        "AND timeframe=? AND horizon_hours=?",
+        "SELECT COUNT(*) n FROM signal_samples WHERE strategy_id=? "
+        "AND timeframe=? AND horizon_hours=? AND strategy_version=?",
         scope, db_path=db_path)["n"])
     months = Counter(time.strftime("%Y-%m", time.gmtime(float(row["event_ts"])))
                      for row in rows)
@@ -643,7 +646,8 @@ def evaluate_research(db_path: str, strategy_id: str | None = None) -> dict[str,
         "db_path": str(Path(db_path).expanduser().resolve()),
         "replay": replay,
         "scope": {"strategy_id": strategy_id, "timeframe": scope[1],
-                  "horizon_hours": scope[2]},
+                  "horizon_hours": scope[2],
+                  "strategy_version": strategy_version},
         "coverage": {"candidates": candidates, "outcomes": len(rows),
                      "symbols": len({row["symbol"] for row in rows}),
                      "months": dict(sorted(months.items())),

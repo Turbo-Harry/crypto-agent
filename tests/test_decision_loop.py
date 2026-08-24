@@ -506,6 +506,7 @@ def test_extrema_shadow_wiring(tmp):
     print("== 极值影子预测接入候选与展示 ==")
     import config
     import storage.db as sdb
+    from decision.signal_identity import config_identity
     work = os.path.join(tmp, "extrema_wiring")
     os.makedirs(work, exist_ok=True)
     dt, fake = _make_trader(work)
@@ -526,6 +527,8 @@ def test_extrema_shadow_wiring(tmp):
     artifact = {
         "version": "extrema-test-v1", "direction": "long",
         "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+        "strategy_version": config_identity(
+            config.ENTRY_SIGNAL_STRATEGY_ID)[0],
         "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
         "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
         "feature_names": ["trend"], "high_model": qmodel(0.01, 0.02, 0.03),
@@ -535,10 +538,11 @@ def test_extrema_shadow_wiring(tmp):
         "high_conformal_radius": 0.001, "low_conformal_radius": 0.001}
     sdb.x(
         "INSERT INTO model_artifacts (model_id,model_type,direction,version,state,"
-        "created_at,training_cutoff,data_hash,feature_names,artifact,metrics) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "created_at,training_cutoff,data_hash,feature_names,artifact,metrics,"
+        "strategy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         ["extrema_wire", "extrema", "long", "extrema-test-v1", "shadow",
-         time.time(), 0, "hash", '["trend"]', json.dumps(artifact), "{}"],
+         time.time(), 0, "hash", '["trend"]', json.dumps(artifact), "{}",
+         artifact["strategy_version"]],
         db_path=dt._db_path)
     dt.scan_signals()
     sample = sdb.q1("SELECT features FROM signal_samples ORDER BY event_ts DESC LIMIT 1",

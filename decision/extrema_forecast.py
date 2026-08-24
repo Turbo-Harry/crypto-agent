@@ -154,7 +154,7 @@ def empirical_extrema_forecast(entry: float, direction: str, regime=None,
     scope_sql = " AND s.strategy_version=?" if scope_version else ""
     rows = sdb.q(
         "SELECT s.features,o.high_ret_h,o.low_ret_h FROM signal_outcomes o "
-        "JOIN signal_samples_canonical s ON s.signal_id=o.signal_id "
+        "JOIN signal_samples s ON s.signal_id=o.signal_id "
         "WHERE s.direction=? AND s.strategy_id=? "
         "AND s.timeframe=? AND s.horizon_hours=?" + scope_sql +
         " ORDER BY s.event_ts DESC",
@@ -235,7 +235,7 @@ def _online_conformal(model_id: str, target: str, db_path=None,
     scope_sql = " AND s.strategy_version=?" if scope_version else ""
     rows = sdb.q(
         "SELECT s.features,o.high_ret_h,o.low_ret_h "
-        "FROM signal_samples_canonical s "
+        "FROM signal_samples s "
         "JOIN signal_outcomes o ON o.signal_id=s.signal_id "
         "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?" +
         scope_sql + " ORDER BY s.event_ts DESC LIMIT ?",

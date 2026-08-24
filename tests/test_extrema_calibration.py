@@ -10,6 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import config
+from decision.signal_identity import config_identity
 from decision.extrema_forecast import (conformal_radius, fit_linear_quantiles,
                                        interval_coverage, pinball_loss,
                                        predict_linear_quantiles, predict_signal,
@@ -78,6 +79,8 @@ def main():
         artifact = {
             "version": "test-extrema-v1", "direction": "long",
             "strategy_id": config.ENTRY_SIGNAL_STRATEGY_ID,
+            "strategy_version": config_identity(
+                config.ENTRY_SIGNAL_STRATEGY_ID)[0],
             "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
             "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
             "feature_names": ["trend"], "high_model": high_model,
@@ -87,11 +90,12 @@ def main():
             "high_conformal_radius": 0.001, "low_conformal_radius": 0.001}
         sdb.x(
             "INSERT INTO model_artifacts (model_id,model_type,direction,version,state,"
-            "created_at,training_cutoff,data_hash,feature_names,artifact,metrics) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at,training_cutoff,data_hash,feature_names,artifact,metrics,"
+            "strategy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             ["extrema_shadow", "extrema", "long", "test-extrema-v1", "shadow",
              time.time(), 1_700_000_000, "hash", '["trend"]',
-             json.dumps(artifact), "{}"], db_path=db)
+             json.dumps(artifact), "{}", artifact["strategy_version"]],
+            db_path=db)
         shadow = predict_signal(
             {"dir": "long", "entry": 100.0, "shadow_dims": {"trend": 0.5}},
             db_path=db, allow_shadow=True)
@@ -103,6 +107,8 @@ def main():
 
         # 360 个去重候选，5 折 purge 后验证训练、评估和制品持久化完整闭环。
         sample_rows, outcome_rows = [], []
+        strategy_version, config_hash = config_identity(
+            config.ENTRY_SIGNAL_STRATEGY_ID)
         start = 1_700_000_000
         for i in range(360):
             x = (i % 37) / 36
@@ -114,7 +120,8 @@ def main():
             sample_rows.append((
                 signal_id, "BTC", "long", event_ts, int(event_ts * 1000),
                 config.SIGNAL_SAMPLE_TIMEFRAME,
-                "swap", "test-v1", "cfg", "features-v1", 100.0, 99.0,
+                "swap", strategy_version, config_hash,
+                config.SIGNAL_FEATURE_SCHEMA_VERSION, 100.0, 99.0,
                 102.0, 1.0, config.SIGNAL_OUTCOME_HORIZON_HOURS, x, snapshot,
                 event_ts, event_ts))
             outcome_rows.append((
@@ -122,6 +129,20 @@ def main():
                 1, 0, 0, 0, 2.0, 2.0, 0.2,
                 0.01 + 0.03 * x + noise, -0.04 + 0.02 * x - noise,
                 event_ts + 86_400, "1m", "test-v1"))
+        # 旧 feature schema 即使已有完整标签，也不得补当前极值训练样本门。
+        sample_rows.append((
+            "train_old_schema", "ETH", "long", start + 999 * 172_800,
+            int((start + 999 * 172_800) * 1000),
+            config.SIGNAL_SAMPLE_TIMEFRAME, "swap", "old-strategy",
+            "old-config", "signal-features-v4", 100.0, 99.0, 102.0, 1.0,
+            config.SIGNAL_OUTCOME_HORIZON_HOURS, .5,
+            json.dumps({"shadow_dims": {"trend": .5},
+                        "factor_features": {}}),
+            start + 999 * 172_800, start + 999 * 172_800))
+        outcome_rows.append((
+            "train_old_schema", config.SIGNAL_OUTCOME_HORIZON_HOURS,
+            1, 0, 0, 0, 2.0, 2.0, .2, .03, -.03,
+            start + 1000 * 172_800, "1m", "test-v1"))
         with sdb.tx(db_path=db) as conn:
             conn.executemany(
                 "INSERT INTO signal_samples (signal_id,symbol,direction,event_ts,"
@@ -141,7 +162,8 @@ def main():
             trained = train_extrema_model("long", db_path=db,
                                           feature_names=["trend"])
             check("360 候选通过极值模型 OOS 门进入 validated",
-                  trained["status"] == "validated", str(trained))
+                  trained["status"] == "validated" and trained["n"] == 360,
+                  str(trained))
             saved = sdb.q1(
                 "SELECT model_type,state FROM model_artifacts WHERE model_id=?",
                 [trained.get("model_id")], db_path=db)

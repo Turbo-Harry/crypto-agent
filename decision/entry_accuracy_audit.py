@@ -61,6 +61,20 @@ def _gate(passed: bool, actual: Any, required: Any, reason: str) -> dict[str, An
             "required": required, "reason": reason}
 
 
+def _configured_harness_version(strategy_id: str) -> str:
+    """Return the exact configured Harness identity whose gate is reported."""
+    from decision.agent_lifecycle import version_for_identity
+    return version_for_identity(
+        strategy_id=strategy_id,
+        model_version=config.AGENT_HARNESS_MODEL,
+        prompt_version=config.AGENT_HARNESS_PROMPT_VERSION,
+        context_version=config.AGENT_HARNESS_CONTEXT_VERSION,
+        schema_version=config.SIGNAL_FEATURE_SCHEMA_VERSION,
+        retrieval_version=config.AGENT_HARNESS_RETRIEVAL_VERSION,
+        tool_policy_version=config.AGENT_HARNESS_TOOL_POLICY_VERSION,
+        pricing_version=config.AGENT_HARNESS_PRICING_VERSION)
+
+
 def audit_status(db_path: str | None = None,
                  strategy_id: str | None = None) -> dict[str, Any]:
     """返回统计完成度；只打开 SQLite ``mode=ro``，不迁移、不写 KV。"""
@@ -78,6 +92,7 @@ def audit_status(db_path: str | None = None,
     # pullback 版本。这里只计算哈希，不访问交易所、不写库。
     strategy_version = config_identity(strategy_id)[0]
     research_version = research_scope_version(strategy_id)
+    harness_version = _configured_harness_version(strategy_id)
     plain_scope_sql = " AND strategy_version=?" if research_version else ""
     joined_scope_sql = " AND s.strategy_version=?" if research_version else ""
     conn = _connect_read_only(db_path)
@@ -88,36 +103,36 @@ def audit_status(db_path: str | None = None,
             conn, "SELECT COUNT(*) FROM signal_samples WHERE strategy_id=? "
             "AND timeframe=? AND horizon_hours=?" + plain_scope_sql, scope)
         candidates = _count(
-            conn, "SELECT COUNT(*) FROM signal_samples_canonical WHERE strategy_id=? "
+            conn, "SELECT COUNT(*) FROM signal_samples WHERE strategy_id=? "
             "AND timeframe=? AND horizon_hours=?" + plain_scope_sql, scope)
         duplicate_version_snapshots = max(0, raw_candidates - candidates)
         outcomes = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
-            "JOIN signal_samples_canonical s "
+            "JOIN signal_samples s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql,
             scope)
         tp = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
-            "JOIN signal_samples_canonical s "
+            "JOIN signal_samples s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
             " AND o.tp_first=1", scope)
         sl = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
-            "JOIN signal_samples_canonical s "
+            "JOIN signal_samples s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
             " AND o.sl_first=1", scope)
         timeout = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
-            "JOIN signal_samples_canonical s "
+            "JOIN signal_samples s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
             " AND o.timeout=1", scope)
         six_dim_outcomes = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
-            "JOIN signal_samples_canonical s "
+            "JOIN signal_samples s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql + " "
             "AND s.wick IS NOT NULL AND s.depth IS NOT NULL "
@@ -126,7 +141,7 @@ def audit_status(db_path: str | None = None,
         direction_rows = _rows(
             conn, "SELECT s.direction,COUNT(*) n,SUM(o.tp_first) tp_first,"
             "SUM(o.sl_first) sl_first,SUM(o.timeout) timeout "
-            "FROM signal_outcomes o JOIN signal_samples_canonical s "
+            "FROM signal_outcomes o JOIN signal_samples s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
             " GROUP BY s.direction", scope)
@@ -152,7 +167,7 @@ def audit_status(db_path: str | None = None,
             _complete_six_dims(row.get("shadow_dims")) for row in closed_rows)
         calibration_n = _count(
             conn, "SELECT COUNT(*) FROM forecast_calibration f "
-            "JOIN signal_samples_canonical s ON s.signal_id=f.signal_id "
+            "JOIN signal_samples s ON s.signal_id=f.signal_id "
             "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?" +
             joined_scope_sql, scope)
         validated_factors = _count(
@@ -193,14 +208,14 @@ def audit_status(db_path: str | None = None,
 
         legacy_rows = _rows(
             conn, "SELECT a.signal_id,a.verdict FROM ai_judgments a "
-            "JOIN signal_samples_canonical s ON s.signal_id=a.signal_id "
+            "JOIN signal_samples s ON s.signal_id=a.signal_id "
             "WHERE a.call_status='valid' AND a.outcome_r IS NOT NULL "
             "AND s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?" +
             joined_scope_sql, scope)
         harness_rows = _rows(
             conn, "SELECT r.signal_id,r.final_action FROM agent_evaluations e "
             "JOIN agent_runs r ON r.run_id=e.run_id "
-            "JOIN signal_samples_canonical s ON s.signal_id=r.signal_id "
+            "JOIN signal_samples s ON s.signal_id=r.signal_id "
             "WHERE e.lifecycle_status='mature' AND r.runtime_status='completed' "
             "AND r.model_verdict IS NOT NULL AND s.strategy_id=? "
             "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql, scope)
@@ -211,8 +226,8 @@ def audit_status(db_path: str | None = None,
 
         agent_version = conn.execute(
             "SELECT version,status,metrics_json FROM agent_versions "
-            "WHERE strategy_id=? ORDER BY created_ts DESC LIMIT 1",
-            [strategy_id]).fetchone()
+            "WHERE strategy_id=? AND version=? LIMIT 1",
+            [strategy_id, harness_version]).fetchone()
         agent_version_dict = dict(agent_version) if agent_version else None
         agent_metrics = _json_dict(
             agent_version_dict.get("metrics_json")) if agent_version_dict else {}
@@ -293,7 +308,8 @@ def audit_status(db_path: str | None = None,
             "db_path": str(Path(db_path).expanduser().resolve()),
             "scope": {"timeframe": timeframe, "horizon_hours": horizon,
                       "strategy_id": strategy_id,
-                      "strategy_version": strategy_version},
+                      "strategy_version": strategy_version,
+                      "harness_version": harness_version},
             "counts": {
                 "raw_candidate_snapshots": raw_candidates,
                 "duplicate_version_snapshots": duplicate_version_snapshots,

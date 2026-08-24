@@ -1332,3 +1332,17 @@
   升 v5、C implementation 升 v6，旧 proxy 样本不混计。
 - 预防：execution 特征名称若带 cost/slippage/impact，必须用可复算的成交价格定义；容量比只能另名为
   participation/utilization，禁止通过乘 10,000 冒充基点价格变化。
+
+### 2026-08-24 采样身份升级不代表研究消费者自动隔离
+
+- 现象：`signal-features-v5` 自然 A 样本实际只有 8 条且尚无 outcome，`/research/readiness` 却报告
+  204 个候选、179 个 outcome；Harness 门也继续展示旧 v7/v4 生命周期的 3 条成熟判断。
+- 根因：`config_identity` 已把 feature schema 写进采样身份，但 `research_scope_version` 对 A/B 返回空，
+  因子、概率、极值、校准、生命周期和只读审计仍按 strategy-only 读取。更隐蔽的是 canonical view 会先
+  跨版本选最新快照再应用外层 identity 过滤，可能把同一自然事件的当前行一并遮掉。
+- 修复：A/B/C 研究 scope 全部绑定当前 `config_identity`；精确 identity 内直接读取带唯一约束的
+  `signal_samples`，canonical view 只保留跨版本自然机会审计用途。因子试验、概率/极值训练、经验预测、
+  校准、模型 shadow/加载与 research-only evaluator 逐层沿用同一 identity；Harness 完成门只查询当前
+  配置的 model/prompt/context/schema/retrieval/tool-policy/pricing 完整版本。
+- 预防：任何 schema、成本、策略或协议升级，验收必须从只读计数一路追到训练 SQL、试验/制品身份、
+  在线加载、校准和生命周期；“采样行带版本”或某一个接口计数正确，都不能证明下游没有借旧样本。

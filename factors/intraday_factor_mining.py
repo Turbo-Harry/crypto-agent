@@ -18,7 +18,7 @@ def load_observations(feature_name: str, db_path=None,
     scope_sql = " AND s.strategy_version=?" if scope_version else ""
     rows = sdb.q(
         "SELECT s.*,o.pnl_r,o.tp_first,o.sl_first,o.timeout "
-        "FROM signal_samples_canonical s JOIN signal_outcomes o ON o.signal_id=s.signal_id "
+        "FROM signal_samples s JOIN signal_outcomes o ON o.signal_id=s.signal_id "
         "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? "
         + scope_sql + " ORDER BY s.event_ts",
         [strategy_id,

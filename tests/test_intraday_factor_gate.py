@@ -7,9 +7,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import config
+from decision.signal_identity import config_identity
 from factors.intraday_factor_gate import (EVALUATION_VERSION, evaluate_factor,
                                           purged_walk_forward_splits)
 from factors.feature_registry import REGISTRY, extract_features
+from factors.intraday_factor_mining import load_observations
 from engines.signal_scan import _cancellation_imbalance, _dynamic_ofi
 from data.orderflow import OrderFlowAccumulator, multilevel_ofi_event
 from decision.feature_transforms import (cross_sectional_snapshot,
@@ -212,6 +214,41 @@ def main():
               set(good["stability"]) == {"direction", "symbol", "regime", "month"},
               str(good["stability"]))
         import storage.db as sdb
+        current_version, current_hash = config_identity(
+            config.ENTRY_SIGNAL_STRATEGY_ID)
+        with sdb.tx(db_path=db) as conn:
+            conn.executemany(
+                "INSERT INTO signal_samples (signal_id,symbol,direction,event_ts,"
+                "kline_ts,timeframe,venue,strategy_version,config_hash,"
+                "feature_schema_version,entry,stop,tp,atr,horizon_hours,wick,"
+                "features,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,"
+                "?,?,?,?,?,?,?)",
+                [("factor-current", "BTC", "long", 1_700_000_000, 1,
+                  config.SIGNAL_SAMPLE_TIMEFRAME, "swap", current_version,
+                  current_hash, config.SIGNAL_FEATURE_SCHEMA_VERSION,
+                  100.0, 99.0, 102.0, 1.0,
+                  config.SIGNAL_OUTCOME_HORIZON_HOURS, .5, "{}",
+                  1_700_000_000, 1_700_000_000),
+                 ("factor-old", "ETH", "long", 1_700_000_900, 2,
+                  config.SIGNAL_SAMPLE_TIMEFRAME, "swap", "old-strategy",
+                  "old-config", "signal-features-v4", 100.0, 99.0, 102.0,
+                  1.0, config.SIGNAL_OUTCOME_HORIZON_HOURS, .9, "{}",
+                  1_700_000_900, 1_700_000_900)])
+            conn.executemany(
+                "INSERT INTO signal_outcomes (signal_id,horizon_hours,tp_first,"
+                "sl_first,timeout,ambiguous,pnl_r,mfe_r,mae_r,high_ret_h,"
+                "low_ret_h,settled_at,bar_resolution,label_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [("factor-current", config.SIGNAL_OUTCOME_HORIZON_HOURS,
+                  1, 0, 0, 0, 2.0, 2.0, .1, .02, -.01,
+                  1_700_020_000, "1m", "path-v1"),
+                 ("factor-old", config.SIGNAL_OUTCOME_HORIZON_HOURS,
+                  0, 1, 0, 0, -1.0, .1, 1.0, .01, -.02,
+                  1_700_020_900, "1m", "path-v1")])
+        scoped_observations = load_observations("wick", db)
+        check("因子挖掘只读取当前完整 identity，旧 v4 不得进入样本",
+              [row["signal_id"] for row in scoped_observations] ==
+              ["factor-current"], str(scoped_observations))
         trial = sdb.q1("SELECT timeframe,horizon_hours,details FROM factor_trials "
                        "WHERE name='synthetic_edge' ORDER BY id DESC", db_path=db)
         check("因子证据绑定 15m/4h 且持久化稳定性",
