@@ -265,7 +265,7 @@ AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
 # it no longer recomputes eligibility from raw decimals.  Still paper shadow.
 AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v4-deterministic-eligibility"
 AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
-    "agent-proposal-impl-v4.1-deterministic-eligibility"
+    "agent-proposal-impl-v4.2-json-mode"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",

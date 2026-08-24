@@ -1744,3 +1744,16 @@
   `proposal-run-961ef81431f73b53cfe6170c`；其标签虽为 v4，冻结 payload 却没有
   `aligned_direction/eligible_candidates`，属于“新标签、旧内存代码”的混合样本。该审计行原样保留，
   不删除、不改库；最终 implementation 身份升为 v4.1，使接口、cycle key 与验收精确排除该混合 run。
+
+## 2026-08-24 Agent 主动提案 v4.2 JSON 契约预声明
+
+- 触发证据：paper PID `44966` 重启后首个真实 v4.1 run
+  `proposal-run-6e0b16bdfb9b8944d7f4c9be` 已正确冻结 ZAMA=long、ZRO=short 及顶层资格清单，
+  但 provider 响应在 1867ms 后被严格解析器判为 `schema_error`，提案、订单均为 0。
+- 根因与冻结变更：主 Harness 的 provider 调用显式启用 JSON object 模式，C 提案却沿用文本模式
+  `_call_llm`；仅靠 Prompt 要求 JSON，不能构成传输层契约。v4.2 只把 C 的 production callback 改为
+  同一 provider 的 `json_mode=true`，保留原 System Prompt、候选输入、严格 schema、确定性资格、2:1
+  和失败关闭语义；implementation 身份单独升级，旧 v4/v4.1 不混计。
+- 验收：专项必须证明 provider payload 确实带 JSON object 模式，原有 14 项资格/幂等/零权限回归全绿；
+  全量仍为 58/58。paper 重启后的首个自然 v4.2 run 必须有可复算 input hash、完整资格字段，且只能是
+  合法 completed 或带明确原因的 fail-closed；无论结果都保持 execution_authority=false、订单 0。

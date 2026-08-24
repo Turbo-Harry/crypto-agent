@@ -6,11 +6,13 @@ import tempfile
 import time
 import unittest
 from dataclasses import replace
+from unittest import mock
 
 import config
 import storage.db as sdb
 from decision.agent_contracts import stable_hash
 from decision.agent_proposals import (build_market_snapshot, list_proposals,
+                                      production_proposal_model_call,
                                       run_proposal_cycle)
 from engines.signal_scan import SignalScanMixin
 from engines.signal_sampling import record_agent_proposal_sample
@@ -181,6 +183,26 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(result["run"]["runtime_status"], "schema_error")
         self.assertEqual(result["run"]["valid_count"], 0)
         self.assertEqual(result["proposals"], [])
+
+    def test_production_provider_explicitly_requires_json_object(self):
+        from decision import agent_judge
+        captured = {}
+
+        def fake_request(prompt, **kwargs):
+            captured["prompt"] = prompt
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content":
+                '{"proposals":[],"abstain_reason":"no_clear_edge"}'}}]}
+
+        with mock.patch.object(agent_judge, "_request_llm",
+                               side_effect=fake_request):
+            raw = production_proposal_model_call("frozen-proposal-input")
+        self.assertEqual(captured["prompt"], "frozen-proposal-input")
+        self.assertIs(captured["json_mode"], True)
+        self.assertEqual(captured["timeout"],
+                         config.AGENT_HARNESS_TIMEOUT_MS / 1000.0)
+        self.assertIn("aligned_direction", captured["system_prompt"])
+        self.assertIn('"proposals":[]', raw)
 
     def test_empty_proposal_requires_reason_and_freezes_exact_input(self):
         snap = snapshot()

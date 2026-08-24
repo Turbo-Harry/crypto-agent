@@ -532,13 +532,16 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
 
 def production_proposal_model_call(prompt: str):
     """Use the existing provider transport with the proposal-only system role."""
-    from decision.agent_judge import _call_llm
+    from decision.agent_judge import _request_llm
     system_prompt = (PROPOSAL_SYSTEM_PROMPT_V1
                      if config.AGENT_PROPOSAL_PROMPT_VERSION ==
                      "agent-proposal-v1" else PROPOSAL_SYSTEM_PROMPT)
-    return _call_llm(
+    data = _request_llm(
         prompt, timeout=max(0.001, config.AGENT_HARNESS_TIMEOUT_MS / 1000.0),
-        system_prompt=system_prompt)
+        system_prompt=system_prompt, json_mode=True)
+    if not data:
+        return None
+    return data["choices"][0]["message"]["content"].strip()
 
 
 production_proposal_model_call.model_version = config.AGENT_JUDGE_MODEL

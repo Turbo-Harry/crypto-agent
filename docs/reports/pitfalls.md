@@ -1179,3 +1179,14 @@
   `no_aligned_candidate`，全部不齐时又必须使用该原因。错误输出失败关闭，不进入样本或订单。
 - 预防：凡是代码可精确计算的资格，不让 LLM 从原始小数重复推导；结构化 abstain 原因也必须与冻结
   输入做双向语义校验，不能只检查枚举合法。
+
+### 2026-08-24 Prompt 要求 JSON 不等于 provider 启用了 JSON 模式
+
+- 现象：首个字段完整的 v4.1 自然批次已有两个确定性同向候选，模型响应仍被严格解析器判为
+  `schema_error`，无法形成可结算提案。
+- 根因：主 Harness 通过 provider 请求的 `response_format=json_object` 固化输出模式，C 提案调用却走
+  默认文本模式；System Prompt 的“只输出 JSON”只是软约束。
+- 修复：C production callback 复用同一 provider transport 并显式传 `json_mode=true`；解析器、资格门和
+  失败关闭不变，implementation 另升 v4.2，旧错误样本原样保留。
+- 预防：任何要求机器严格解析的生产模型调用，测试必须检查实际 provider payload 的结构化输出模式，
+  不能只断言 Prompt 文案包含 JSON；自然验收仍要核对运行状态和审计字段。
