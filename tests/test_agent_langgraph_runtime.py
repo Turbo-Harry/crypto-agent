@@ -459,6 +459,101 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.run.evidence_ids,
                          ("signal:evidence-anchor:market",))
 
+    def test_v6_initial_request_exposes_validator_owned_contract(self):
+        calls = []
+        inp = replace(
+            make_input("initial-contract"),
+            prompt_version="harness-risk-v8-liquidity-field-semantics",
+            tool_policy_version="tool-policy-v6-initial-decision-contract",
+            signal={"base": "BNB", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.009, "momentum_4h": -.006,
+                "spread_bps": 1.0, "expected_slippage_bps": 2.0,
+                "funding_rate": .0001,
+            }}},
+            account={"portfolio_notional_usdt": 0,
+                     "max_total_notional_usdt": 600},
+            health={"risk_halted": False, "risk_can_trade": True},
+            field_provenance={
+                "signal": "signal:initial-contract",
+                "market": "signal:initial-contract:market",
+            })
+
+        def model(prompt):
+            calls.append(json.loads(prompt))
+            return {
+                "verdict": "abstain", "risk_probability": .55,
+                "confidence": .6, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "no two qualified current risk families",
+                "reason": "deterministic qualifiers do not support reject",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 1)
+        contract = calls[0]["decision_contract"]
+        self.assertIn("signal:initial-contract",
+                      contract["allowed_evidence_ids"])
+        self.assertIn("signal:initial-contract:market",
+                      contract["allowed_evidence_ids"])
+        self.assertEqual(contract["allowed_evidence_ids"],
+                         sorted(contract["allowed_evidence_ids"]))
+        self.assertEqual(contract["deterministic_qualifiers"], {
+            "directional_momentum_conflict": False,
+            "funding_is_adverse_cost": False,
+            "liquidity_failure_qualified": False,
+            "position_risk_conflict_qualified": False,
+        })
+        self.assertEqual(
+            contract["reject_thresholds"]["minimum_ordinary_risk_families"], 2)
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_old_tool_policy_keeps_original_initial_payload_shape(self):
+        calls = []
+        inp = replace(
+            make_input("old-initial-shape"),
+            field_provenance={"market": "signal:old-initial-shape:market"})
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda prompt: calls.append(json.loads(prompt)) or
+            approve(prompt), db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertNotIn("decision_contract", calls[0])
+
+    def test_v6_initial_contract_reports_qualified_frozen_risks(self):
+        calls = []
+        inp = replace(
+            make_input("qualified-contract"),
+            tool_policy_version="tool-policy-v6-initial-decision-contract",
+            signal={"base": "LTC", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.001, "momentum_4h": .008,
+                "spread_bps": 7.0, "expected_slippage_bps": 18.0,
+                "funding_rate": .0001,
+            }}},
+            account={"portfolio_notional_usdt": 600,
+                     "max_total_notional_usdt": 600},
+            health={"risk_halted": True, "risk_can_trade": False})
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda prompt: calls.append(json.loads(prompt)) or
+            approve(prompt), db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(
+            calls[0]["decision_contract"]["deterministic_qualifiers"], {
+                "directional_momentum_conflict": True,
+                "funding_is_adverse_cost": True,
+                "liquidity_failure_qualified": True,
+                "position_risk_conflict_qualified": True,
+            })
+
     def test_read_only_tool_trace_and_single_model_call(self):
         calls = []
         router = ReadOnlyToolRouter(

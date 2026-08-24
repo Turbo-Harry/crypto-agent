@@ -1690,3 +1690,24 @@
   `/research/readiness` 继续明确 0 validated factor、0 entry model。启动日志中曾出现旧 numpy 导入
   与 lifespan 重试错误，但当前 PID 已监听且健康端点、状态端点和对账端点连续可读；该历史 stderr
   不作为健康成功的替代证据。
+
+## 2026-08-24 Harness v8 初次判断契约预声明
+
+- 触发证据：首轮自然 v8/v5 共 5 条 B 候选，仅 BNB 一条合法完成；三条首响应自造字段级 evidence ID，
+  另两条首响应或修复把顺向 short 动量写成 `signal_inconsistency`，或在账户空仓、可交易时使用
+  `position_risk_conflict`。现有 v5 只在修复轮给合法锚，模型第一次仍需从深层上下文自行寻找锚和推导
+  四类资格，造成 1/5 合法完成、三次 schema error 与一次 timeout。
+- 冻结变更：Prompt 继续为 v8，模型、Context、Schema、Retrieval、4 秒总预算和全部风险阈值不变；
+  Tool Policy 升为 `tool-policy-v6-initial-decision-contract`。仅对该身份在第一次模型请求中加入与校验器
+  同源的 `allowed_evidence_ids`，以及冻结推导的动量逆向、账户风险冲突、严重流动性失败和资金费是否
+  为候选方向成本四项资格。资格只帮助模型遵守现有规则，确定性校验仍为最终权威，不新增或放宽
+  reason code，不读取 outcome。
+- 验收要求：专项证明首请求已包含精确锚和四项资格、旧 Tool Policy 不被静默改写、模型按契约可在
+  一次调用内合法 abstain；所有原有反例与失败关闭语义继续通过。随后跑全部 Agent、全量自动发现套件
+  与静态护栏；只重启 paper。首批自然 v8/v6 必须逐条核对合法完成率、修复数、总延迟和零 Veto，
+  绩效仍须等待独立 4h outcome 与 100/30、费用后增量下界门。
+- 离线证据：LangGraph 专项扩至 28/28，分别覆盖自然 B 类全 false 资格、严重滑点/逆向动量/账户冲突/
+  不利资金费全 true 资格、合法锚排序和旧 Tool Policy 输入形状不变；全部 Agent 专项 124/124，服务
+  API 53/53。最终自动发现套件 58/58、红 0；AI 仓库与入口契约、依赖图、参数集中化、测试隔离、
+  23 条修复护栏、`py_compile` 与 `diff --check` 全绿。实现没有修改策略阈值、样本门、模型生命周期、
+  下单权限或风险预算。

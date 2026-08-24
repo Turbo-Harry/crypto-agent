@@ -312,6 +312,52 @@ def _has_liquidity_failure(agent_input: AgentInput) -> bool:
     )
 
 
+def _funding_is_adverse_cost(agent_input: AgentInput) -> bool | None:
+    """Interpret funding from the frozen candidate direction."""
+
+    direction = str(agent_input.signal.get("direction") or
+                    agent_input.signal.get("dir") or "").lower()
+    rate = _as_float(_frozen_factor_features(agent_input).get("funding_rate"))
+    if rate is None or direction not in ("long", "short"):
+        return None
+    return bool((direction == "long" and rate > 0) or
+                (direction == "short" and rate < 0))
+
+
+def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
+    """Expose validator-owned facts before the first bounded model call."""
+
+    agent_input = state["agent_input"]
+    return {
+        "allowed_evidence_ids": sorted(_evidence_ids(state)),
+        "deterministic_qualifiers": {
+            "directional_momentum_conflict":
+                _has_directional_momentum_conflict(agent_input),
+            "position_risk_conflict_qualified":
+                _has_position_risk_conflict(agent_input),
+            "liquidity_failure_qualified":
+                _has_liquidity_failure(agent_input),
+            "funding_is_adverse_cost":
+                _funding_is_adverse_cost(agent_input),
+        },
+        "reject_thresholds": {
+            "minimum_risk_probability":
+                config.AGENT_HARNESS_REJECT_MIN_RISK,
+            "minimum_confidence":
+                config.AGENT_HARNESS_REJECT_MIN_CONFIDENCE,
+            "minimum_ordinary_risk_families":
+                config.AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES,
+        },
+        "instruction": (
+            "This contract is derived from the same frozen input used by the "
+            "deterministic validator. Copy evidence_ids only from "
+            "allowed_evidence_ids. A false qualifier cannot support its named "
+            "risk family; directional_momentum_conflict only governs 1H/4H "
+            "momentum claims. funding_is_adverse_cost=false means funding "
+            "cannot be cited as a cost for this candidate direction."),
+    }
+
+
 def _cites_favorable_funding(decision: AgentDecision,
                              agent_input: AgentInput) -> bool:
     text = decision.reason.lower()
@@ -479,6 +525,9 @@ class _Nodes:
         }
         if state.get("tool_payload"):
             payload["tools"] = state["tool_payload"]
+        if (state["agent_input"].tool_policy_version in
+                config.AGENT_HARNESS_INITIAL_CONTRACT_TOOL_POLICIES):
+            payload["decision_contract"] = _initial_decision_contract(state)
         retry_count = int(state.get("model_retry_count", 0))
         if retry_count:
             payload["semantic_repair"] = {
