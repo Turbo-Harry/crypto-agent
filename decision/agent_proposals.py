@@ -436,6 +436,7 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
     runtime_status = "completed"
     response_hash = None
     error_type = None
+    error_detail = None
     proposals: list[Proposal] = []
     abstain_reason = None
     try:
@@ -452,6 +453,8 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
                     proposals, abstain_reason, ordered, legacy_v1=legacy_v1)
     except ValueError as exc:
         runtime_status, error_type = "schema_error", type(exc).__name__
+        # 只保留本地严格解析器生成的确定性诊断；原始模型输出仍仅存哈希。
+        error_detail = str(exc)[:160]
     except TimeoutError as exc:
         runtime_status, error_type = "timeout", type(exc).__name__
     except Exception as exc:
@@ -525,6 +528,7 @@ def run_proposal_cycle(snapshots: Iterable[MarketSnapshot], *,
         run_id, runtime_status=runtime_status, response_hash=response_hash,
         proposal_count=len(proposals), valid_count=valid_count,
         latency_ms=latency_ms, error_type=error_type,
+        error_detail=error_detail,
         abstain_reason=abstain_reason, finished_ts=now + latency_ms / 1000.0,
         db_path=db_path)
     return {"run": run, "proposals": stored, "deduplicated": False}

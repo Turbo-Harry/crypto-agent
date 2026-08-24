@@ -1796,3 +1796,15 @@
 - 全量证据：按 CI 自动发现方式运行 `tests/test_*.py`，发现并通过 58/58 个脚本，失败 0；参数集中、
   测试隔离、fix guard、code graph、AI repo check 全绿。此证据只证明协议隔离与安全闭环正确，不把当前
   1 条 pending 提案写成模型成熟或胜率提升。
+
+## 2026-08-24 C schema 失败本地诊断预声明
+
+- 触发证据：v4.2 当前自然运行 2 次，1 次 completed、1 次 `schema_error`；现有审计只记录
+  `error_type=ValueError` 和响应哈希，无法区分顶层字段、提案字段、空提案理由或资格语义冲突。
+- 冻结变更：只把解析器产生的预定义 ValueError 文本作为 `error_detail` 写进本地 KV 审计 output；
+  不保存原始模型响应、不增加或重试外部调用、不改 prompt/implementation identity、不改候选与下单逻辑。
+- 验收：分别触发结构字段错误与资格语义错误，接口审计必须返回对应本地诊断，成功运行 detail 为空；
+  数据库表结构、v4.2 样本身份、模型门槛及零执行权限保持不变。
+- 实施证据：专项 16/16 通过；字段错误审计为 `proposal output fields do not match schema`，资格错误为
+  `no_aligned_candidate conflicts with deterministic eligibility`，成功输出为 null。再次按 CI 自动发现并
+  通过 58/58 个测试脚本，失败 0；没有新增数据库迁移、provider 调用或订单权限。

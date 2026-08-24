@@ -37,7 +37,8 @@ def begin_run(run: Mapping[str, Any], audit: Mapping[str, Any], *,
 def finish_run(run_id: str, *, runtime_status: str,
                response_hash: str | None, proposal_count: int,
                valid_count: int, latency_ms: int,
-               error_type: str | None, abstain_reason: str | None,
+               error_type: str | None, error_detail: str | None,
+               abstain_reason: str | None,
                finished_ts: float, db_path: str | None = None) -> dict[str, Any]:
     """Finish the durable run and append the parsed output audit atomically."""
     db.init_db(db_path)
@@ -60,6 +61,7 @@ def finish_run(run_id: str, *, runtime_status: str,
             "valid_count": int(valid_count),
             "abstain_reason": abstain_reason,
             "error_type": error_type,
+            "error_detail": error_detail,
             "latency_ms": int(latency_ms),
             "finished_ts": float(finished_ts),
         }

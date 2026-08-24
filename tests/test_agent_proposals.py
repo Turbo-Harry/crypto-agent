@@ -193,6 +193,9 @@ class AgentProposalTest(unittest.TestCase):
         self.assertEqual(result["run"]["runtime_status"], "schema_error")
         self.assertEqual(result["run"]["valid_count"], 0)
         self.assertEqual(result["proposals"], [])
+        audit = list_proposals(db_path=self.db_path)["runs"][0]["audit"]
+        self.assertEqual(audit["output"]["error_detail"],
+                         "proposal output fields do not match schema")
 
     def test_production_provider_explicitly_requires_json_object(self):
         from decision import agent_judge
@@ -231,6 +234,7 @@ class AgentProposalTest(unittest.TestCase):
         run = view["runs"][0]
         self.assertEqual(run["abstain_reason"], "microstructure_conflict")
         audit = run["audit"]
+        self.assertIsNone(audit["output"]["error_detail"])
         self.assertEqual(audit["implementation_version"],
                          config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION)
         self.assertEqual(audit["input_hash"],
@@ -259,6 +263,10 @@ class AgentProposalTest(unittest.TestCase):
             db_path=self.db_path)
         self.assertEqual(result["run"]["runtime_status"], "schema_error")
         self.assertEqual(result["proposals"], [])
+        audit = list_proposals(db_path=self.db_path)["runs"][0]["audit"]
+        self.assertEqual(
+            audit["output"]["error_detail"],
+            "no_aligned_candidate conflicts with deterministic eligibility")
         self.assertEqual(sdb.q1("SELECT COUNT(*) n FROM signal_samples",
                                 db_path=self.db_path)["n"], 0)
 
