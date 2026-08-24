@@ -9,9 +9,10 @@
   `/models/entry` 为空；不得把“模型为空”当成需要绕过的故障。
 - Harness 当前冻结身份为 Prompt v8 + Tool Policy v6；首批 3 条自然 run 均首次完成且零重试，
   但成熟结果不足，`veto_enabled=false`。
-- 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.0-compact-json-budget`；v4.2 四个自然
+- 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.1-full-restart-boundary`；v4.2 四个自然
   批次仅 1 completed、3 schema error，最新错误被定位为双提案长 evidence 在 200-token 共享预算下没有
-  形成完整 JSON。v5 只压缩重复 evidence 并独立输出预算，仍须从零收集当前身份的自然证据。
+  形成完整 JSON。v5.0 在代码提交后、进程完整重启前被 config 热重载，产生 1 条“新身份+旧函数体”的
+  schema error，已由 v5.1 身份隔离。v5.1 仍须从零收集完整重启后的自然证据。
 - 入场概率与极值模型按 long/short 分开训练；300/60/60 是每个拟训练方向的门，不是把双方向总数相加。
   当前 A long 成熟 128（TP 41/SL 62），A short 成熟 40（TP 6/SL 31），均未达到训练门。
 

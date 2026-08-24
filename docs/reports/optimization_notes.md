@@ -1842,3 +1842,6 @@
 - 离线证据：双紧凑提案专项 17/17，Harness 端到端 13/13，judge 19/19、采样 17/17；测试直接解码
   provider request body，确认 proposal 为 400 tokens/temperature 0，Harness 默认仍为 200/0.2。最终
   CI 自动发现 58/58 脚本通过，参数、依赖、隔离、fix guard 与 AI repo 全绿；自然 v5 仍待部署后验收。
+- 部署身份纠偏：提交后旧 paper 进程先热重载 config 身份、但函数体仍是旧代码，产生 1 条标记 v5.0、
+  实际仍走旧 provider 参数的 schema error（run `proposal-run-0417f26a9d7363bcd9a82963`）。该行保留，
+  implementation 升 v5.1 后退出当前统计；只有完整重启后的 v5.1 才是正式自然基线。

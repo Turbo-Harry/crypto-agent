@@ -265,7 +265,7 @@ AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
 # 上限截断。仍仅 paper shadow，协议变化重新计自然样本。
 AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v5-compact-evidence"
 AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
-    "agent-proposal-impl-v5.0-compact-json-budget"
+    "agent-proposal-impl-v5.1-full-restart-boundary"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",

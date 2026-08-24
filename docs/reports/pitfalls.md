@@ -1228,3 +1228,13 @@
   零温度；主 Harness 的预算不随之扩大。
 - 预防：结构化契约新增数组上限时，必须计算最坏/典型合法响应尺寸，并把 max tokens、延迟预算与自然
   finish 状态一起验收，不能只看 `response_format`。
+
+### 2026-08-24 config 热重载身份可能先于 Python 函数体生效
+
+- 现象：v5 代码提交后、paper 完整重启前，旧进程先读到新 implementation 配置并写出一条 v5.0 run，
+  但实际 callback 仍是内存中的旧 200-token 函数体。
+- 根因：`config.maybe_reload()` 会替换配置属性，已 import 模块的函数和 Prompt 常量不会随之重载；用
+  config implementation 作为审计身份时，两者短时间不再原子一致。
+- 修复：混合 run 原样保留，implementation 再升 v5.1，并以完整进程重启作为正式身份边界。
+- 预防：任何同时修改 config 身份与 Python 行为的协议升级，提交后先停止扫描并完整重启，再接受首条
+  新身份样本；不得用热重载结果作为部署完成证据。
