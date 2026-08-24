@@ -2002,5 +2002,9 @@
 - 离线证据：策略 B 37/37，决策闭环 61/61，LangGraph 48/48，候选冻结 17/17，交易所层 51/51，
   相关文件 py_compile 通过。端到端 FakeAdapter 在真实 B 候选形成时冻结非空 book/spread/slippage，
   同时验证 `fake.orders==0`。按 CI 隔离数据库、事件文件与运行目录自动发现并通过 58/58 个测试脚本，
-  失败 0；参数集中、测试隔离、23 条修复护栏、code graph、AI repo check 与 diff check 全绿。paper 重启
-  与新自然 B 覆盖证据待本轮后续补齐。
+  失败 0；参数集中、测试隔离、23 条修复护栏、code graph、AI repo check 与 diff check 全绿；新自然 B
+  覆盖证据待本轮后续补齐。
+- 部署证据：实现提交 `5d13be1`；paper 从 PID 86444 完整重启为 91595，live PID 90574 未变化。
+  重启后 `/health=ok`、空仓、未熔断、对账 balanced、`/error` 为空，configured=v13/v11、Veto=false，
+  `/models/entry` 仍为空且预算扩张为 false。20:00 自然扫描没有形成 A/B 入场候选，只形成 2 条零权限
+  C shadow 提案，因此本轮没有可用于生产非空覆盖验收的新 B 样本；不得用离线 FakeAdapter 证据替代。
