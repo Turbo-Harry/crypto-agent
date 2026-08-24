@@ -1684,3 +1684,9 @@
   自动发现 58/58 脚本、红 0。AI 仓库与入口契约、依赖图、参数集中化、测试隔离、23 条修复护栏、
   `py_compile`、`diff --check` 全绿。研究库写入只发生在 `/tmp` 的 research-only 数据库，运行库、
   模型生命周期、风险预算、订单和 live 均未修改。
+- 模拟盘部署：实现提交 `c9c0d61`。重启前 paper PID `27319`，空仓、今日零交易、未熔断、对账
+  一致且 `/error` 为空；只 kickstart paper 到 PID `34046`，live PID `90574` 未变化。启动后
+  `/health=ok`、心跳正常，持仓与未结交易均为 0、对账一致、无错误；`/models/entry` 仍为空，
+  `/research/readiness` 继续明确 0 validated factor、0 entry model。启动日志中曾出现旧 numpy 导入
+  与 lifespan 重试错误，但当前 PID 已监听且健康端点、状态端点和对账端点连续可读；该历史 stderr
+  不作为健康成功的替代证据。
