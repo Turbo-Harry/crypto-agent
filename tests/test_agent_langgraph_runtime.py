@@ -628,6 +628,202 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(contract["signal_inconsistency_conflicting_factors"],
                          ["trend_band_atr"])
 
+    def test_v10_contract_exposes_exact_qualified_family_floor(self):
+        calls = []
+        inp = replace(
+            make_input("v10-family-floor"),
+            prompt_version="harness-risk-v12-qualified-family-floor",
+            tool_policy_version="tool-policy-v10-qualified-family-floor",
+            signal={"base": "INJ", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": .001, "momentum_4h": .004,
+                "trend_band_atr": .67,
+                "directional_index_spread": .064,
+                "spread_bps": 7.4, "expected_slippage_bps": 33.2,
+            }}},
+            news={"news_score": .54},
+            account={"portfolio_notional_usdt": 0,
+                     "max_total_notional_usdt": 600},
+            health={"risk_halted": False, "risk_can_trade": True})
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda prompt: calls.append(json.loads(prompt)) or
+            approve(prompt), db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        contract = calls[0]["decision_contract"]
+        self.assertEqual(contract["qualified_ordinary_risk_families"],
+                         ["liquidity_failure"])
+        self.assertFalse(contract["reject_evidence_floor_satisfied"])
+
+    def test_v12_repairs_reject_when_only_one_family_is_qualified(self):
+        calls = []
+        inp = replace(
+            make_input("v12-one-family"),
+            prompt_version="harness-risk-v12-qualified-family-floor",
+            tool_policy_version="tool-policy-v10-qualified-family-floor",
+            signal={"base": "INJ", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": .001, "momentum_4h": .004,
+                "trend_band_atr": .67,
+                "directional_index_spread": .064,
+                "expected_slippage_bps": 33.2,
+            }}},
+            news={"news_score": .54},
+            field_provenance={
+                "market": "signal:v12-one-family:market",
+                "signal": "signal:v12-one-family",
+            })
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return {
+                    "verdict": "reject", "risk_probability": .75,
+                    "confidence": .75,
+                    "reason_codes": ["liquidity_failure",
+                                     "signal_inconsistency"],
+                    "evidence_ids": ["signal:v12-one-family:market",
+                                     "signal:v12-one-family"],
+                    "missing_information": [], "abstain_reason": None,
+                    "reason": "slippage and momentum conflict support reject",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .66,
+                "confidence": .65, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "only liquidity_failure is qualified",
+                "reason": "reject evidence floor is not satisfied",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("unqualified ordinary risk families", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_v12_two_qualified_families_reject_on_first_call(self):
+        calls = []
+        inp = replace(
+            make_input("v12-two-families"),
+            prompt_version="harness-risk-v12-qualified-family-floor",
+            tool_policy_version="tool-policy-v10-qualified-family-floor",
+            signal={"base": "BTC", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.001, "momentum_4h": .002,
+                "trend_band_atr": .4,
+                "directional_index_spread": .05,
+                "expected_slippage_bps": 14.2,
+            }}},
+            field_provenance={
+                "market": "signal:v12-two-families:market",
+                "signal": "signal:v12-two-families",
+            })
+
+        def model(prompt):
+            calls.append(json.loads(prompt))
+            return {
+                "verdict": "reject", "risk_probability": .72,
+                "confidence": .75,
+                "reason_codes": ["liquidity_failure",
+                                 "signal_inconsistency"],
+                "evidence_ids": ["signal:v12-two-families:market",
+                                 "signal:v12-two-families"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "slippage is severe and momentum_1h opposes long",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 1)
+        contract = calls[0]["decision_contract"]
+        self.assertEqual(contract["qualified_ordinary_risk_families"],
+                         ["liquidity_failure", "signal_inconsistency"])
+        self.assertTrue(contract["reject_evidence_floor_satisfied"])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
+    def test_v12_missing_data_cannot_be_a_reject_family(self):
+        calls = []
+        inp = replace(
+            make_input("v12-missing-family"),
+            prompt_version="harness-risk-v12-qualified-family-floor",
+            tool_policy_version="tool-policy-v10-qualified-family-floor",
+            signal={"base": "INJ", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": .001, "momentum_4h": .004,
+                "trend_band_atr": .67,
+                "directional_index_spread": .064,
+                "expected_slippage_bps": 33.2,
+            }}},
+            field_provenance={
+                "market": "signal:v12-missing-family:market",
+                "signal": "signal:v12-missing-family",
+            })
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return {
+                    "verdict": "reject", "risk_probability": .75,
+                    "confidence": .75,
+                    "reason_codes": ["liquidity_failure",
+                                     "stale_or_missing_data"],
+                    "evidence_ids": ["signal:v12-missing-family:market",
+                                     "signal:v12-missing-family"],
+                    "missing_information": [], "abstain_reason": None,
+                    "reason": "slippage and missing fields support reject",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .66,
+                "confidence": .6, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "missing data lowers confidence only",
+                "reason": "only one qualified ordinary family",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("cannot support reject", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_v11_replay_preserves_missing_data_family_semantics(self):
+        inp = replace(
+            make_input("v11-missing-replay"),
+            prompt_version="harness-risk-v11-factor-specific-signal-evidence",
+            tool_policy_version="tool-policy-v9-factor-specific-signal-contract",
+            signal={"base": "INJ", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "expected_slippage_bps": 33.2,
+            }}},
+            field_provenance={
+                "market": "signal:v11-missing-replay:market",
+                "signal": "signal:v11-missing-replay",
+            })
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda _prompt: {
+                "verdict": "reject", "risk_probability": .75,
+                "confidence": .75,
+                "reason_codes": ["liquidity_failure",
+                                 "stale_or_missing_data"],
+                "evidence_ids": ["signal:v11-missing-replay:market",
+                                 "signal:v11-missing-replay"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "slippage and missing fields support reject",
+            }, db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
     def test_v10_repairs_regime_misread_as_signal_inconsistency(self):
         calls = []
         inp = replace(

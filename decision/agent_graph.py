@@ -371,6 +371,23 @@ def _has_explicit_extreme_market_event(agent_input: AgentInput) -> bool:
     return False
 
 
+def _qualified_ordinary_risk_families(
+        agent_input: AgentInput) -> tuple[str, ...]:
+    """Return validator-owned ordinary families in stable contract order."""
+
+    checks = (
+        (ReasonCode.NEWS_DIRECTION_CONFLICT,
+         _has_news_direction_conflict(agent_input) is True),
+        (ReasonCode.LIQUIDITY_FAILURE,
+         _has_liquidity_failure(agent_input)),
+        (ReasonCode.SIGNAL_INCONSISTENCY,
+         _has_signal_inconsistency(agent_input)),
+        (ReasonCode.POSITION_RISK_CONFLICT,
+         _has_position_risk_conflict(agent_input)),
+    )
+    return tuple(code.value for code, qualified in checks if qualified)
+
+
 def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
     """Expose validator-owned facts before the first bounded model call."""
 
@@ -399,6 +416,8 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             _has_signal_inconsistency(agent_input)
     factor_specific = (agent_input.tool_policy_version in
                        config.AGENT_HARNESS_FACTOR_SPECIFIC_CONTRACT_TOOL_POLICIES)
+    family_floor = (agent_input.tool_policy_version in
+                    config.AGENT_HARNESS_RISK_FAMILY_FLOOR_CONTRACT_TOOL_POLICIES)
     contract = {
         "allowed_evidence_ids": sorted(_evidence_ids(state)),
         "deterministic_qualifiers": qualifiers,
@@ -422,11 +441,21 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             "explicit frozen boolean and is never implied by volatility or "
             "regime alone. signal_inconsistency_qualified only uses signed "
             "1H/4H momentum, trend_band_atr and directional_index_spread; "
-            "regime, volatility and strategy_route alone never qualify."),
+            "regime, volatility and strategy_route alone never qualify. "
+            "qualified_ordinary_risk_families is the exact validator-owned "
+            "list; when reject_evidence_floor_satisfied is false, reject is "
+            "forbidden and missing data can only lower confidence."),
     }
     if factor_specific:
         contract["signal_inconsistency_conflicting_factors"] = list(
             _signal_inconsistency_factors(agent_input))
+    if family_floor:
+        qualified = _qualified_ordinary_risk_families(agent_input)
+        contract["qualified_ordinary_risk_families"] = list(qualified)
+        contract["reject_evidence_floor_satisfied"] = bool(
+            len(qualified) >=
+            config.AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES or
+            _has_explicit_extreme_market_event(agent_input))
     return contract
 
 
@@ -451,6 +480,23 @@ def _validate_directional_reject_evidence(decision: AgentDecision,
     codes = set(decision.reason_codes)
     reason_text = decision.reason.lower()
     cites_momentum = "momentum" in reason_text or "动量" in reason_text
+    if (agent_input.prompt_version in
+            config.AGENT_HARNESS_RISK_FAMILY_FLOOR_PROMPT_VERSIONS):
+        if ReasonCode.STALE_OR_MISSING_DATA in codes:
+            raise AgentSemanticError(
+                "stale_or_missing_data cannot support reject")
+        qualified = {ReasonCode(value) for value in
+                     _qualified_ordinary_risk_families(agent_input)}
+        claimed_ordinary = codes - {
+            ReasonCode.EXTREME_MARKET_EVENT,
+            ReasonCode.INSUFFICIENT_EVIDENCE,
+        }
+        unqualified = sorted(code.value for code in
+                             claimed_ordinary - qualified)
+        if unqualified:
+            raise AgentSemanticError(
+                "reject cites unqualified ordinary risk families: " +
+                ",".join(unqualified))
     if (agent_input.prompt_version in
             config.AGENT_HARNESS_SIGNAL_CONSISTENCY_EVIDENCE_PROMPT_VERSIONS):
         if (ReasonCode.SIGNAL_INCONSISTENCY in codes and not

@@ -1930,3 +1930,25 @@
   `veto_enabled=false`、模型列表仍为空。19:06 与 19:10 两轮自然扫描全部为“无回踩确认信号”，因此
   v11/v9 run=0、订单=0；这证明无候选时不越权调用，不证明逐因子自然完成率或胜率已经改善。下一条
   真实候选必须继续验收冲突清单、修复次数、延迟与 4h outcome，且保持 100/30 门不变。
+- 后续自然证据：19:15 扫描形成 7 条 v11/v9 run。BTC/LINK/LTC 的冻结输入都同时具备
+  `liquidity_failure + signal_inconsistency`，3/3 首次 completed，延迟 1149～1791ms；INJ 只有严重
+  滑点，ETH/BNB 只有方向冲突，ENA 只有新闻冲突，4 条却先尝试无资格风险族，修复后仍用 reject 或
+  reject-only code，最终 schema fail-closed，延迟 3085～4006ms。全部零 Veto、零订单、标签 pending。
+  这证明逐因子解释已正确，但原子资格的组合仍不可靠，不能把 3/7 完成率作为可用 Harness。
+
+## 2026-08-24 Harness v12 合格风险族地板预声明
+
+- 触发证据：v11 的自然成功/失败被“是否至少有两个合格普通风险族”完全分开；四个失败样本的 validator
+  已经拥有所有原子资格，却只把 false qualifier 错误逐条返给模型，没有直接给出最终 reject 可行性。
+- 冻结变更：Prompt 升 `harness-risk-v12-qualified-family-floor`，Tool Policy 升
+  `tool-policy-v10-qualified-family-floor`。首次请求新增排序稳定的 `qualified_ordinary_risk_families` 与
+  `reject_evidence_floor_satisfied`；后者只在普通族至少 2 个或显式严重事件时为 true。新身份同时把
+  `stale_or_missing_data` 从 reject 风险族排除，保持“缺失只降信心”的既有 Prompt 语义。
+- 隔离与安全：旧 v11/v9 继续按旧组合语义回放；v12/v10 从零累计。没有修改 DeepSeek、Context、
+  0.70/0.70、两族门、4 秒预算、100/30、300/60/60、费用、固定 2:1、Veto 或订单权限。paper 已确认
+  空仓并暂停扫描，live 不触碰；先完成专项、全量、提交和完整 paper 重启，再接受自然 v12 样本。
+- 离线证据：LangGraph 45/45，新增精确普通风险族清单、单族修复为 abstain、双族首次完成、缺失数据
+  不得支撑 reject，以及 v11 历史语义回放；决策闭环 61/61、策略 B 34/34。按 CI 独立数据库、事件文件
+  与运行目录自动发现并通过 58/58 个测试脚本，失败 0；参数集中化、测试隔离、23 条 fix guard、
+  code graph、AI repo check、py_compile 与 diff check 全绿。paper 暂停期间 v12/v10 run 数为 0，
+  没有热重载或新旧身份混样。
