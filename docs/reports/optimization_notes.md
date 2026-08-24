@@ -1478,3 +1478,18 @@
   成本后增量 EV 下界分别为 -0.000715R/-0.000547R，均不满足晋升条件。部署后 `/health=ok`、心跳
   正常、零持仓、今日零交易、未熔断、对账一致、`/error` 为空；`/models/entry` 仍为空，没有获得
   Veto、自动激活或订单权限。
+
+## 2026-08-24 Harness v6 outcome-first Challenger 预声明
+
+- 触发证据：当前完整 v5 的 A/B 自然成熟样本分别为 34/33，67 条全部 abstain。B 中按既有 0.70
+  风险阈值回顾性切分有 14 条高风险样本，路径为 12 亏 2 盈，但 v5 因没有极端异常仍不允许 reject；
+  这只用于定位“任务定义过窄”，不能作为 v6 的晋升证据。
+- 冻结变更：Prompt 身份升级为 `harness-risk-v6-outcome-first-evidence-update`；目标改为 4h 费用后
+  亏损概率估计，未校准 `p_loss_prior` 只作输入特征，不再机械复制；两个独立普通风险证据族或一个
+  严重事件可形成 reject。确定性语义校验新增 reject/approve/abstain 与既有概率门的一致性，并覆盖
+  “缺乏已验证入场模型”等治理同义措辞。模型、Context、Schema、工具、价格、0.70/0.70、100/30、
+  Brier、费用后 EV、人工授权和 paper-only 边界全部不变。
+- 预声明裁决：先跑专项和全量回归，再把同输入 challenger 结果仅作为开发集筛查；无论开发集结果
+  如何，新版本都只能从 paper shadow 开始积累独立自然样本。只有 n≥100、reject≥30、Trace/概率/
+  evidence 全覆盖、Brier skill≥0、概率 std≥0.03、费用后增量 EV 单侧 95% 下界>0 且非单段主导时，
+  才有资格进入 validated；这仍不等于自动激活或立即下单。

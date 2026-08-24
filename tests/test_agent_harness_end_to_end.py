@@ -77,7 +77,9 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
     def test_abstain_probability_repairs_to_frozen_loss_prior(self):
         source = make_input("risk-prior")
         source = AgentInput(
-            **{**source.to_dict(), "signal": {
+            **{**source.to_dict(),
+               "prompt_version": "harness-risk-v5-forecast-loss-prior",
+               "signal": {
                 "base": "BTC", "direction": "long",
                 "forecast": {"p_loss_prior": 0.73,
                              "loss_prior_method": "sl_plus_half_timeout_v1"}}})

@@ -85,10 +85,11 @@ def main():
     import decision.agent_judge as agent_judge_module
     check("Harness prompt 不把空模型治理状态当市场风险证据",
           "no_validated_active_model" in agent_judge_module.HARNESS_SYSTEM_PROMPT and
-          "不得把它们列入 missing_information" in
+          "都只是治理元数据" in agent_judge_module.HARNESS_SYSTEM_PROMPT and
+          "禁止所有候选机械返回相同" in
           agent_judge_module.HARNESS_SYSTEM_PROMPT and
-          "禁止所有候选机械返回相同概率和信心" in
-          agent_judge_module.HARNESS_SYSTEM_PROMPT)
+          "至少两个" in agent_judge_module.HARNESS_SYSTEM_PROMPT and
+          "不得机械复制" in agent_judge_module.HARNESS_SYSTEM_PROMPT)
     original_request = agent_judge_module._request_llm
     try:
         agent_judge_module._request_llm = lambda *a, **k: {

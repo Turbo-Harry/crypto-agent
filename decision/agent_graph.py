@@ -169,7 +169,9 @@ def _domain_decision(raw: Any) -> AgentDecision:
 _GOVERNANCE_ONLY_MARKERS = (
     "no_validated_active_model", "validated active model", "entry model",
     "uncalibrated forecast", "strategy_route", "无已验证模型",
-    "缺少已验证模型", "缺少入场概率模型", "预测未校准",
+    "缺少已验证模型", "缺乏已验证模型", "缺少已验证的入场模型",
+    "缺乏已验证的入场模型", "缺少入场概率模型", "缺乏入场概率模型",
+    "入场模型正期望证据", "入场概率模型", "预测未校准",
 )
 
 
@@ -214,10 +216,13 @@ def _validate_decision_semantics(decision: AgentDecision,
         raise AgentSemanticError(
             "governance metadata cannot justify missing evidence: " +
             ",".join(markers))
-    forecast = state["agent_input"].signal.get("forecast")
+    agent_input = state["agent_input"]
+    forecast = agent_input.signal.get("forecast")
     if isinstance(forecast, Mapping):
         prior = forecast.get("p_loss_prior")
-        if prior is not None and decision.verdict is Verdict.ABSTAIN:
+        if (prior is not None and decision.verdict is Verdict.ABSTAIN and
+                agent_input.prompt_version ==
+                "harness-risk-v5-forecast-loss-prior"):
             try:
                 delta = abs(decision.risk_probability - float(prior))
             except (TypeError, ValueError) as exc:
@@ -227,6 +232,20 @@ def _validate_decision_semantics(decision: AgentDecision,
                 raise AgentSemanticError(
                     "abstain risk_probability must track frozen "
                     f"p_loss_prior={float(prior):.4f}")
+    if decision.verdict is Verdict.REJECT and (
+            decision.risk_probability < config.AGENT_HARNESS_REJECT_MIN_RISK or
+            decision.confidence < config.AGENT_HARNESS_REJECT_MIN_CONFIDENCE):
+        raise AgentSemanticError(
+            "reject must meet configured risk and confidence thresholds")
+    if (decision.verdict is Verdict.APPROVE and
+            decision.risk_probability > config.AGENT_HARNESS_APPROVE_MAX_RISK):
+        raise AgentSemanticError(
+            "approve exceeds configured maximum loss probability")
+    if (decision.verdict is Verdict.ABSTAIN and
+            decision.risk_probability >= config.AGENT_HARNESS_REJECT_MIN_RISK and
+            decision.confidence >= config.AGENT_HARNESS_REJECT_MIN_CONFIDENCE):
+        raise AgentSemanticError(
+            "high-risk high-confidence decision must be reject or lower confidence")
     if decision.verdict is Verdict.REJECT:
         provenance = state["agent_input"].field_provenance
         allowed = _evidence_ids(state) if provenance else set()
@@ -368,9 +387,10 @@ class _Nodes:
                     "abstain_reason, and reason. Fill concrete market "
                     "missing_information when using insufficient_evidence; "
                     "do not cite model readiness, forecast calibration, or "
-                    "strategy routing as evidence. For abstain, copy the "
-                    "frozen context.signal.forecast.p_loss_prior into "
-                    "risk_probability within the configured tolerance."),
+                    "strategy routing as evidence. Treat forecast.p_loss_prior "
+                    "as one unvalidated feature, not the answer; recompute the "
+                    "loss probability from the frozen market evidence and make "
+                    "the verdict consistent with configured thresholds."),
             }
         prompt = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                             separators=(",", ":"))

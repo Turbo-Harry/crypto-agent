@@ -147,6 +147,60 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
         self.assertIsNone(result.decision)
 
+    def test_v6_high_risk_high_confidence_abstain_repairs_to_reject(self):
+        calls = []
+        inp = replace(
+            make_input("v6-verdict-threshold"),
+            prompt_version="harness-risk-v6-outcome-first-evidence-update",
+            field_provenance={"market": "signal:v6-verdict-threshold:market"})
+
+        def model(prompt):
+            calls.append(prompt)
+            verdict = "abstain" if len(calls) == 1 else "reject"
+            return {
+                "verdict": verdict, "risk_probability": .8,
+                "confidence": .8,
+                "reason_codes": (["signal_inconsistency"]
+                                 if verdict == "reject" else []),
+                "evidence_ids": (["signal:v6-verdict-threshold:market"]
+                                 if verdict == "reject" else []),
+                "missing_information": [],
+                "abstain_reason": ("mixed market evidence"
+                                   if verdict == "abstain" else None),
+                "reason": "frozen market evidence implies high loss risk",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("high-risk high-confidence", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
+    def test_v6_governance_wording_variant_cannot_justify_abstain(self):
+        calls = []
+
+        def invalid(_prompt):
+            calls.append(1)
+            return {
+                "verdict": "abstain", "risk_probability": .55,
+                "confidence": .5, "reason_codes": ["insufficient_evidence"],
+                "evidence_ids": [],
+                "missing_information": ["缺乏已验证的入场模型正期望证据"],
+                "abstain_reason": "缺乏已验证的入场概率模型",
+                "reason": "governance state is not market evidence",
+            }
+
+        result = run_graph_harness(
+            replace(make_input("v6-governance"),
+                    prompt_version="harness-risk-v6-outcome-first-evidence-update"),
+            baseline_passed=True, model_call=invalid, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.SCHEMA_ERROR)
+        self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
+
     def test_structural_error_gets_one_bounded_repair(self):
         calls = []
 
