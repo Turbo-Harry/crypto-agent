@@ -13,6 +13,15 @@
 
 ---
 
+### 2026-08-24 对称策略查询漏方向会把全部候选伪装成零资格
+- 现象：B 对称假突破 evaluator 对 3,112 条 long/short 原始候选报告确认数 0，看似规则没有任何机会。
+- 根因：候选 SQL 用 `direction IN (...)` 过滤了方向，却没有在 SELECT 中返回 `direction`；反转判定读取
+  不到原方向后对全部候选失败关闭，单测只直接构造带方向字典，没有覆盖数据库查询边界。
+- 修复：查询显式返回原始 `direction`，新增内存库反例同时写 long/short 并断言查询顺序和值完整保留；
+  缺字段产生的首次结果作废，不打开任何后续留出。
+- 预防：凡是“按字段筛选后又在下游消费该字段”的研究查询，测试必须从 SQL 落点穿过业务判定，不能
+  只测手工构造对象；异常全零先审计数据契约，不得直接解释为市场结论。
+
 ### 2026-08-24 Agent 把正新闻和普通波动误报为拒绝风险族
 - 现象：v8/v6 自然 GRASS long 在 `news_score=0.5714`、`composite=0.5157`、bull 11/bear 3 时仍使用 `news_direction_conflict`；DOGE/HOOD 又把普通 `vol_expansion` 或高波动写成 `extreme_market_event`，HOOD 还重复同一 market evidence ID。
 - 根因：Prompt 没写清情感分的 [-1,+1] 符号契约，初次判断契约和确定性校验也没有新闻方向及严重事件资格；模型可把 routine volatility 当作单一严重事件，从而绕过两个普通风险族要求。

@@ -9,8 +9,8 @@ import tempfile
 import unittest
 
 from tools.evaluate_strategy_b_confirmation import (
-    BAR_15M_MS, MINUTE_MS, confirm_candidate, evaluate, resolve_trade,
-    summarize)
+    BAR_15M_MS, MINUTE_MS, _candidate_rows, confirm_candidate,
+    confirm_failed_breakout, evaluate, resolve_trade, summarize)
 
 
 class StrategyBConfirmationTest(unittest.TestCase):
@@ -49,6 +49,60 @@ class StrategyBConfirmationTest(unittest.TestCase):
         self.assertAlmostEqual(row["gross_r"], -1.0)
         self.assertGreater(row["cost_r"], 0)
         self.assertLess(row["net_r"], -1.0)
+
+    def test_failed_breakout_reverses_both_source_directions(self):
+        event_ms = 1_700_000_000_000
+        failed_long = confirm_failed_breakout({
+            "event_ts": event_ms / 1000, "entry": 100.5, "atr": 1.0,
+            "direction": "long",
+        }, (event_ms, 101.0, 101.2, 99.8, 100.0, 10.0))
+        self.assertEqual(failed_long["trade_direction"], "short")
+        failed_short = confirm_failed_breakout({
+            "event_ts": event_ms / 1000, "entry": 99.5, "atr": 1.0,
+            "direction": "short",
+        }, (event_ms, 99.0, 100.2, 98.8, 100.0, 10.0))
+        self.assertEqual(failed_short["trade_direction"], "long")
+        self.assertIsNone(confirm_failed_breakout({
+            "event_ts": event_ms / 1000, "entry": 100.5, "atr": 1.0,
+            "direction": "long",
+        }, (event_ms, 100.0, 101.2, 99.8, 101.0, 10.0)))
+
+    def test_failed_long_breakout_short_trade_uses_mirrored_geometry(self):
+        event_ms = 1_700_000_000_000
+        delayed = {
+            "entry_event_ms": event_ms, "atr": 1.0,
+            "trade_direction": "short",
+        }
+        bars = []
+        for index in range(240):
+            open_time = event_ms + index * MINUTE_MS
+            if index == 0:
+                bars.append((open_time, 100.0, 101.2, 97.8, 100.0, 1.0))
+            else:
+                bars.append((open_time, 100.0, 100.1, 99.9, 100.0, 1.0))
+        row = resolve_trade(delayed, bars, funding_rate=0.0001)
+        self.assertEqual(row["direction"], "short")
+        self.assertEqual(row["stop"], 101.0)
+        self.assertEqual(row["tp"], 98.0)
+        self.assertEqual(row["outcome"], "sl")
+        self.assertAlmostEqual(row["gross_r"], -1.0)
+
+    def test_candidate_query_preserves_source_direction_for_reversal(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE signal_samples (signal_id TEXT,symbol TEXT,"
+            "direction TEXT,event_ts REAL,entry REAL,atr REAL,"
+            "strategy_id TEXT,timeframe TEXT,horizon_hours INTEGER)")
+        conn.executemany(
+            "INSERT INTO signal_samples VALUES (?,?,?,?,?,?,?,?,?)", [
+                ("long-1", "BTC", "long", 1, 100, 1, "B_breakout", "15m", 4),
+                ("short-1", "BTC", "short", 2, 100, 1, "B_breakout", "15m", 4),
+            ])
+        rows = _candidate_rows(
+            conn, ("BTC",), directions=("long", "short"))
+        conn.close()
+        self.assertEqual([row["direction"] for row in rows], ["long", "short"])
 
     def test_incomplete_path_is_rejected(self):
         event_ms = 1_700_000_000_000

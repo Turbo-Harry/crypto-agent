@@ -21,7 +21,7 @@ import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -42,6 +42,8 @@ DEVELOPMENT_SYMBOLS = (
     "BTC", "ETH", "SOL", "XRP", "DOGE", "LINK", "ADA", "AVAX")
 HOLDOUT_SYMBOLS = ("BNB", "LTC")
 POLICY_VERSION = "strategy-b-long-one-bar-confirmation-v1-predeclared"
+FAILED_BREAKOUT_POLICY_VERSION = \
+    "strategy-b-symmetric-failed-breakout-v1-predeclared"
 MARKET_INPUT_VERSION = "confirmed-klines-v2-preferred"
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
 
@@ -113,6 +115,39 @@ def confirm_candidate(candidate: Mapping[str, Any],
         "entry_event_ms": event_ms + BAR_15M_MS,
         "confirmation_close": close,
         "confirmation_body": "bullish",
+        "trade_direction": DIRECTION,
+    }
+
+
+def confirm_failed_breakout(candidate: Mapping[str, Any],
+                            confirmation_bar: tuple[Any, ...] | None
+                            ) -> dict[str, Any] | None:
+    """Reverse only after a closed candle re-enters through breakout price."""
+    if confirmation_bar is None:
+        return None
+    event_ms = int(round(float(candidate["event_ts"]) * 1000))
+    open_time, open_price, _high, _low, close, _volume = confirmation_bar
+    if int(open_time) != event_ms:
+        return None
+    source_direction = str(candidate.get("direction") or "")
+    original_entry = float(candidate["entry"])
+    open_price, close = float(open_price), float(close)
+    if source_direction == "long" and close < open_price and close < original_entry:
+        trade_direction, body = "short", "bearish"
+    elif (source_direction == "short" and close > open_price and
+          close > original_entry):
+        trade_direction, body = "long", "bullish"
+    else:
+        return None
+    atr = float(candidate["atr"])
+    if close <= 0 or atr <= 0:
+        return None
+    return {
+        **dict(candidate), "signal_event_ms": event_ms,
+        "entry_event_ms": event_ms + BAR_15M_MS,
+        "confirmation_close": close, "confirmation_body": body,
+        "source_direction": source_direction,
+        "trade_direction": trade_direction,
     }
 
 
@@ -137,28 +172,38 @@ def resolve_trade(candidate: Mapping[str, Any],
     risk = float(candidate["atr"])
     if entry <= 0 or risk <= 0:
         return None
-    stop, tp = entry - risk, entry + 2 * risk
+    direction = str(candidate.get("trade_direction") or DIRECTION)
+    if direction == "long":
+        stop, tp = entry - risk, entry + 2 * risk
+    elif direction == "short":
+        stop, tp = entry + risk, entry - 2 * risk
+    else:
+        return None
     exit_price = None
     outcome = "timeout"
     for bar in path:
         high, low = float(bar[2]), float(bar[3])
-        if low <= stop:
+        sl_hit = low <= stop if direction == "long" else high >= stop
+        tp_hit = high >= tp if direction == "long" else low <= tp
+        if sl_hit:
             exit_price, outcome = stop, "sl"
             break
-        if high >= tp:
+        if tp_hit:
             exit_price, outcome = tp, "tp"
             break
     if exit_price is None:
         exit_price = float(path[-1][4])
-    gross_r = (exit_price - entry) / risk
+    gross_r = ((exit_price - entry) / risk if direction == "long"
+               else (entry - exit_price) / risk)
     costs = cost_breakdown_r({
-        "entry": entry, "stop": stop, "direction": DIRECTION,
+        "entry": entry, "stop": stop, "direction": direction,
         "horizon_hours": HORIZON_HOURS, "funding_rate": funding_rate,
     })
     if costs is None:
         return None
     return {
         **dict(candidate), "entry": entry, "stop": stop, "tp": tp,
+        "direction": direction,
         "funding_rate": funding_rate, "outcome": outcome,
         "gross_r": gross_r, "cost_r": costs["total_cost_r"],
         "net_r": gross_r - costs["total_cost_r"],
@@ -178,16 +223,20 @@ def _funding_asof(conn: sqlite3.Connection, inst_id: str,
 
 
 def _candidate_rows(conn: sqlite3.Connection, symbols: Iterable[str], *,
+                    directions: Iterable[str] = (DIRECTION,),
                     start_ts: float | None = None,
                     end_ts: float | None = None) -> list[dict[str, Any]]:
     symbols = tuple(symbols)
-    placeholders = ",".join("?" for _ in symbols)
+    directions = tuple(directions)
+    symbol_placeholders = ",".join("?" for _ in symbols)
+    direction_placeholders = ",".join("?" for _ in directions)
     clauses = [
-        "strategy_id=?", "direction=?", "timeframe=?", "horizon_hours=?",
-        f"symbol IN ({placeholders})",
+        "strategy_id=?", f"direction IN ({direction_placeholders})",
+        "timeframe=?", "horizon_hours=?",
+        f"symbol IN ({symbol_placeholders})",
     ]
     args: list[Any] = [
-        STRATEGY_ID, DIRECTION, TIMEFRAME, HORIZON_HOURS, *symbols]
+        STRATEGY_ID, *directions, TIMEFRAME, HORIZON_HOURS, *symbols]
     if start_ts is not None:
         clauses.append("event_ts>=?")
         args.append(float(start_ts))
@@ -195,7 +244,8 @@ def _candidate_rows(conn: sqlite3.Connection, symbols: Iterable[str], *,
         clauses.append("event_ts<?")
         args.append(float(end_ts))
     rows = conn.execute(
-        "SELECT signal_id,symbol,event_ts,entry,atr FROM signal_samples WHERE " +
+        "SELECT signal_id,symbol,direction,event_ts,entry,atr "
+        "FROM signal_samples WHERE " +
         " AND ".join(clauses) + " ORDER BY event_ts,symbol,signal_id", args
     ).fetchall()
     return [dict(row) for row in rows]
@@ -217,11 +267,16 @@ def _market_series(conn: sqlite3.Connection, table: str, inst_id: str,
 
 def _evaluate_slice(replay: sqlite3.Connection, market: sqlite3.Connection,
                     table: str, symbols: Iterable[str], *,
+                    directions: Iterable[str] = (DIRECTION,),
+                    confirmation_fn: Callable[
+                        [Mapping[str, Any], tuple[Any, ...] | None],
+                        dict[str, Any] | None] = confirm_candidate,
                     start_ts: float | None = None,
                     end_ts: float | None = None
                     ) -> tuple[dict[str, int], list[dict[str, Any]]]:
     candidates = _candidate_rows(
-        replay, symbols, start_ts=start_ts, end_ts=end_ts)
+        replay, symbols, directions=directions,
+        start_ts=start_ts, end_ts=end_ts)
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in candidates:
         grouped[str(row["symbol"])].append(row)
@@ -241,7 +296,7 @@ def _evaluate_slice(replay: sqlite3.Connection, market: sqlite3.Connection,
             if event_ms < next_allowed_ms:
                 cooldown_skipped += 1
                 continue
-            delayed = confirm_candidate(row, confirmation_by_time.get(event_ms))
+            delayed = confirmation_fn(row, confirmation_by_time.get(event_ms))
             if delayed is None:
                 missing_confirmation += 1
                 continue
@@ -336,13 +391,21 @@ def summarize(rows: list[dict[str, Any]], *, stats: Mapping[str, int],
     return result
 
 
-def evaluate(replay_db: str, market_db: str) -> dict[str, Any]:
+def _evaluate_policy(replay_db: str, market_db: str, *,
+                     policy_version: str,
+                     confirmation_fn: Callable[
+                         [Mapping[str, Any], tuple[Any, ...] | None],
+                         dict[str, Any] | None],
+                     directions: tuple[str, ...],
+                     confirmation_description: str,
+                     output_direction: str) -> dict[str, Any]:
     replay_path, market_path, replay, market, proof = _open_inputs(
         replay_db, market_db)
     try:
         table = _preferred_kline_table(market)
         dev_stats, dev_rows = _evaluate_slice(
             replay, market, table, DEVELOPMENT_SYMBOLS,
+            directions=directions, confirmation_fn=confirmation_fn,
             end_ts=VALIDATION_CUTOFF_TS)
         development = summarize(
             dev_rows, stats=dev_stats, folds=5, min_n=100,
@@ -355,6 +418,7 @@ def evaluate(replay_db: str, market_db: str) -> dict[str, Any]:
         else:
             late_stats, late_rows = _evaluate_slice(
                 replay, market, table, DEVELOPMENT_SYMBOLS,
+                directions=directions, confirmation_fn=confirmation_fn,
                 start_ts=VALIDATION_CUTOFF_TS)
             late_validation = summarize(
                 late_rows, stats=late_stats, folds=4, min_n=50,
@@ -365,7 +429,8 @@ def evaluate(replay_db: str, market_db: str) -> dict[str, Any]:
                 verdict = "stop_no_promotion"
             else:
                 holdout_stats, holdout_rows = _evaluate_slice(
-                    replay, market, table, HOLDOUT_SYMBOLS)
+                    replay, market, table, HOLDOUT_SYMBOLS,
+                    directions=directions, confirmation_fn=confirmation_fn)
                 holdout = summarize(
                     holdout_rows, stats=holdout_stats, folds=4, min_n=30,
                     min_positive_folds=3,
@@ -377,15 +442,17 @@ def evaluate(replay_db: str, market_db: str) -> dict[str, Any]:
         replay.close()
         market.close()
     return {
-        "policy_version": POLICY_VERSION, "research_only": True,
+        "policy_version": policy_version, "research_only": True,
         "execution_authority": False, "budget_expansion_allowed": False,
         "replay_db": str(replay_path), "replay_sha256": _sha256(replay_path),
         "market_db": str(market_path), "market_sha256": _sha256(market_path),
         "market_input_version": MARKET_INPUT_VERSION, "market_table": table,
         "replay_provenance": dict(proof),
         "policy": {
-            "source_strategy": STRATEGY_ID, "direction": DIRECTION,
-            "confirmation": "next_closed_15m_bull_body_and_close_above_breakout",
+            "source_strategy": STRATEGY_ID,
+            "source_directions": list(directions),
+            "direction": output_direction,
+            "confirmation": confirmation_description,
             "entry": "following_1m_open", "stop_atr": 1.0, "tp_atr": 2.0,
             "horizon_hours": HORIZON_HOURS,
             "same_minute_tie": "sl_first",
@@ -402,14 +469,38 @@ def evaluate(replay_db: str, market_db: str) -> dict[str, Any]:
     }
 
 
+def evaluate(replay_db: str, market_db: str) -> dict[str, Any]:
+    return _evaluate_policy(
+        replay_db, market_db, policy_version=POLICY_VERSION,
+        confirmation_fn=confirm_candidate, directions=(DIRECTION,),
+        confirmation_description=(
+            "next_closed_15m_bull_body_and_close_above_breakout"),
+        output_direction=DIRECTION)
+
+
+def evaluate_failed_breakout(replay_db: str, market_db: str) -> dict[str, Any]:
+    return _evaluate_policy(
+        replay_db, market_db, policy_version=FAILED_BREAKOUT_POLICY_VERSION,
+        confirmation_fn=confirm_failed_breakout,
+        directions=("long", "short"),
+        confirmation_description=(
+            "next_closed_15m_opposite_body_and_close_back_through_breakout"),
+        output_direction="opposite_of_source")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replay-db", required=True,
                         help="isolated A/B research replay database")
     parser.add_argument("--market-db", required=True,
                         help="matching isolated public-market database")
+    parser.add_argument(
+        "--policy", choices=("continuation", "failed-breakout"),
+        default="continuation", help="one of the two frozen policies")
     args = parser.parse_args()
-    print(json.dumps(evaluate(args.replay_db, args.market_db),
+    evaluator = (evaluate_failed_breakout if args.policy == "failed-breakout"
+                 else evaluate)
+    print(json.dumps(evaluator(args.replay_db, args.market_db),
                      ensure_ascii=False, indent=2, sort_keys=True))
 
 
