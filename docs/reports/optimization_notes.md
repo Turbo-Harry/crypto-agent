@@ -1456,3 +1456,15 @@
   刷新为 n=34，与只读实时评价一致，reason=`shadow_metrics_refresh`；状态仍为 shadow、reject=0、
   Brier skill=-0.695105、模型成本后增量下界=-0.000715R，没有获得 Veto 或订单权限。部署后模拟盘
   继续零持仓、今日零交易、对账一致、无错误。
+
+## 2026-08-24 Harness 多策略生命周期同步
+
+- 活体触发：当前完整 v5 B 实时评价 n=32、reject=0、Brier skill=-0.593158、模型成本后增量下界
+  -0.000551R，但 `agent_versions` 仅有 A 行。B 的 run/outcome/evaluation 已按 strategy_id 隔离，
+  每小时生命周期同步仍只消费默认 A，导致 B 证据无法形成持久版本审计。
+- 实现：`sync_harness_lifecycles` 按固定策略集合同步 A 与已启用的 B；单策略入口增加显式
+  `allow_activation`。A 保留既有配置授权语义，B 无论指标如何都传 false，只能到 validated，调用端
+  `allow_veto=false` 的第二道执行隔离不变。没有混计 A/B 样本，也没有增加策略执行权。
+- 验收要求：回归覆盖批量集合恰含 A/B、A 可继承授权、B 固定不可激活，以及 B 即使达到完整正面门
+  也只能 validated；随后运行 Agent/worker/service 专项、全量套件和静态护栏，只部署 paper 并验证
+  B 的持久 n 与实时 n 一致、状态 shadow，live PID 不变。

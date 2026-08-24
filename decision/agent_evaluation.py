@@ -517,7 +517,8 @@ def evaluate_harness(db_path=None, version=None, strategy_id=None):
     }
 
 
-def sync_harness_lifecycle(db_path=None, strategy_id=None):
+def sync_harness_lifecycle(db_path=None, strategy_id=None, *,
+                           allow_activation=True):
     """自动登记/验证 Harness 版本；只到 validated，绝不自动开启 veto。"""
     from decision import agent_lifecycle
     from storage.agent_lifecycle import refresh_metrics, transition
@@ -556,9 +557,24 @@ def sync_harness_lifecycle(db_path=None, strategy_id=None):
             row = transition(
                 version, "rolled-back", reason=reason, metrics=metrics,
                 strategy_id=strategy_id, db_path=db_path)
-    if (row["status"] == "validated" and
+    if (row["status"] == "validated" and allow_activation and
             config.AGENT_HARNESS_VETO_ENABLED):
         row = agent_lifecycle.activate(
             version, strategy_id=strategy_id, db_path=db_path)
     return {"status": row["status"], "version": version,
             "metrics": metrics}
+
+
+def sync_harness_lifecycles(db_path=None):
+    """Sync every sampled strategy while keeping B permanently non-executing."""
+    strategies = [(config.ENTRY_SIGNAL_STRATEGY_ID, True)]
+    if (config.STRATEGY_B_SHADOW_ENABLED and
+            config.BREAKOUT_SIGNAL_STRATEGY_ID !=
+            config.ENTRY_SIGNAL_STRATEGY_ID):
+        strategies.append((config.BREAKOUT_SIGNAL_STRATEGY_ID, False))
+    return {
+        strategy_id: sync_harness_lifecycle(
+            db_path=db_path, strategy_id=strategy_id,
+            allow_activation=allow_activation)
+        for strategy_id, allow_activation in strategies
+    }

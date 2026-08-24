@@ -1062,3 +1062,14 @@
   shadow 刷新当前指标，validated 在人工激活前也刷新并重新核对晋升门，新增证据退化则回滚。
 - 预防：状态机回归必须覆盖“状态不变、证据增长”的自循环场景，同时断言 metrics 更新且 veto 权限
   仍为 false；readiness 数量要与同版本只读实时评价交叉核对，不能只检查状态迁移测试。
+
+### 2026-08-24 多策略 Harness 有 Trace 不等于每条策略都有生命周期
+
+- 现象：B_breakout 已有 32 条当前 v5 成熟评价，可按策略独立算出 Brier/EV，但 `agent_versions` 只有
+  A_pullback 行；B 的证据永远不会进入 shadow→validated 审计链。
+- 根因：候选与评价接线已经按 strategy_id 隔离，worker 的每小时同步却仍只调用一次默认 A；采样链
+  扩成多策略后，生命周期调度没有同步扩展。
+- 修复：新增多策略同步入口，显式同步 A 与已启用的 B；单策略同步增加 `allow_activation`，A 继承
+  用户 Veto 开关，B 固定 false，因此 B 可以积累/验证证据但绝不自动进入 active-veto。
+- 预防：新增策略 Harness 时四条链必须同时验收：run、outcome、evaluation、agent_versions；批量同步
+  回归必须断言完整策略集合和逐策略授权位，不能用 A 的生命周期行代表 B 已接通。

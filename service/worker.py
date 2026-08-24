@@ -348,9 +348,11 @@ class TraderWorker:
                                 db_path=t._db_path,
                                 min_age_hours=config.AGENT_JUDGE_MEMORY_MIN_HOURS)
                             from decision.agent_evaluation import \
-                                sync_harness_lifecycle
-                            _agent_state = sync_harness_lifecycle(
+                                sync_harness_lifecycles
+                            _agent_states = sync_harness_lifecycles(
                                 db_path=t._db_path)
+                            _agent_state = _agent_states[
+                                config.ENTRY_SIGNAL_STRATEGY_ID]
                             if _n:
                                 print(f"[AI记忆] 回填 {_n} 条被否决判断的结果")
                             if _h or _m:

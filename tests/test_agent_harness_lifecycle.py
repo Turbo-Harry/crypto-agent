@@ -157,6 +157,58 @@ class AgentHarnessLifecycleTest(unittest.TestCase):
         self.assertEqual(stored["reason"],
                          "brier_worse_than_frequency_baseline")
 
+    def test_breakout_lifecycle_can_validate_but_never_auto_activate(self):
+        from decision.agent_evaluation import sync_harness_lifecycle
+
+        ready = {
+            "status": "evaluated", "version": "breakout-ready-v1",
+            "strategy_id": config.BREAKOUT_SIGNAL_STRATEGY_ID,
+            "n": 100, "reject_n": 30,
+            "model_cost_data_complete": True, "trace_coverage": 1.0,
+            "probability_coverage": 1.0, "probability_std": .1,
+            "reject_evidence_coverage": 1.0, "brier_skill": .1,
+            "saved_loss": 2.0, "missed_profit": .5,
+            "model_cost_r": .01, "incremental_ev_lower_bound": .1,
+            "max_segment_share": .5,
+        }
+        with patch("decision.agent_evaluation.evaluate_harness",
+                   return_value=ready):
+            state = sync_harness_lifecycle(
+                db_path=self.path,
+                strategy_id=config.BREAKOUT_SIGNAL_STRATEGY_ID,
+                allow_activation=False)
+
+        stored = agent_lifecycle.get(
+            "breakout-ready-v1",
+            strategy_id=config.BREAKOUT_SIGNAL_STRATEGY_ID,
+            db_path=self.path)
+        self.assertEqual(state["status"], "validated")
+        self.assertEqual(stored["status"], "validated")
+        self.assertFalse(agent_lifecycle.veto_effective(
+            "breakout-ready-v1",
+            strategy_id=config.BREAKOUT_SIGNAL_STRATEGY_ID,
+            db_path=self.path))
+
+    def test_batch_sync_includes_a_and_b_with_strategy_scoped_authority(self):
+        from decision.agent_evaluation import sync_harness_lifecycles
+
+        def _result(*, db_path, strategy_id, allow_activation):
+            return {"status": "shadow", "version": strategy_id,
+                    "allow_activation": allow_activation}
+
+        with patch("decision.agent_evaluation.sync_harness_lifecycle",
+                   side_effect=_result) as sync_one:
+            states = sync_harness_lifecycles(db_path=self.path)
+
+        self.assertEqual(set(states), {
+            config.ENTRY_SIGNAL_STRATEGY_ID,
+            config.BREAKOUT_SIGNAL_STRATEGY_ID})
+        self.assertTrue(states[config.ENTRY_SIGNAL_STRATEGY_ID]
+                        ["allow_activation"])
+        self.assertFalse(states[config.BREAKOUT_SIGNAL_STRATEGY_ID]
+                         ["allow_activation"])
+        self.assertEqual(sync_one.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
