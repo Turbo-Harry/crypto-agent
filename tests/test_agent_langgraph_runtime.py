@@ -603,6 +603,31 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertFalse(qualifiers["news_direction_conflict_qualified"])
         self.assertFalse(qualifiers["extreme_market_event_qualified"])
 
+    def test_v9_contract_exposes_exact_conflicting_factors(self):
+        calls = []
+        inp = replace(
+            make_input("v9-factor-contract"),
+            prompt_version="harness-risk-v11-factor-specific-signal-evidence",
+            tool_policy_version="tool-policy-v9-factor-specific-signal-contract",
+            signal={"base": "GRASS", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.054, "momentum_4h": -.038,
+                "trend_band_atr": 1.014,
+                "directional_index_spread": -.208,
+            }}})
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda prompt: calls.append(json.loads(prompt)) or
+            approve(prompt), db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        contract = calls[0]["decision_contract"]
+        self.assertTrue(contract["deterministic_qualifiers"]
+                        ["signal_inconsistency_qualified"])
+        self.assertEqual(contract["signal_inconsistency_conflicting_factors"],
+                         ["trend_band_atr"])
+
     def test_v10_repairs_regime_misread_as_signal_inconsistency(self):
         calls = []
         inp = replace(
@@ -680,6 +705,82 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
                                  "signal:v10-opposite-dmi:news"],
                 "missing_information": [], "abstain_reason": None,
                 "reason": "positive DMI spread and bullish news oppose the short",
+            }, db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
+    def test_v11_repairs_aligned_momentum_claim_with_valid_trend_conflict(self):
+        calls = []
+        inp = replace(
+            make_input("v11-factor-specific"),
+            prompt_version="harness-risk-v11-factor-specific-signal-evidence",
+            tool_policy_version="tool-policy-v9-factor-specific-signal-contract",
+            signal={"base": "GRASS", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.054, "momentum_4h": -.038,
+                "trend_band_atr": 1.014,
+                "directional_index_spread": -.208,
+            }}},
+            news={"news_score": .5385, "composite": .4992},
+            field_provenance={
+                "market": "signal:v11-factor-specific:market",
+                "news": "signal:v11-factor-specific:news",
+            })
+
+        def model(prompt):
+            calls.append(prompt)
+            reason = ("positive 1H/4H momentum contradicts short"
+                      if len(calls) == 1 else
+                      "positive trend_band_atr contradicts short")
+            return {
+                "verdict": "reject", "risk_probability": .82,
+                "confidence": .75,
+                "reason_codes": ["news_direction_conflict",
+                                 "signal_inconsistency"],
+                "evidence_ids": ["signal:v11-factor-specific:news",
+                                 "signal:v11-factor-specific:market"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": reason,
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("direction-aligned factor family: momentum", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+        self.assertIn("trend_band_atr", result.run.decision_reason)
+
+    def test_v10_replay_preserves_aggregate_factor_semantics(self):
+        inp = replace(
+            make_input("v10-factor-replay"),
+            prompt_version="harness-risk-v10-signal-consistency-semantics",
+            tool_policy_version="tool-policy-v8-signal-consistency-contract",
+            signal={"base": "GRASS", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -.054, "momentum_4h": -.038,
+                "trend_band_atr": 1.014,
+                "directional_index_spread": -.208,
+            }}},
+            news={"news_score": .5385},
+            field_provenance={
+                "market": "signal:v10-factor-replay:market",
+                "news": "signal:v10-factor-replay:news",
+            })
+
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda _prompt: {
+                "verdict": "reject", "risk_probability": .82,
+                "confidence": .75,
+                "reason_codes": ["news_direction_conflict",
+                                 "signal_inconsistency"],
+                "evidence_ids": ["signal:v10-factor-replay:news",
+                                 "signal:v10-factor-replay:market"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "positive 1H/4H momentum contradicts short",
             }, db_path=self.path)
 
         self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)

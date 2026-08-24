@@ -1904,3 +1904,24 @@
   决策闭环 61/61、策略 B 34/34。按 CI 的独立数据库/事件/运行目录自动发现并通过 58/58 个测试脚本，
   失败 0；参数集中化、测试隔离、23 条 fix guard、code graph、AI repo check、py_compile 和 diff check
   全绿。paper 暂停期间 v10/v8 run 数为 0，尚无热重载混合身份样本。
+- 部署与自然证据：实现提交 `605a96b`；paper 完整重启 `67668→73140`，live PID `90574` 未变化。
+  重启后健康、心跳、空仓、对账和错误接口均正常，configured=v10/v8、Veto=false、模型列表为空。
+  19:00 自然收线产生 LINK long 与 GRASS short 两条 run，均 completed、retry=0、延迟 1353/2621ms、
+  零 Veto/零订单。LINK 的负动量与 13.8bps 滑点理由正确；GRASS 的聚合风险族也有正趋势带支持，但
+  理由把负的顺向动量错写成正动量。该具体解释错误触发 v11，不把 v10 两条 pending 冒充准确率证明。
+
+## 2026-08-24 Harness v11 逐因子理由资格预声明
+
+- 触发证据：v10/v8 自然 GRASS short 的 `momentum_1h=-0.05438`、`momentum_4h=-0.03813`、
+  `directional_index_spread=-0.20774` 均顺向，只有 `trend_band_atr=+1.01447` 逆向；模型却写成
+  “positive 1H/4H momentum contradicting short”。聚合 `signal_inconsistency=true` 没有阻止子主张错误。
+- 冻结变更：Prompt 升 `harness-risk-v11-factor-specific-signal-evidence`，Tool Policy 升
+  `tool-policy-v9-factor-specific-signal-contract`。首次契约除聚合资格外，按固定字段顺序返回精确
+  `signal_inconsistency_conflicting_factors`；validator 对理由中 momentum、EMA 趋势带与 DMI 的引用逐族
+  核对。引用顺向族就进入一次语义修复，仍错误则失败关闭。旧 v10/v8 完整回放保持原语义。
+- 安全边界：仍只改 Prompt/Tool Policy/确定性校验，不动模型、Context、阈值、100/30、4 秒总预算、
+  Brier/费用后 EV、订单权限与风险预算。paper 已再次确认空仓并暂停扫描；v11/v9 部署前自然 run 必须
+  为 0，完整测试和重启后才从零计数。
+- 离线证据：LangGraph 40/40，新增精确清单、GRASS 错因子修复与 v10 聚合回放；决策闭环 61/61、
+  策略 B 34/34。CI 式独立数据库/事件/运行目录自动发现 58/58 个测试脚本全绿、失败 0；参数、隔离、
+  23 条 fix guard、依赖图、AI repo、py_compile 与 diff check 全部通过。

@@ -1,4 +1,4 @@
-# 入场准确率、Harness v10/v8 与主动提案 v5 目标 Prompt
+# 入场准确率、Harness v11/v9 与主动提案 v5 目标 Prompt
 
 > 状态：权威实施稿；仅 OKX 模拟盘 shadow，不是已验证模型或下单许可
 > 日期：2026-08-24
@@ -12,8 +12,10 @@
   `extreme_market_event`；v9/v7 因此把新闻方向与显式严重事件资格提升为机器契约。完整重启后的首批
   两条自然 run 均一次完成、零修复：ADA short 合法使用正新闻冲突+9.12 bps 点差；HOOD short 虽不再
   冒充严重事件，却把方向完全一致的技术结构加 disorder 写成 `signal_inconsistency`。新 challenger
-  冻结为 Prompt v10 + Tool Policy v8，只用带方向符号的冻结因子决定该风险族；仍为 pending shadow，
-  `veto_enabled=false`。
+  冻结为 Prompt v10 + Tool Policy v8，只用带方向符号的冻结因子决定该风险族。v10 完整重启后的首轮
+  自然 run 又显示布尔资格过粗：GRASS short 确有正 `trend_band_atr` 冲突，但模型把负的顺向动量写成
+  “正动量冲突”。当前 challenger 因此冻结为 Prompt v11 + Tool Policy v9，首次契约逐字列出真正冲突
+  因子并校验理由引用；仍为 pending shadow，`veto_enabled=false`。
 - 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.1-full-restart-boundary`；v4.2 四个自然
   批次仅 1 completed、3 schema error，最新错误被定位为双提案长 evidence 在 200-token 共享预算下没有
   形成完整 JSON。v5.0 在代码提交后、进程完整重启前被 config 热重载，产生 1 条“新身份+旧函数体”的
@@ -33,7 +35,7 @@
 
 ## 步骤
 
-1. 冻结完整身份：Prompt v10、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v8 和价格口径
+1. 冻结完整身份：Prompt v11、DeepSeek 模型、Context、Schema、Retrieval、Tool Policy v9 和价格口径
    任一变化都重新计样本，旧版本只保留审计。
 2. 按方向解释动量和资金费：long 的负动量、short 的正动量才是逆向；正资金费不是 short 成本，
    负资金费不是 long 成本。
@@ -44,10 +46,11 @@
    `liquidity_failure` 风险族资格。低于门槛仍可影响总体概率，但不算独立拒绝证据。
 5. 机器校验概率/信心、方向、资金费、持仓冲突、流动性门、风险族数量和 evidence 锚；首次判断即收到
    与校验器同源的 `allowed_evidence_ids`，以及动量逆向、账户冲突、严重流动性和资金费成本四项冻结
-   资格。v10/v8 还必须收到新闻方向冲突、显式严重事件和信号不一致三项资格：news_score/composite 按 [-1,+1]
+   资格。v11/v9 还必须收到新闻方向冲突、显式严重事件和信号不一致三项资格：news_score/composite 按 [-1,+1]
    符号解释；没有冻结 `extreme_market_event=true` 时，高波动/regime/forecast 都不能冒充严重事件。
    `signal_inconsistency` 只接受 1H/4H 动量、`trend_band_atr` 或 `directional_index_spread` 中至少一项
-   符号与候选方向相反；disorder、波动水平、route 或缺模型本身都不能取得该资格。
+   符号与候选方向相反；契约还必须列出具体冲突因子，理由不得把清单外的顺向因子写成冲突。
+   disorder、波动水平、route 或缺模型本身都不能取得该资格。
    修复轮继续复用同一契约，重复 evidence ID 必须去重。最多修复一次，仍不合格或总耗时超过 4 秒就
    失败关闭并保持量化基线。
 6. 只在 paper 自然 shadow 收集 A/B 分策略 run→outcome→evaluation→version 证据；live 永久 shadow，
@@ -62,7 +65,7 @@
 
 ## 验收标准
 
-- 当前完整 v10/v8 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
+- 当前完整 v11/v9 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
 - 所有 `liquidity_failure` 都满足冻结点差或预期滑点门；方向失衡不得冒充绝对深度不足。
 - 总延迟不超过 4 秒；迟到、超时、Schema、网络或 Trace 错误均为零 Veto。
 - Brier skill 不低于频率基线，风险概率标准差至少 0.03，校准不得系统性反向。
@@ -86,7 +89,7 @@
   换费用口径、增加同一行情的重叠候选或只报胜率来制造通过。
 - 不得改活体数据库、伪造 outcome、混历史重放、直接标 active 或让 Harness 恢复基线拒绝。
 
-## v10 冻结反例
+## v11 冻结反例
 
 v7/v4 首轮 A 自然 Trace 有 XRP/SOL/LTC 三个 reject。XRP 的点差/预期滑点为 3.389/5.372 bps，
 SOL 为 1.063/1.739 bps，二者却因负盘口失衡或高 `depth` 分被描述为流动性失败；实际上这些字段
@@ -102,3 +105,6 @@ GRASS long 又把 `news_score=0.5714/composite=0.5157`、bull 11/bear 3 的正�
 1H/4H 动量、EMA 趋势带、VWAP 距离都与 short 同向，理由实际只剩 disorder/高波动。v10/v8 因此把
 四个有明确方向语义的冻结因子交给与 validator 同源的资格函数；不引入 outcome 阈值，也不把 regime
 或治理 route 当成方向冲突。旧 v9/v7 Trace 保持原语义回放，不与新身份混计。
+v10/v8 首轮自然 GRASS short 的冲突清单实际只有 `trend_band_atr`，但模型理由把数值为负的 1H/4H
+动量写成“正动量”。v11/v9 在布尔资格之外提供精确因子清单，并对理由中 momentum、趋势带或 DMI
+族的引用逐族复算；风险族整体合法不再掩盖具体理由错误。旧 v10/v8 仍保持原语义回放。

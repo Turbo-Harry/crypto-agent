@@ -290,22 +290,27 @@ def _has_directional_momentum_conflict(agent_input: AgentInput) -> bool:
     return False
 
 
-def _has_signal_inconsistency(agent_input: AgentInput) -> bool:
-    """Detect a frozen signed factor that opposes the candidate direction."""
+def _signal_inconsistency_factors(agent_input: AgentInput) -> tuple[str, ...]:
+    """Return frozen signed factors that oppose the candidate direction."""
 
     direction = str(agent_input.signal.get("direction") or
                     agent_input.signal.get("dir") or "").lower()
     features = _frozen_factor_features(agent_input)
-    signed = [_as_float(features.get(name)) for name in (
+    signed = [(name, _as_float(features.get(name))) for name in (
         "momentum_1h", "momentum_4h", "trend_band_atr",
         "directional_index_spread",
     )]
-    usable = [value for value in signed if value is not None]
     if direction == "long":
-        return any(value < 0 for value in usable)
+        return tuple(name for name, value in signed
+                     if value is not None and value < 0)
     if direction == "short":
-        return any(value > 0 for value in usable)
-    return False
+        return tuple(name for name, value in signed
+                     if value is not None and value > 0)
+    return ()
+
+
+def _has_signal_inconsistency(agent_input: AgentInput) -> bool:
+    return bool(_signal_inconsistency_factors(agent_input))
 
 
 def _has_position_risk_conflict(agent_input: AgentInput) -> bool:
@@ -392,7 +397,9 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             config.AGENT_HARNESS_SIGNAL_CONSISTENCY_CONTRACT_TOOL_POLICIES):
         qualifiers["signal_inconsistency_qualified"] = \
             _has_signal_inconsistency(agent_input)
-    return {
+    factor_specific = (agent_input.tool_policy_version in
+                       config.AGENT_HARNESS_FACTOR_SPECIFIC_CONTRACT_TOOL_POLICIES)
+    contract = {
         "allowed_evidence_ids": sorted(_evidence_ids(state)),
         "deterministic_qualifiers": qualifiers,
         "reject_thresholds": {
@@ -417,6 +424,10 @@ def _initial_decision_contract(state: _GraphState) -> dict[str, Any]:
             "1H/4H momentum, trend_band_atr and directional_index_spread; "
             "regime, volatility and strategy_route alone never qualify."),
     }
+    if factor_specific:
+        contract["signal_inconsistency_conflicting_factors"] = list(
+            _signal_inconsistency_factors(agent_input))
+    return contract
 
 
 def _cites_favorable_funding(decision: AgentDecision,
@@ -446,6 +457,26 @@ def _validate_directional_reject_evidence(decision: AgentDecision,
                 _has_signal_inconsistency(agent_input)):
             raise AgentSemanticError(
                 "signal_inconsistency lacks an opposite-sign frozen factor")
+        if (ReasonCode.SIGNAL_INCONSISTENCY in codes and
+                agent_input.prompt_version in
+                config.AGENT_HARNESS_FACTOR_SPECIFIC_REASON_PROMPT_VERSIONS):
+            conflicts = set(_signal_inconsistency_factors(agent_input))
+            aligned_claims = []
+            if cites_momentum and not conflicts.intersection(
+                    {"momentum_1h", "momentum_4h"}):
+                aligned_claims.append("momentum")
+            if (any(marker in reason_text for marker in
+                    ("trend_band_atr", "trend band", "ema20", "ema50")) and
+                    "trend_band_atr" not in conflicts):
+                aligned_claims.append("trend_band_atr")
+            if (any(marker in reason_text for marker in
+                    ("directional_index_spread", "dmi", "+di", "-di")) and
+                    "directional_index_spread" not in conflicts):
+                aligned_claims.append("directional_index_spread")
+            if aligned_claims:
+                raise AgentSemanticError(
+                    "signal_inconsistency reason cites direction-aligned "
+                    "factor family: " + ",".join(aligned_claims))
     elif (ReasonCode.SIGNAL_INCONSISTENCY in codes and cites_momentum and not
           _has_directional_momentum_conflict(agent_input)):
         raise AgentSemanticError(
