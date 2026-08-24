@@ -11,7 +11,7 @@
 | [plans/](plans/) | 优化/实施计划与简报 | Agent B R1/R2 方案及终审稿、D 批次实施简报、自进化系统设计方案、[交易 Agent Harness 权威实施稿](plans/2026-08-23_agent_harness_improvement_FINAL.md)、[Harness 建设路线图](plans/2026-08-23_agent_harness_construction_roadmap_FINAL.md)、[Agent 主动提案 Shadow 权威实施稿](plans/2026-08-23_agent_active_proposal_shadow_FINAL.md)、[开仓准确率/因子/极值预测权威实施稿](plans/2026-08-23_entry_accuracy_factor_forecast_FINAL.md) |
 | [reports/](reports/) | 研究报告与收敛报告 | [15m/4h OKX SWAP 历史重放裁决](reports/2026-08-23_15m_research_replay_report.md)、research_report_round2/3、optimization_report、convergence_report、final_report、evolution_loop_report、optimization_notes（实施日志）、backtest_report、**pitfalls（踩坑档案，写代码前必读）** |
 | [ops/](ops/) | 运维与验证手册 | watchdog_launchd（进程守护）、tp_sandbox_verify（止盈沙盘验证清单）、subaccount_test_plan（子账户测试计划）、data_collection_schedule（数据采集调度） |
-| [prompts/](prompts/) | AI 提示词 | evolution_loop_prompt（进化循环提示词）、factor_mining_goal_prompt（因子挖掘完善，验证门标准）、[入场准确率与 Harness v6 目标 Prompt](prompts/2026-08-24_entry_accuracy_harness_v6_goal_prompt.md)（目标/步骤/验收/停止门） |
+| [prompts/](prompts/) | AI 提示词 | evolution_loop_prompt（进化循环提示词）、factor_mining_goal_prompt（因子挖掘完善，验证门标准）、[入场准确率与 Harness v7 目标 Prompt](prompts/2026-08-24_entry_accuracy_harness_v7_goal_prompt.md)（方向/资金费语义、目标/步骤/验收/停止门） |
 | [AGENTS.md](AGENTS.md) | docs 局部规则 | 文档分类、日期语境、索引同步、事实新鲜度与验证要求 |
 | [AGENT_NOTES.md](AGENT_NOTES.md) | Agent 协作 | 多 Agent 文件占用协议与当前 claim（机器维护） |
 
@@ -61,6 +61,7 @@
 | 08-23 | [architecture/2026-08-23_interface_first_layering.md](architecture/2026-08-23_interface_first_layering.md) | 接口优先与功能分层：服务运行端口、决策 API、查询/仓储 API 与自动边界守卫（权威实施稿） |
 | 08-23 | [AGENTS.md](AGENTS.md) | docs 模块局部协作规则：分类、索引、事实语境和文档验证 |
 | 08-24 | [prompts/2026-08-24_entry_accuracy_harness_v6_goal_prompt.md](prompts/2026-08-24_entry_accuracy_harness_v6_goal_prompt.md) | 入场准确率与 Harness v6 的目标、步骤、验收标准和停止规则 |
+| 08-24 | [prompts/2026-08-24_entry_accuracy_harness_v7_goal_prompt.md](prompts/2026-08-24_entry_accuracy_harness_v7_goal_prompt.md) | Harness v7 方向/资金费/风险族一致性的权威目标、步骤、验收和停止规则 |
 
 ## 三、命名约定
 

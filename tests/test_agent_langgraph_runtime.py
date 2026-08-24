@@ -201,6 +201,130 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(result.run.runtime_status, RuntimeStatus.SCHEMA_ERROR)
         self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
 
+    def test_v7_repairs_short_direction_and_favorable_funding_misread(self):
+        calls = []
+        inp = replace(
+            make_input("v7-short-direction"),
+            prompt_version="harness-risk-v7-direction-evidence-consistency",
+            signal={"base": "ADA", "direction": "short"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -0.01, "momentum_4h": -0.02,
+                "funding_rate": 0.0001, "spread_bps": 9.1,
+            }}},
+            field_provenance={"market": "signal:v7-short-direction:market"},
+        )
+
+        def model(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return {
+                    "verdict": "reject", "risk_probability": .78,
+                    "confidence": .72,
+                    "reason_codes": ["signal_inconsistency", "liquidity_failure"],
+                    "evidence_ids": ["signal:v7-short-direction:market"],
+                    "missing_information": [], "abstain_reason": None,
+                    "reason": "negative momentum and positive funding conflict with short",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .58,
+                "confidence": .55, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "only one qualified liquidity risk family",
+                "reason": "short momentum is aligned; liquidity risk alone is insufficient",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("direction-aligned", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.AGENT_ABSTAIN)
+
+    def test_v7_reject_needs_two_distinct_ordinary_risk_families(self):
+        calls = []
+        inp = replace(
+            make_input("v7-one-family"),
+            prompt_version="harness-risk-v7-direction-evidence-consistency",
+            field_provenance={"market": "signal:v7-one-family:market"},
+        )
+
+        def model(prompt):
+            calls.append(prompt)
+            return {
+                "verdict": "reject", "risk_probability": .8,
+                "confidence": .8, "reason_codes": ["liquidity_failure"],
+                "evidence_ids": ["signal:v7-one-family:market"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "wide spread is the only current risk family",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("two distinct ordinary risk families", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.SCHEMA_ERROR)
+        self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
+
+    def test_v7_position_risk_code_requires_actual_frozen_conflict(self):
+        calls = []
+        inp = replace(
+            make_input("v7-position-code"),
+            prompt_version="harness-risk-v7-direction-evidence-consistency",
+            signal={"base": "AAVE", "direction": "long"},
+            market={"frozen_features": {"factor_features": {
+                "momentum_1h": -0.01, "momentum_4h": 0.02,
+                "funding_rate": 0.0001,
+            }}},
+            account={"portfolio_notional_usdt": 0,
+                     "max_total_notional_usdt": 600},
+            health={"risk_halted": False, "risk_can_trade": True},
+            field_provenance={
+                "market": "signal:v7-position-code:market",
+                "health": "signal:v7-position-code:health",
+            },
+        )
+
+        def model(prompt):
+            calls.append(prompt)
+            return {
+                "verdict": "reject", "risk_probability": .75,
+                "confidence": .75,
+                "reason_codes": ["signal_inconsistency", "position_risk_conflict"],
+                "evidence_ids": ["signal:v7-position-code:market",
+                                 "signal:v7-position-code:health"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "negative 1H momentum plus volatility conflict",
+            }
+
+        result = run_graph_harness(
+            inp, baseline_passed=True, model_call=model, db_path=self.path)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("position_risk_conflict lacks", calls[1])
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.SCHEMA_ERROR)
+        self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
+
+    def test_v7_single_extreme_event_remains_a_valid_reject(self):
+        inp = replace(
+            make_input("v7-extreme"),
+            prompt_version="harness-risk-v7-direction-evidence-consistency",
+            field_provenance={"news": "signal:v7-extreme:news"},
+        )
+        result = run_graph_harness(
+            inp, baseline_passed=True,
+            model_call=lambda _prompt: {
+                "verdict": "reject", "risk_probability": .9,
+                "confidence": .9, "reason_codes": ["extreme_market_event"],
+                "evidence_ids": ["signal:v7-extreme:news"],
+                "missing_information": [], "abstain_reason": None,
+                "reason": "verified exchange-wide severe event",
+            }, db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
+
     def test_structural_error_gets_one_bounded_repair(self):
         calls = []
 

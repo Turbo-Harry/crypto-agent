@@ -163,11 +163,17 @@ AGENT_HARNESS_ENABLED = True
 # 且仅 paper 实例显式传入执行授权后才会真正否决；live 永远保持 shadow。
 # Harness 不能恢复任何基线拒单。
 AGENT_HARNESS_VETO_ENABLED = True
-AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v6-outcome-first-evidence-update"
+AGENT_HARNESS_PROMPT_VERSION = "harness-risk-v7-direction-evidence-consistency"
 AGENT_HARNESS_REJECT_MIN_RISK = 0.70
 AGENT_HARNESS_REJECT_MIN_CONFIDENCE = 0.70
 AGENT_HARNESS_APPROVE_MAX_RISK = 0.45
 AGENT_HARNESS_ABSTAIN_PRIOR_TOLERANCE = 0.02  # 仅供冻结 v5 身份重放
+# v7 把“两个独立普通风险族”从 Prompt 建议提升为确定性契约；旧版本重放
+# 继续按各自冻结语义运行，不能被新规则静默改写。
+AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES = 2
+AGENT_HARNESS_DIRECTIONAL_EVIDENCE_PROMPT_VERSIONS = (
+    "harness-risk-v7-direction-evidence-consistency",
+)
 # Prompt 与版本集中维护，决策层只引用；身份变化必须与文本变化同批提交。
 AGENT_HARNESS_SYSTEM_PROMPT = """
 角色：你是日内 15 分钟、最长持有 4 小时交易系统的只读入场风险审查 Agent。
@@ -201,9 +207,17 @@ position_risk_conflict、insufficient_evidence。
 治理隔离：preopen_2to1 的 no_validated_active_model、缺少或缺乏已验证入场模型、
 入场概率模型未激活、预测未校准、strategy_route=abstain 都只是治理元数据；不得据此
 设置概率、verdict、missing_information 或 abstain_reason。禁止所有候选机械返回相同
-概率和信心。完成上述判断后立即停止。
+概率和信心。
+
+方向与证据语义：所有方向特征先按候选方向解释。对 long，负的 1H/4H 动量是逆向；
+对 short，正的 1H/4H 动量才是逆向。正资金费是 long 的潜在成本、不是 short 的成本；
+负资金费是 short 的潜在成本、不是 long 的成本。不得把顺向动量或有利资金费写成
+signal_inconsistency。position_risk_conflict 只用于账户/组合确有风险冲突，不能代指波动、
+regime 或缺模型；liquidity_failure 只用于点差、滑点、深度、盘口或订单流。普通 reject
+至少包含两个不同的 reason_code 风险族；重复同一事实、重复 evidence_id 或把同一字段换种
+说法不算独立。只有 extreme_market_event 可凭单一严重事件形成 reject。完成判断后立即停止。
 """.strip()
-# v6 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
+# v7 Challenger 只改变 Prompt 与确定性语义校验；模型、Context 与工具保持不变，
 # 避免把模型切换、输入补全和风险任务改写混成无法归因的实验。
 AGENT_HARNESS_MODEL = "deepseek-chat"
 AGENT_HARNESS_JSON_MODE = True

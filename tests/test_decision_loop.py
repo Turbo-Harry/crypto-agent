@@ -39,9 +39,9 @@ def _anchored_harness_reject(prompt):
         "verdict": "reject",
         "risk_probability": 0.9,
         "confidence": 0.8,
-        "reason_codes": ["liquidity_failure"],
+        "reason_codes": ["extreme_market_event"],
         "evidence_ids": [evidence_id],
-        "reason": "shadow only",
+        "reason": "verified severe market event",
     }
 
 passed = failed = 0

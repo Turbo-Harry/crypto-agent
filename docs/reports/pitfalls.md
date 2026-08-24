@@ -13,6 +13,12 @@
 
 ---
 
+### 2026-08-24 Agent 把顺向空头动量与有利资金费误判成风险冲突
+- 现象：Harness v6 首批 ADA short Trace 把负的 1H/4H 动量描述为“正动量冲突”，并把正资金费当成空单成本；AAVE 在账户空仓、风控可交易时把市场波动标为 `position_risk_conflict`。两条均形成尚未生效的 `shadow_reject`。
+- 根因：Prompt 只要求按方向检查特征，没有明确 long/short 的符号语义；确定性校验只检查概率门和 evidence_id 是否存在，没有核验风险族数量、动量方向和 reason-code 与冻结账户事实的一致性。
+- 修复：Harness v7 明确 long/short 动量与资金费成本方向；普通 reject 至少两个不同风险族，单证据只允许 `extreme_market_event`；确定性校验拒绝无方向冲突的 `signal_inconsistency`、无真实账户冲突的 `position_risk_conflict` 和引用有利资金费的 reject，最多修复一次后失败关闭。
+- 预防：LLM 的自然语言“解释正确”不能代替机器语义门；每新增可执行 reason code，都要用正反冻结反例证明字段、方向和风险族一致。
+
 ## 交易所 API 类
 
 ### 2026-08-16 OKX 条件单挂单报 50015（triggerPx 参数错）

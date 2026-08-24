@@ -1553,3 +1553,23 @@
   v6/v3 completed+pending、lifecycle=v5 shadow、`veto_enabled=false`；不再需要从旧 current 字段猜测
   新版本是否已部署。部署后 `/health=ok`、心跳年龄 9.1 秒、空仓、今日零交易、未熔断、对账一致、
   `/error` 为空；本轮仅修正只读可观测性，没有改变任何订单或 Agent 权限。
+
+## 2026-08-24 Harness v7 方向与证据一致性预声明
+
+- 触发证据：v6/v3 首批 A 自然 Trace 3 条尚未成熟，其中 ADA short reject 把实际为负的
+  `momentum_1h=-0.00182/momentum_4h=-0.00454` 说成“正动量冲突”，又把正
+  `funding_rate=0.0001` 当作 short 成本；AAVE 在 `portfolio_notional=0`、
+  `risk_can_trade=true/risk_halted=false` 时把波动/regime 风险写成 `position_risk_conflict`。
+  这两条只是假拒绝失效模式，不作为胜率或绩效样本。
+- 冻结变更：Prompt 身份升级为 `harness-risk-v7-direction-evidence-consistency`。明确 long/short
+  动量和资金费符号；普通 reject 至少两个不同 reason-code 风险族，单证据只允许
+  `extreme_market_event`；确定性校验新增方向动量、账户风险冲突和有利资金费引用检查。
+  旧 v6 Trace 保留但不混计。模型、Context、Schema、Retrieval、Tool Policy、费用、0.70/0.70、
+  100/30、paper-only 和基线拒绝不可恢复边界全部不变。
+- 验收要求：专项覆盖 ADA/AAVE 两个真实反例、单一普通风险族和单一严重事件正例；随后跑全套
+  Agent 专项、全量 57 脚本与静态护栏。只允许重启 paper，首批 v7 自然 Trace 必须证明新身份、
+  完整审计、零 Veto/零订单；自然准确率仍需独立等待 4h 标签和 100/30 门，不能用语义单测晋升。
+- 离线证据：LangGraph 方向/语义专项 21/21；全部 `test_agent_*.py` 专项绿（Harness E2E 13/13、
+  生命周期 9/9、增量评价 10/10、legacy/provider 19/19 等）；决策闭环 61/61、策略 B 34/34；
+  最终全量自动发现套件 57/57。AI 仓库检查、依赖图、参数集中化、测试隔离、23 条修复护栏、
+  `py_compile` 和 `diff --check` 全绿。该证据只证明实现与安全边界，不证明自然拦亏效果。

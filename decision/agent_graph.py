@@ -22,8 +22,8 @@ import config
 from decision.agent_context import build_context, serialize_context
 from decision.agent_contracts import (
     AgentDecision, AgentInput, AgentSemanticError, AgentStep, FinalAction,
-    HarnessConfig, HarnessRun, ModelCallResult, RuntimeStatus, StepStatus,
-    StepType, Verdict, strict_parse_model_output, stable_hash,
+    HarnessConfig, HarnessRun, ModelCallResult, ReasonCode, RuntimeStatus,
+    StepStatus, StepType, Verdict, strict_parse_model_output, stable_hash,
 )
 from decision.agent_memory import retrieve_for_input
 from decision.agent_policy import PolicyKernel, PolicyResult
@@ -254,6 +254,94 @@ def _validate_decision_semantics(decision: AgentDecision,
         if unknown:
             raise AgentSemanticError(
                 "reject evidence_ids are not anchored: " + ",".join(unknown))
+        if agent_input.prompt_version in \
+                config.AGENT_HARNESS_DIRECTIONAL_EVIDENCE_PROMPT_VERSIONS:
+            _validate_directional_reject_evidence(decision, agent_input)
+
+
+def _frozen_factor_features(agent_input: AgentInput) -> Mapping[str, Any]:
+    frozen = agent_input.market.get("frozen_features")
+    if isinstance(frozen, Mapping):
+        features = frozen.get("factor_features")
+        if isinstance(features, Mapping):
+            return features
+    features = agent_input.signal.get("factor_features")
+    return features if isinstance(features, Mapping) else {}
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_directional_momentum_conflict(agent_input: AgentInput) -> bool:
+    direction = str(agent_input.signal.get("direction") or
+                    agent_input.signal.get("dir") or "").lower()
+    features = _frozen_factor_features(agent_input)
+    momentum = [_as_float(features.get(name))
+                for name in ("momentum_1h", "momentum_4h")]
+    usable = [value for value in momentum if value is not None]
+    if direction == "long":
+        return any(value < 0 for value in usable)
+    if direction == "short":
+        return any(value > 0 for value in usable)
+    return False
+
+
+def _has_position_risk_conflict(agent_input: AgentInput) -> bool:
+    health = agent_input.health
+    if health.get("risk_halted") is True or health.get("risk_can_trade") is False:
+        return True
+    account = agent_input.account
+    current = _as_float(account.get("portfolio_notional_usdt"))
+    maximum = _as_float(account.get("max_total_notional_usdt"))
+    return bool(current is not None and maximum is not None and current >= maximum)
+
+
+def _cites_favorable_funding(decision: AgentDecision,
+                             agent_input: AgentInput) -> bool:
+    text = decision.reason.lower()
+    if "funding" not in text and "资金费" not in text:
+        return False
+    direction = str(agent_input.signal.get("direction") or
+                    agent_input.signal.get("dir") or "").lower()
+    rate = _as_float(_frozen_factor_features(agent_input).get("funding_rate"))
+    if rate is None:
+        return True
+    return ((direction == "short" and rate >= 0) or
+            (direction == "long" and rate <= 0))
+
+
+def _validate_directional_reject_evidence(decision: AgentDecision,
+                                          agent_input: AgentInput) -> None:
+    """Enforce v7 direction and independent-family claims deterministically."""
+
+    codes = set(decision.reason_codes)
+    reason_text = decision.reason.lower()
+    cites_momentum = "momentum" in reason_text or "动量" in reason_text
+    if (ReasonCode.SIGNAL_INCONSISTENCY in codes and cites_momentum and not
+            _has_directional_momentum_conflict(agent_input)):
+        raise AgentSemanticError(
+            "signal_inconsistency cites direction-aligned 1H/4H momentum")
+    if ReasonCode.POSITION_RISK_CONFLICT in codes and not \
+            _has_position_risk_conflict(agent_input):
+        raise AgentSemanticError(
+            "position_risk_conflict lacks frozen account or risk conflict")
+    if _cites_favorable_funding(decision, agent_input):
+        raise AgentSemanticError(
+            "reject cites funding that is favorable for the candidate direction")
+    ordinary = codes - {
+        ReasonCode.EXTREME_MARKET_EVENT,
+        ReasonCode.INSUFFICIENT_EVIDENCE,
+    }
+    if (ReasonCode.EXTREME_MARKET_EVENT not in codes and
+            len(ordinary) <
+            config.AGENT_HARNESS_MIN_ORDINARY_REJECT_FAMILIES):
+        raise AgentSemanticError(
+            "reject requires two distinct ordinary risk families or one "
+            "extreme_market_event")
 
 
 class _Nodes:

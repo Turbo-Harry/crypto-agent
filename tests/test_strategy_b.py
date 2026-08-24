@@ -167,9 +167,9 @@ def test_engine_shadow_no_orders(tmp):
             evidence_id = payload["context"]["field_provenance"]["market"]
             return {
                 "verdict": "reject", "risk_probability": .9,
-                "confidence": .8, "reason_codes": ["liquidity_failure"],
+                "confidence": .8, "reason_codes": ["extreme_market_event"],
                 "evidence_ids": [evidence_id],
-                "reason": "frozen spread risk"}
+                "reason": "verified severe market event"}
         dt.agent_model_call = _anchored_reject
         dt.scan_signals()
         conn = sqlite3.connect(os.path.join(tmp, "scan.db"))

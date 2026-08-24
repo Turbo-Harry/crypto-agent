@@ -33,8 +33,8 @@ def anchored_reject(prompt):
     evidence_id = payload["context"]["field_provenance"]["market"]
     return {
         "verdict": "reject", "risk_probability": .9, "confidence": .8,
-        "reason_codes": ["liquidity_failure"],
-        "evidence_ids": [evidence_id], "reason": "spread"}
+        "reason_codes": ["extreme_market_event"],
+        "evidence_ids": [evidence_id], "reason": "verified severe market event"}
 
 
 class AgentHarnessEndToEndTest(unittest.TestCase):
