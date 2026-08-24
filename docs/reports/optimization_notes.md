@@ -2115,3 +2115,20 @@
   `f4440c07ea39` 为 0/0，C 当前 identity `4abf0977cd79` 为 4/0；三者 validated factor、校准和模型状态
   均为空。A readiness 明确返回当前 v13/v11/v5 完整 Harness version、`agent_version=null`、成熟 0/100、
   reject 0/30。旧 204/179 与旧 Harness 3 条不再出现在当前门，但物理审计数据完整保留。
+
+## 2026-08-24 A/B 研究身份免受 C-only 配置扰动
+
+- 触发证据：数据库中同一 v4 feature schema 的 A/B 分别存在 8/7 个配置身份；多次身份边界与 C 提案
+  协议提交时间一致。精确 identity 隔离解决了混计，却暴露出无关 C 参数会让 A/B 自然证据无谓失效。
+- 冻结变更：保留 legacy JSON 键和值以维持当前 v5 A/B 哈希，只在 A/B 身份计算时用 v5 部署兼容投影
+  覆盖 9 个 C-only 字段；C 继续读取实时 Prompt、Schema、候选上限、置信门、输出预算与温度。以后 C
+  升级只重置 C 证据，真正影响 A/B 候选、特征、成本或标签的配置仍会正常产生新 A/B identity。
+- 连续性证据：修改前后 A/B/C identity 分别保持 `71848d5359e9`、`f4440c07ea39`、`4abf0977cd79`；
+  A 当前 8 条 v5 自然样本原样计入，不做数据库迁移、不借 v1～v4、不生成 outcome。
+- 离线证据：采样专项 18/18（新增 9 个 C-only 字段逐项隔离断言），readiness 10/10、概率 30/30、
+  日内因子 33/33、模型生命周期 12/12、forecast 14/14、服务 60/60，以及极值、factor gate、replay、
+  决策闭环和全部 Agent 共 18 个相关脚本通过。按 CI 独立数据库、事件文件和运行目录自动发现并通过
+  58/58 个测试脚本，失败 0；参数集中、测试隔离、23 条修复护栏、code graph、AI repo、py_compile
+  与 diff check 全绿。
+- 安全边界：不改变 300/60/60、Harness 100/30、Brier、费用后 EV、稳定性、固定 2:1、风险预算、Veto
+  或订单权限。该变更只避免未来无关身份清零，不能把当前空模型或 0 个成熟 outcome 说成已可下单。

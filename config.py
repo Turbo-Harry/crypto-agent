@@ -366,6 +366,22 @@ AGENT_PROPOSAL_MIN_BARS = 60
 AGENT_PROPOSAL_THESIS_MAX_CHARS = 240
 AGENT_PROPOSAL_MAX_OUTPUT_TOKENS = 400
 AGENT_PROPOSAL_TEMPERATURE = 0.0
+
+# A/B 候选身份最初把下列 C-only 提案字段一并写进哈希。这里冻结部署 v5
+# 时的兼容投影，使 A/B 当前哈希与既有自然样本连续；以后只升级 C 提案
+# 协议时不得同步更新本映射。C 自身仍读取上面的实时值并产生新身份。
+# 只有真正影响 A/B 候选、特征、成本或标签的配置才应重置 A/B 研究证据。
+SIGNAL_IDENTITY_AB_AGENT_PROPOSAL_COMPAT = {
+    "AGENT_PROPOSAL_PROMPT_VERSION": "agent-proposal-v5-compact-evidence",
+    "AGENT_PROPOSAL_SCHEMA_VERSION": "agent-proposal-schema-v2-abstain-reason",
+    "AGENT_PROPOSAL_MAX_SYMBOLS": 5,
+    "AGENT_PROPOSAL_MAX_PROPOSALS": 2,
+    "AGENT_PROPOSAL_MIN_CONFIDENCE": 0.60,
+    "AGENT_PROPOSAL_MIN_BARS": 60,
+    "AGENT_PROPOSAL_THESIS_MAX_CHARS": 240,
+    "AGENT_PROPOSAL_MAX_OUTPUT_TOKENS": 400,
+    "AGENT_PROPOSAL_TEMPERATURE": 0.0,
+}
 # 记忆退层：证据保留在库中，过期只标 stale 并退出检索；重新验证可重新提升。
 AGENT_HARNESS_EPISODIC_TTL_DAYS = 90
 AGENT_HARNESS_SEMANTIC_TTL_DAYS = 180

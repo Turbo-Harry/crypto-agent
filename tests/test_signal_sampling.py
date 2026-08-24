@@ -126,6 +126,40 @@ def main():
         check("C 实现版本只改变 Agent 提案候选身份",
               c_version != c_changed and a_version == a_unchanged)
 
+        # C 的协议、输出与采样吞吐参数不参与 A/B 候选生成。历史上这些
+        # 字段无条件进入公共哈希，导致只优化 C 就把 A/B 的自然证据切成
+        # 旧身份。逐字段锁定隔离，避免以后再次无谓重置 300/60/60 进度。
+        b_version = config_identity(config.BREAKOUT_SIGNAL_STRATEGY_ID)[0]
+        c_version = config_identity(config.AGENT_PROPOSAL_STRATEGY_ID)[0]
+        proposal_changes = {
+            "AGENT_PROPOSAL_PROMPT_VERSION": "proposal-prompt-fixture",
+            "AGENT_PROPOSAL_SCHEMA_VERSION": "proposal-schema-fixture",
+            "AGENT_PROPOSAL_MAX_SYMBOLS": config.AGENT_PROPOSAL_MAX_SYMBOLS + 1,
+            "AGENT_PROPOSAL_MAX_PROPOSALS": config.AGENT_PROPOSAL_MAX_PROPOSALS + 1,
+            "AGENT_PROPOSAL_MIN_CONFIDENCE": 0.61,
+            "AGENT_PROPOSAL_MIN_BARS": config.AGENT_PROPOSAL_MIN_BARS + 1,
+            "AGENT_PROPOSAL_THESIS_MAX_CHARS":
+                config.AGENT_PROPOSAL_THESIS_MAX_CHARS + 1,
+            "AGENT_PROPOSAL_MAX_OUTPUT_TOKENS":
+                config.AGENT_PROPOSAL_MAX_OUTPUT_TOKENS + 1,
+            "AGENT_PROPOSAL_TEMPERATURE": 0.01,
+        }
+        isolated = True
+        for name, changed_value in proposal_changes.items():
+            original = getattr(config, name)
+            try:
+                setattr(config, name, changed_value)
+                isolated = isolated and (
+                    config_identity(config.ENTRY_SIGNAL_STRATEGY_ID)[0] ==
+                    a_version and
+                    config_identity(config.BREAKOUT_SIGNAL_STRATEGY_ID)[0] ==
+                    b_version and
+                    config_identity(config.AGENT_PROPOSAL_STRATEGY_ID)[0] !=
+                    c_version)
+            finally:
+                setattr(config, name, original)
+        check("C-only 配置逐字段只改变 C 候选身份", isolated)
+
         sid = results[0][0]
         update_signal_decision(sid, db_path=db, rule_decision="pass",
                                ai_verdict="reject", final_decision="rejected",

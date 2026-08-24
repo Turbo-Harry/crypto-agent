@@ -1346,3 +1346,17 @@
   配置的 model/prompt/context/schema/retrieval/tool-policy/pricing 完整版本。
 - 预防：任何 schema、成本、策略或协议升级，验收必须从只读计数一路追到训练 SQL、试验/制品身份、
   在线加载、校准和生命周期；“采样行带版本”或某一个接口计数正确，都不能证明下游没有借旧样本。
+
+### 2026-08-24 共享配置哈希会让无关策略升级清空研究证据
+
+- 现象：同一 `signal-features-v4` 语义下，A 自然样本被切成 8 个 `strategy_version`、B 被切成 7 个；
+  其中 17:31、18:20、18:24 的 A/B 身份切换与 C 提案 Prompt、Schema、输出预算等协议升级同频。
+  当前研究改成精确 identity 后，这类无关切换会把 A/B 的 300/60/60 进度重新归零。
+- 根因：`config_identity` 虽然只给 B 追加 B 参数、只给 C 追加 implementation，但公共
+  `CONFIG_FIELDS` 仍无条件包含 9 个 `AGENT_PROPOSAL_*` C-only 字段。旧测试只覆盖 C implementation
+  不影响 A，遗漏 Prompt、Schema、候选数、置信门和输出参数。
+- 修复：为 A/B 冻结当前 v5 部署时的 C-only legacy 兼容投影；A/B 哈希继续保持
+  `71848d5359e9`/`f4440c07ea39`，C 仍读取实时提案配置并独立换身份。逐字段回归证明 9 个 C-only
+  字段任一变化都只改变 C，不改变 A/B；不合并旧 schema，也不改写任何自然样本。
+- 预防：多策略共享身份算法时，配置字段必须按“实际影响的策略”做投影测试；新增字段至少验证
+  目标策略会换身份、无关策略不会换身份、当前部署哈希保持连续三项，不能只检查配置被写进某个哈希。

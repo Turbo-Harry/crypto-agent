@@ -34,6 +34,14 @@ CONFIG_FIELDS = (
     "AGENT_PROPOSAL_TEMPERATURE",
 )
 
+AGENT_PROPOSAL_CONFIG_FIELDS = (
+    "AGENT_PROPOSAL_PROMPT_VERSION", "AGENT_PROPOSAL_SCHEMA_VERSION",
+    "AGENT_PROPOSAL_MAX_SYMBOLS", "AGENT_PROPOSAL_MAX_PROPOSALS",
+    "AGENT_PROPOSAL_MIN_CONFIDENCE", "AGENT_PROPOSAL_MIN_BARS",
+    "AGENT_PROPOSAL_THESIS_MAX_CHARS", "AGENT_PROPOSAL_MAX_OUTPUT_TOKENS",
+    "AGENT_PROPOSAL_TEMPERATURE",
+)
+
 
 def jsonable(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -51,6 +59,13 @@ def config_identity(strategy_id: Optional[str] = None) -> Tuple[str, str]:
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
     snapshot = {name: jsonable(getattr(config, name, None))
                 for name in CONFIG_FIELDS}
+    if strategy_id != config.AGENT_PROPOSAL_STRATEGY_ID:
+        # A/B 的 legacy 哈希已经含有 C-only 键，直接删键会让当前 v5
+        # 自然样本再次清零。用冻结兼容投影保留相同哈希，同时阻断未来
+        # C Prompt/Schema/吞吐参数变更对 A/B 研究身份的无关扰动。
+        compatibility = config.SIGNAL_IDENTITY_AB_AGENT_PROPOSAL_COMPAT
+        snapshot.update({name: jsonable(compatibility[name])
+                         for name in AGENT_PROPOSAL_CONFIG_FIELDS})
     if strategy_id == config.BREAKOUT_SIGNAL_STRATEGY_ID:
         snapshot.update({
             "BREAKOUT_LOOKBACK": jsonable(config.BREAKOUT_LOOKBACK),
