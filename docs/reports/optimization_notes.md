@@ -1952,3 +1952,11 @@
   与运行目录自动发现并通过 58/58 个测试脚本，失败 0；参数集中化、测试隔离、23 条 fix guard、
   code graph、AI repo check、py_compile 与 diff check 全绿。paper 暂停期间 v12/v10 run 数为 0，
   没有热重载或新旧身份混样。
+- 部署证据：实现提交 `2035a4e`；paper 完整重启 `76028→81510`，live PID `90574` 未变化。重启后
+  `/health=ok`、心跳正常、未暂停、空仓、未熔断、对账 balanced、`/error` 为空；configured=v12/v10、
+  `veto_enabled=false`，`/models/entry` 仍为空且预算扩张为 false。
+- 首条自然证据：19:30 收线形成 SOL long 的 A_pullback Harness run。冻结契约只有
+  `signal_inconsistency` 一个合格普通风险族，模型首次调用即选择 `agent_abstain`，run completed、retry=0、
+  总延迟 1900ms、无 schema error；理由明确写出“reject 证据门槛未满足”。该 run 无执行权限、零 Veto、
+  零订单，evaluation 仍 pending。它验证单风险族场景已从 v11 的失败关闭修为可靠 abstain，不证明拦亏
+  精确率、费用后正 EV 或胜率改善；必须等待真实 4h 标签并继续累计每策略 100/30。
