@@ -337,11 +337,21 @@ def audit_status(db_path: str | None = None,
             "post_activation_paper_validation": _phase(post_activation_names),
             "enhancement_maturity": _phase(enhancement_names),
         }
+        paper_bootstrap_allowed = bool(
+            not config.LIVE_MODE and
+            config.PAPER_BOOTSTRAP_BASELINE_ORDERS and
+            strategy_id == config.ENTRY_SIGNAL_STRATEGY_ID)
         phases["order_eligibility"] = {
-            "complete": bool(active_entry),
+            "complete": bool(active_entry) or paper_bootstrap_allowed,
             "active_model_id": active_entry.get("model_id") if active_entry else None,
-            "reason": ("validated_active_entry_model_available" if active_entry else
-                       "awaiting_validated_active_entry_model"),
+            "mode": ("validated_model" if active_entry else
+                     "paper_baseline_bootstrap" if paper_bootstrap_allowed else
+                     "blocked"),
+            "reason": (
+                "validated_active_entry_model_available" if active_entry else
+                "paper_bootstrap_baseline_collection_enabled"
+                if paper_bootstrap_allowed else
+                "awaiting_validated_active_entry_model"),
             "note": "paper 平仓门不参与首个模型训练或激活",
         }
         return {

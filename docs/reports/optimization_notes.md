@@ -9,6 +9,8 @@
   `passed=false` 并标记 `bootstrap_override=true`，避免把冷启动订单冒充模型证明。
 - 固定 2:1、单笔风险 1%、名义 150 USDT、组合 600 USDT、交易所侧止损及所有现役量化/Agent 风控不变；
   live 与 FakeAdapter 均无 bootstrap 权限。
+- readiness 的 `order_eligibility` 同步区分 `validated_model`、`paper_baseline_bootstrap` 与 `blocked`，
+  防止执行已可采集而页面仍错误显示“不可下单”；B/C 研究线不取得 bootstrap 权限。
 
 ### 2026-08-24 入场成熟度阶段语义修正
 - 证据：首个 entry 模型训练依赖每方向自然候选 300/TP 60/SL 60；模型 shadow 晋升可用训练截止点

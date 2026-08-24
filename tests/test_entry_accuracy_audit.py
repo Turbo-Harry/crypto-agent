@@ -130,9 +130,11 @@ class EntryAccuracyAuditTest(unittest.TestCase):
             "model_bootstrap"]["blockers"][0])
         self.assertFalse(result["phases"][
             "post_activation_paper_validation"]["complete"])
-        self.assertFalse(result["phases"]["order_eligibility"]["complete"])
+        self.assertTrue(result["phases"]["order_eligibility"]["complete"])
+        self.assertEqual(result["phases"]["order_eligibility"]["mode"],
+                         "paper_baseline_bootstrap")
         self.assertEqual(result["phases"]["order_eligibility"]["reason"],
-                         "awaiting_validated_active_entry_model")
+                         "paper_bootstrap_baseline_collection_enabled")
         self.assertFalse(result["statistically_complete"])
 
     def test_breakout_shadow_does_not_inflate_pullback_training_gate(self):
