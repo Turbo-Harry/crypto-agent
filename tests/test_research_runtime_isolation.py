@@ -15,6 +15,7 @@ RESEARCH_MODULES = (
     "tools.replay_15m_research",
     "tools.evaluate_15m_research",
     "tools.evaluate_strategy_c_reversal",
+    "tools.evaluate_strategy_b_confirmation",
 )
 
 
