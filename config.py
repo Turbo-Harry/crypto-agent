@@ -396,8 +396,11 @@ AGENT_PROPOSAL_PAPER_MAX_DAILY_ORDERS = 1
 AGENT_PROPOSAL_PAPER_MAX_ENTRY_DEVIATION_BPS = 20.0
 # live AI 只读信息与真实资金执行严格分权；当前仓库治理禁止 AI 实盘下单。
 AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED = True   # 2026-08-25 用户指示: 实盘 C_AI 上线(env 保底)
-AGENT_PROPOSAL_LIVE_SYMBOLS = ("BTC", "ETH", "SOL")
-AGENT_PROPOSAL_LIVE_MAX_DAILY_ORDERS = 1
+# 2026-08-25 用户指示"把限制取消,笔数按扫描笔数,候选池都可下单,
+# 真实花费<10 USDT,实盘与模拟盘一致":
+AGENT_PROPOSAL_LIVE_SYMBOLS = ()        # 空=不限符号,候选池提案均可执行
+AGENT_PROPOSAL_LIVE_MAX_DAILY_ORDERS = 0  # 0=不限,按扫描提案笔数执行
+AGENT_PROPOSAL_LIVE_MAX_NOTIONAL = 10.0  # 单笔真实花费(名义)上限 USDT
 # 实盘不得用 bootstrap 绕过已验证模型门。
 AGENT_PROPOSAL_LIVE_BOOTSTRAP_ENABLED = True  # 2026-08-25 用户指示: 实盘 bootstrap 通道
 

@@ -1144,12 +1144,13 @@ class SignalScanMixin:
                 getattr(self.exchange, "name", "") not in ("okx", "okx-ccxt") or
                 result.get("deduplicated")):
             return
-        _symbols = (getattr(config, "AGENT_PROPOSAL_LIVE_SYMBOLS",
-                            ("BTC", "ETH", "SOL"))
+        # 2026-08-25 用户指示"候选池都可以下单/笔数按扫描笔数":
+        # live 符号不限(空元组=全部),日限 0=不限
+        _symbols = (getattr(config, "AGENT_PROPOSAL_LIVE_SYMBOLS", ())
                     if _live
                     else getattr(config, "AGENT_PROPOSAL_PAPER_SYMBOLS",
                                  ("BTC", "ETH", "SOL", "XRP", "DOGE")))
-        _daily_cap = (getattr(config, "AGENT_PROPOSAL_LIVE_MAX_DAILY_ORDERS", 1)
+        _daily_cap = (getattr(config, "AGENT_PROPOSAL_LIVE_MAX_DAILY_ORDERS", 0)
                       if _live
                       else getattr(config, "AGENT_PROPOSAL_PAPER_MAX_DAILY_ORDERS", 1))
         if _live:
@@ -1173,9 +1174,9 @@ class SignalScanMixin:
             and row.get("entry_time")
             and time.strftime("%Y-%m-%d", time.localtime(row["entry_time"])) == today)
         for proposal in result.get("proposals") or ():
-            if used >= _daily_cap:
+            if _daily_cap > 0 and used >= _daily_cap:
                 break
-            if str(proposal.get("base") or "").upper() not in _symbols:
+            if _symbols and str(proposal.get("base") or "").upper() not in _symbols:
                 continue
             signal_id = str(proposal.get("signal_id") or "")
             if int(proposal.get("geometry_valid") or 0) != 1 or not signal_id:
@@ -1184,6 +1185,7 @@ class SignalScanMixin:
             if harness is not None and harness.policy.veto:
                 continue
             sig = {
+                "cai_live": bool(_live),
                 "dir": proposal.get("direction"),
                 "entry": float(proposal.get("reference_entry")),
                 "stop": float(proposal.get("stop")),
