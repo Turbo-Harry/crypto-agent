@@ -44,6 +44,8 @@ HOLDOUT_SYMBOLS = ("BNB", "LTC")
 POLICY_VERSION = "strategy-b-long-one-bar-confirmation-v1-predeclared"
 FAILED_BREAKOUT_POLICY_VERSION = \
     "strategy-b-symmetric-failed-breakout-v1-predeclared"
+FAILED_BREAKOUT_WIDE_POLICY_VERSION = \
+    "strategy-b-symmetric-failed-breakout-2atr4atr-v1-predeclared"
 MARKET_INPUT_VERSION = "confirmed-klines-v2-preferred"
 RUNTIME_DB_NAMES = {"crypto_agent.db", "crypto_agent_live.db"}
 
@@ -169,14 +171,19 @@ def resolve_trade(candidate: Mapping[str, Any],
                 for left, right in zip(path, path[1:]))):
         return None
     entry = float(path[0][1])
-    risk = float(candidate["atr"])
-    if entry <= 0 or risk <= 0:
+    atr = float(candidate["atr"])
+    stop_atr = float(candidate.get("stop_atr") or 1.0)
+    tp_atr = float(candidate.get("tp_atr") or 2.0)
+    risk = atr * stop_atr
+    reward = atr * tp_atr
+    if (entry <= 0 or atr <= 0 or stop_atr <= 0 or tp_atr <= 0 or
+            not math.isclose(tp_atr / stop_atr, 2.0)):
         return None
     direction = str(candidate.get("trade_direction") or DIRECTION)
     if direction == "long":
-        stop, tp = entry - risk, entry + 2 * risk
+        stop, tp = entry - risk, entry + reward
     elif direction == "short":
-        stop, tp = entry + risk, entry - 2 * risk
+        stop, tp = entry + risk, entry - reward
     else:
         return None
     exit_price = None
@@ -271,6 +278,8 @@ def _evaluate_slice(replay: sqlite3.Connection, market: sqlite3.Connection,
                     confirmation_fn: Callable[
                         [Mapping[str, Any], tuple[Any, ...] | None],
                         dict[str, Any] | None] = confirm_candidate,
+                    stop_atr: float = 1.0,
+                    tp_atr: float = 2.0,
                     start_ts: float | None = None,
                     end_ts: float | None = None
                     ) -> tuple[dict[str, int], list[dict[str, Any]]]:
@@ -300,6 +309,8 @@ def _evaluate_slice(replay: sqlite3.Connection, market: sqlite3.Connection,
             if delayed is None:
                 missing_confirmation += 1
                 continue
+            delayed["stop_atr"] = float(stop_atr)
+            delayed["tp_atr"] = float(tp_atr)
             confirmed += 1
             next_allowed_ms = int(delayed["entry_event_ms"]) + COOLDOWN_MS
             outcome = resolve_trade(
@@ -398,7 +409,9 @@ def _evaluate_policy(replay_db: str, market_db: str, *,
                          dict[str, Any] | None],
                      directions: tuple[str, ...],
                      confirmation_description: str,
-                     output_direction: str) -> dict[str, Any]:
+                     output_direction: str,
+                     stop_atr: float = 1.0,
+                     tp_atr: float = 2.0) -> dict[str, Any]:
     replay_path, market_path, replay, market, proof = _open_inputs(
         replay_db, market_db)
     try:
@@ -406,6 +419,7 @@ def _evaluate_policy(replay_db: str, market_db: str, *,
         dev_stats, dev_rows = _evaluate_slice(
             replay, market, table, DEVELOPMENT_SYMBOLS,
             directions=directions, confirmation_fn=confirmation_fn,
+            stop_atr=stop_atr, tp_atr=tp_atr,
             end_ts=VALIDATION_CUTOFF_TS)
         development = summarize(
             dev_rows, stats=dev_stats, folds=5, min_n=100,
@@ -419,6 +433,7 @@ def _evaluate_policy(replay_db: str, market_db: str, *,
             late_stats, late_rows = _evaluate_slice(
                 replay, market, table, DEVELOPMENT_SYMBOLS,
                 directions=directions, confirmation_fn=confirmation_fn,
+                stop_atr=stop_atr, tp_atr=tp_atr,
                 start_ts=VALIDATION_CUTOFF_TS)
             late_validation = summarize(
                 late_rows, stats=late_stats, folds=4, min_n=50,
@@ -430,7 +445,8 @@ def _evaluate_policy(replay_db: str, market_db: str, *,
             else:
                 holdout_stats, holdout_rows = _evaluate_slice(
                     replay, market, table, HOLDOUT_SYMBOLS,
-                    directions=directions, confirmation_fn=confirmation_fn)
+                    directions=directions, confirmation_fn=confirmation_fn,
+                    stop_atr=stop_atr, tp_atr=tp_atr)
                 holdout = summarize(
                     holdout_rows, stats=holdout_stats, folds=4, min_n=30,
                     min_positive_folds=3,
@@ -453,7 +469,8 @@ def _evaluate_policy(replay_db: str, market_db: str, *,
             "source_directions": list(directions),
             "direction": output_direction,
             "confirmation": confirmation_description,
-            "entry": "following_1m_open", "stop_atr": 1.0, "tp_atr": 2.0,
+            "entry": "following_1m_open", "stop_atr": stop_atr,
+            "tp_atr": tp_atr,
             "horizon_hours": HORIZON_HOURS,
             "same_minute_tie": "sl_first",
             "symbol_cooldown_hours": HORIZON_HOURS,
@@ -488,6 +505,18 @@ def evaluate_failed_breakout(replay_db: str, market_db: str) -> dict[str, Any]:
         output_direction="opposite_of_source")
 
 
+def evaluate_failed_breakout_wide(replay_db: str,
+                                  market_db: str) -> dict[str, Any]:
+    return _evaluate_policy(
+        replay_db, market_db,
+        policy_version=FAILED_BREAKOUT_WIDE_POLICY_VERSION,
+        confirmation_fn=confirm_failed_breakout,
+        directions=("long", "short"),
+        confirmation_description=(
+            "next_closed_15m_opposite_body_and_close_back_through_breakout"),
+        output_direction="opposite_of_source", stop_atr=2.0, tp_atr=4.0)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replay-db", required=True,
@@ -495,11 +524,16 @@ def main() -> None:
     parser.add_argument("--market-db", required=True,
                         help="matching isolated public-market database")
     parser.add_argument(
-        "--policy", choices=("continuation", "failed-breakout"),
-        default="continuation", help="one of the two frozen policies")
+        "--policy", choices=(
+            "continuation", "failed-breakout", "failed-breakout-wide"),
+        default="continuation", help="one of the three frozen policies")
     args = parser.parse_args()
-    evaluator = (evaluate_failed_breakout if args.policy == "failed-breakout"
-                 else evaluate)
+    evaluators = {
+        "continuation": evaluate,
+        "failed-breakout": evaluate_failed_breakout,
+        "failed-breakout-wide": evaluate_failed_breakout_wide,
+    }
+    evaluator = evaluators[args.policy]
     print(json.dumps(evaluator(args.replay_db, args.market_db),
                      ensure_ascii=False, indent=2, sort_keys=True))
 

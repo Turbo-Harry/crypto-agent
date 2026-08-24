@@ -87,6 +87,25 @@ class StrategyBConfirmationTest(unittest.TestCase):
         self.assertEqual(row["outcome"], "sl")
         self.assertAlmostEqual(row["gross_r"], -1.0)
 
+    def test_wide_failed_breakout_keeps_two_to_one_in_r_units(self):
+        event_ms = 1_700_000_000_000
+        delayed = {
+            "entry_event_ms": event_ms, "atr": 1.0,
+            "trade_direction": "short", "stop_atr": 2.0, "tp_atr": 4.0,
+        }
+        bars = []
+        for index in range(240):
+            open_time = event_ms + index * MINUTE_MS
+            if index == 0:
+                bars.append((open_time, 100.0, 100.5, 95.8, 96.0, 1.0))
+            else:
+                bars.append((open_time, 96.0, 96.1, 95.9, 96.0, 1.0))
+        row = resolve_trade(delayed, bars, funding_rate=0.0001)
+        self.assertEqual(row["stop"], 102.0)
+        self.assertEqual(row["tp"], 96.0)
+        self.assertEqual(row["outcome"], "tp")
+        self.assertAlmostEqual(row["gross_r"], 2.0)
+
     def test_candidate_query_preserves_source_direction_for_reversal(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
