@@ -2173,4 +2173,11 @@
   `B_breakout`；未知策略 422。该变更完全只读，不触发训练、生命周期推进、Veto 或订单。
 - 离线证据：服务 API 62/62、Agent 增量评价 13/13、接口边界 17/17 通过；按 CI 独立数据库、事件文件
   与运行目录自动发现并通过 58/58 个测试脚本，失败 0。参数、隔离、修复护栏、code graph、AI repo、
-  py_compile 与部署证据在本批次后续补记。
+  py_compile 与 diff check 全绿。
+- 部署证据：实现提交 `a37cd2d`。先确认 8091 paper 空仓、未熔断、对账 balanced、错误为空并暂停扫描，
+  仅重启 `com.crypto.paper`：PID `17766→19558`；8090 live PID `90574` 未变化。重启后 health ok、心跳
+  持续、未暂停、空仓、对账 balanced、错误为空；模型列表仍为空且预算扩张 false。
+- 宿主接口证据：A/B/C 顶层与 Harness 嵌套身份分别为 `A_pullback`、`B_breakout`、
+  `C_agent_proposal`，完整版本分别绑定 `71848d5359e9`、`f4440c07ea39`、`4abf0977cd79`；未知策略
+  返回 422。当前精确 scope 为 A 9 候选/0 outcome/9 pending、B 8/0/8 pending、C 6/0/0 pending，
+  三者成熟 Harness 均为 0；这证明接口隔离和诚实进度，不证明已产模、可下单或胜率提高。
