@@ -14,9 +14,19 @@ from decision.agent_contracts import stable_hash
 from decision.agent_proposals import (build_market_snapshot, list_proposals,
                                       production_proposal_model_call,
                                       run_proposal_cycle)
+from decision.entry_accuracy_audit import audit_status
+from decision.entry_probability import load_artifact
+from decision.forecast import calibration, empirical_first_passage
+from decision.signal_identity import config_identity
 from engines.signal_scan import SignalScanMixin
 from engines.signal_sampling import record_agent_proposal_sample
 from exchange.fake_adapter import FakeAdapter
+from factors.entry_model_training import (_load_rows as load_entry_rows,
+                                          _validated_features as entry_features)
+from factors.extrema_model_training import (_load_rows as load_extrema_rows,
+                                            _validated_features as extrema_features)
+from factors.intraday_factor_mining import load_observations
+from storage.query_api import list_factor_trials
 
 
 def market_rows(*, timeframe_seconds=900, n=70, base=100.0):
@@ -365,6 +375,112 @@ class AgentProposalTest(unittest.TestCase):
         self.assertIsNone(
             SignalScanMixin._run_agent_proposal_shadow(holder, ["BTC"]))
         self.assertEqual(calls, [])
+
+    def test_current_protocol_research_never_borrows_old_c_evidence(self):
+        current_version = config_identity(
+            config.AGENT_PROPOSAL_STRATEGY_ID)[0]
+        old_version = "pullback-15m-v1:C_agent_proposal:oldprotocol"
+        now = time.time() - 10 * 3600
+        sample_rows = []
+        outcome_rows = []
+        calibration_rows = []
+        for idx, (signal_id, strategy_version) in enumerate((
+                ("c-old", old_version), ("c-current", current_version))):
+            event_ts = now + idx * 900
+            sample_rows.append((
+                signal_id, "BTC", "long", event_ts, int(event_ts * 1000),
+                config.SIGNAL_SAMPLE_TIMEFRAME, "swap",
+                config.AGENT_PROPOSAL_STRATEGY_ID, strategy_version, "cfg",
+                config.SIGNAL_FEATURE_SCHEMA_VERSION, 100.0, 99.0, 102.0,
+                1.0, config.SIGNAL_OUTCOME_HORIZON_HOURS,
+                json.dumps({"factor_features": {"atr_pct": 0.01}}),
+                event_ts, event_ts))
+            outcome_rows.append((
+                signal_id, config.SIGNAL_OUTCOME_HORIZON_HOURS, 1, 0, 0, 0,
+                2.0, 2.1, -0.2, 0.02, -0.002,
+                event_ts + config.SIGNAL_OUTCOME_HORIZON_HOURS * 3600,
+                "1m", "path-v1"))
+            calibration_rows.append((
+                f"trade-{signal_id}", event_ts + 1, 0.7, 0.2, 1, 0, 2.0,
+                signal_id, 0.1, 0, "path-v1"))
+
+        current_artifact = {
+            "strategy_id": config.AGENT_PROPOSAL_STRATEGY_ID,
+            "strategy_version": current_version,
+            "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
+            "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
+            "cost_model_version": config.ENTRY_COST_MODEL_VERSION,
+        }
+        old_artifact = dict(current_artifact, strategy_version=old_version)
+        with sdb.tx(db_path=self.db_path) as conn:
+            conn.executemany(
+                "INSERT INTO signal_samples (signal_id,symbol,direction,event_ts,"
+                "kline_ts,timeframe,venue,strategy_id,strategy_version,config_hash,"
+                "feature_schema_version,entry,stop,tp,atr,horizon_hours,features,"
+                "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                sample_rows)
+            conn.executemany(
+                "INSERT INTO signal_outcomes (signal_id,horizon_hours,tp_first,"
+                "sl_first,timeout,ambiguous,pnl_r,mfe_r,mae_r,high_ret_h,low_ret_h,"
+                "settled_at,bar_resolution,label_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", outcome_rows)
+            conn.executemany(
+                "INSERT INTO forecast_calibration (trade_id,ts,p_hit_tp,p_hit_sl,"
+                "hit_tp,hit_sl,pnl,signal_id,p_timeout,timeout,label_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)", calibration_rows)
+            conn.executemany(
+                "INSERT INTO factor_trials (ts,name,strategy_id,strategy_version,"
+                "status,timeframe,horizon_hours,ic_tstat) VALUES (?,?,?,?,?,?,?,?)",
+                [(now, "current_feature", config.AGENT_PROPOSAL_STRATEGY_ID,
+                  current_version, "validated", config.SIGNAL_SAMPLE_TIMEFRAME,
+                  config.SIGNAL_OUTCOME_HORIZON_HOURS, 4.0),
+                 (now + 1, "old_feature", config.AGENT_PROPOSAL_STRATEGY_ID,
+                  old_version, "validated", config.SIGNAL_SAMPLE_TIMEFRAME,
+                  config.SIGNAL_OUTCOME_HORIZON_HOURS, 9.0)])
+            conn.executemany(
+                "INSERT INTO model_artifacts (model_id,model_type,strategy_id,"
+                "strategy_version,direction,version,state,created_at,feature_names,"
+                "artifact,metrics) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [("c-current-model", "entry_probability",
+                  config.AGENT_PROPOSAL_STRATEGY_ID, current_version, "long", "v",
+                  "active", now, "[]", json.dumps(current_artifact), "{}"),
+                 ("c-old-newer-model", "entry_probability",
+                  config.AGENT_PROPOSAL_STRATEGY_ID, old_version, "long", "v",
+                  "active", now + 100, "[]", json.dumps(old_artifact), "{}")])
+
+        strategy_id = config.AGENT_PROPOSAL_STRATEGY_ID
+        self.assertEqual(
+            [row["signal_id"] for row in load_observations(
+                "atr_pct", self.db_path, strategy_id)], ["c-current"])
+        self.assertEqual(
+            [row["signal_id"] for row in load_entry_rows(
+                "long", ["atr_pct"], self.db_path, strategy_id)], ["c-current"])
+        self.assertEqual(
+            [row["signal_id"] for row in load_extrema_rows(
+                "long", ["atr_pct"], self.db_path, strategy_id)], ["c-current"])
+        self.assertEqual(entry_features(self.db_path, strategy_id),
+                         ["current_feature"])
+        self.assertEqual(extrema_features(self.db_path, strategy_id),
+                         ["current_feature"])
+        self.assertEqual(
+            [row["name"] for row in list_factor_trials(
+                self.db_path, strategy_id, strategy_version=current_version)],
+            ["current_feature"])
+        self.assertEqual(empirical_first_passage(
+            self.db_path, "long", as_of_ts=time.time(),
+            strategy_id=strategy_id)["n"], 1)
+        self.assertEqual(calibration(
+            self.db_path, min_n=1, strategy_id=strategy_id)["n"], 1)
+        self.assertEqual(load_artifact(
+            "long", self.db_path, allow_shadow=False,
+            strategy_id=strategy_id)["model_id"], "c-current-model")
+        audit = audit_status(self.db_path, strategy_id=strategy_id)
+        self.assertEqual(audit["counts"]["raw_candidate_snapshots"], 1)
+        self.assertEqual(audit["counts"]["candidates"], 1)
+        self.assertEqual(audit["counts"]["outcomes"], 1)
+        self.assertEqual(audit["counts"]["forecast_calibration"], 1)
+        self.assertEqual(audit["counts"]["validated_factors"], 1)
+        self.assertEqual(audit["scope"]["strategy_version"], current_version)
 
 
 if __name__ == "__main__":

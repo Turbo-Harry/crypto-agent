@@ -4,6 +4,7 @@ import time
 from typing import List, Optional
 
 import config
+from decision.signal_identity import research_scope_version
 from factors.feature_registry import REGISTRY, extract_features
 from factors.intraday_factor_gate import evaluate_factor
 
@@ -12,14 +13,18 @@ def load_observations(feature_name: str, db_path=None,
                       strategy_id: Optional[str] = None) -> List[dict]:
     import storage.db as sdb
     sdb.init_db(db_path)
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
+    scope_sql = " AND s.strategy_version=?" if scope_version else ""
     rows = sdb.q(
         "SELECT s.*,o.pnl_r,o.tp_first,o.sl_first,o.timeout "
         "FROM signal_samples_canonical s JOIN signal_outcomes o ON o.signal_id=s.signal_id "
         "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? "
-        "ORDER BY s.event_ts",
-        [strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID,
+        + scope_sql + " ORDER BY s.event_ts",
+        [strategy_id,
          config.SIGNAL_SAMPLE_TIMEFRAME,
-         config.SIGNAL_OUTCOME_HORIZON_HOURS],
+         config.SIGNAL_OUTCOME_HORIZON_HOURS,
+         *([scope_version] if scope_version else [])],
         db_path=db_path)
     spec = REGISTRY[feature_name]
     out = []
@@ -58,6 +63,7 @@ def run_mining(db_path=None, strategy_id: Optional[str] = None):
             f"因子候选 {len(REGISTRY)} 超过上限 "
             f"{config.FACTOR_MAX_AUTO_CANDIDATES}")
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    strategy_version = research_scope_version(strategy_id)
     observations = {
         name: load_observations(name, db_path, strategy_id) for name in REGISTRY}
     total_candidates = len(REGISTRY)
@@ -67,7 +73,8 @@ def run_mining(db_path=None, strategy_id: Optional[str] = None):
         result = evaluate_factor(
             name, spec.rationale, observations[name],
             total_candidates=total_candidates, accepted=accepted_values,
-            expression=name, db_path=db_path, strategy_id=strategy_id)
+            expression=name, db_path=db_path, strategy_id=strategy_id,
+            strategy_version=strategy_version)
         results.append(result)
         if result["status"] == "validated":
             accepted_values[name] = {

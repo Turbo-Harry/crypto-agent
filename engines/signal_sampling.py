@@ -166,6 +166,10 @@ def record_agent_proposal_sample(*, proposal, snapshot, geometry, run_id: str,
     merge_sample_features(signal_id, {
         "agent_proposal": {
             "run_id": run_id, "confidence": proposal.confidence,
+            "implementation_version":
+                config.AGENT_PROPOSAL_IMPLEMENTATION_VERSION,
+            "strategy_version": config_identity(
+                config.AGENT_PROPOSAL_STRATEGY_ID)[0],
             "thesis": proposal.thesis,
             "evidence_ids": proposal.evidence_ids,
             "execution_authority": False,

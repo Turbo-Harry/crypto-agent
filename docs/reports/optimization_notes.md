@@ -1771,3 +1771,28 @@
 - 目标契约同步：把权威目标 Prompt 更新为 Harness v8/v6 + C v4.2 的统一版本，写入当前负基线、
   C 独立 300/60/60 训练门、60 shadow/30 closed/30 selected 生命周期门、费用后 EV/Brier/DSR/PBO/
   分段稳定性和 input hash/零执行权限验收。该文档更新不改变配置、阈值、模型状态或订单权限。
+
+## 2026-08-24 C 当前协议研究 scope 隔离预声明
+
+- 触发证据：`/agent/proposals` 已按 implementation identity 精确统计 v4.2，但 `run_mining`、入场概率、
+  极值训练、经验预测、校准与模型生命周期仍只用 `strategy_id=C_agent_proposal` 查询。运行库已有 13 条
+  旧 v1/v2 成熟提案，v4.2 当前仅 1 条 pending；若不修复，未来 C 的 300/60/60、Brier、EV 与模型
+  制品会混入旧 Prompt、旧输入和重叠行情，直接污染准确率验收。
+- 冻结变更：schema 追加只读研究身份列 `strategy_version` 到 factor trials 与 model artifacts；C 的所有
+  自然候选、因子试验、概率/极值训练、经验预测、校准、readiness 和生命周期必须精确匹配当前
+  `config_identity(C_agent_proposal)`，旧行保留审计但不计入。A/B 查询与交易逻辑不变。
+- 安全与验收：不得修改或删除活体历史行；迁移只通过正常 paper 启动幂等执行。测试必须构造相同
+  `strategy_id`、不同 C implementation/config identity 的旧/新样本，证明旧结果不能抬高候选、类别、
+  因子、模型、校准或生命周期计数；当前 v4.2 首条样本仍可被读取。全量和静态护栏通过后只重启 paper，
+  live 不动；部署后模型列表仍应为空，v4.2 mature 仍按真实 4h 路径增长。
+- 实施证据：数据库 schema 升至 v35，`factor_trials` 与 `model_artifacts` 增加可索引的
+  `strategy_version`；C 的因子挖掘、概率/极值训练、经验预测、校准、模型加载、生命周期、readiness 和
+  `/factors/trials` 均精确过滤当前协议。A/B 的 trial/model identity 在版本列为空时保持旧算法，C 仍只在
+  shadow 研究域，未进入自动 regime 路由。
+- 反污染实测：`tests/test_agent_proposals.py` 同库写入一条旧 C 和一条当前 C，且故意让旧模型时间更晚；
+  16/16 通过，所有消费者只返回当前样本、当前因子与当前模型，readiness 的候选/结果/校准/因子均为
+  1 而不是 2。聚焦回归：Harness storage 5/5、factor gate 32/32、entry probability 29/29、extrema
+  19/19、model lifecycle 12/12、entry audit 10/10、service API 54/54。
+- 全量证据：按 CI 自动发现方式运行 `tests/test_*.py`，发现并通过 58/58 个脚本，失败 0；参数集中、
+  测试隔离、fix guard、code graph、AI repo check 全绿。此证据只证明协议隔离与安全闭环正确，不把当前
+  1 条 pending 提案写成模型成熟或胜率提升。

@@ -93,13 +93,18 @@ def list_agent_runs(db_path: str | None, limit: int = 50) -> list[dict[str, Any]
 
 
 def list_factor_trials(db_path: str | None, strategy_id: str,
-                       limit: int = 50) -> list[dict[str, Any]]:
+                       limit: int = 50,
+                       strategy_version: str | None = None) -> list[dict[str, Any]]:
     _ready(db_path)
+    scope_sql = " AND strategy_version=?" if strategy_version else ""
     return db.q(
-        "SELECT id,ts,name,strategy_id,status,n_samples,n_folds,ic_tstat,net_spread,"
+        "SELECT id,ts,name,strategy_id,strategy_version,status,n_samples,n_folds,"
+        "ic_tstat,net_spread,"
         "dsr,pbo,missing_rate,fold_consistency,redundant_with "
-        "FROM factor_trials WHERE strategy_id=? ORDER BY id DESC LIMIT ?",
-        [strategy_id, max(1, min(200, limit))], db_path=db_path)
+        "FROM factor_trials WHERE strategy_id=?" + scope_sql +
+        " ORDER BY id DESC LIMIT ?",
+        [strategy_id, *([strategy_version] if strategy_version else []),
+         max(1, min(200, limit))], db_path=db_path)
 
 
 def latest_analysis(db_path: str | None) -> dict[str, Any] | None:

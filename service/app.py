@@ -412,7 +412,9 @@ def forecast_calibration(request: Request):
 def factor_trials(request: Request, limit: int = 50,
                   strategy_id: str = config.ENTRY_SIGNAL_STRATEGY_ID):
     """最近日内因子试验、OOS 证据与拒绝原因；不触发训练。"""
-    rows = list_factor_trials(_runtime(request).db_path, strategy_id, limit)
+    strategy_version = decision_api.research_strategy_version(strategy_id)
+    rows = list_factor_trials(_runtime(request).db_path, strategy_id, limit,
+                              strategy_version=strategy_version)
     return FactorTrialsOut(trials=rows)
 
 

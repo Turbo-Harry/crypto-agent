@@ -8,6 +8,7 @@ import math
 from typing import Dict, Iterable, List, Optional
 
 import config
+from decision.signal_identity import research_scope_version
 
 
 def quantile(values: Iterable[float], tau: float) -> Optional[float]:
@@ -148,15 +149,19 @@ def empirical_extrema_forecast(entry: float, direction: str, regime=None,
     """方向+regime 的滚动经验分位；样本不足诚实返回 None。"""
     import storage.db as sdb
     sdb.init_db(db_path)
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
+    scope_sql = " AND s.strategy_version=?" if scope_version else ""
     rows = sdb.q(
         "SELECT s.features,o.high_ret_h,o.low_ret_h FROM signal_outcomes o "
         "JOIN signal_samples_canonical s ON s.signal_id=o.signal_id "
         "WHERE s.direction=? AND s.strategy_id=? "
-        "AND s.timeframe=? AND s.horizon_hours=? "
-        "ORDER BY s.event_ts DESC",
-        [direction, strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID,
+        "AND s.timeframe=? AND s.horizon_hours=?" + scope_sql +
+        " ORDER BY s.event_ts DESC",
+        [direction, strategy_id,
          config.SIGNAL_SAMPLE_TIMEFRAME,
-         config.SIGNAL_OUTCOME_HORIZON_HOURS], db_path=db_path)
+         config.SIGNAL_OUTCOME_HORIZON_HOURS,
+         *([scope_version] if scope_version else [])], db_path=db_path)
     if regime:
         tag = regime.get("tag") if isinstance(regime, dict) else str(regime)
         filtered = []
@@ -195,16 +200,21 @@ def load_artifact(direction: str, db_path=None, allow_shadow=False,
     states = (("active", "observing", "kept") if not allow_shadow else
               ("active", "observing", "kept", "shadow", "validated"))
     placeholders = ",".join("?" for _ in states)
+    scope_version = research_scope_version(strategy_id)
+    scope_sql = " AND strategy_version=?" if scope_version else ""
     row = sdb.q1(
         f"SELECT * FROM model_artifacts WHERE model_type='extrema' "
         f"AND strategy_id=? AND direction=? AND state IN ({placeholders}) "
-        "ORDER BY created_at DESC LIMIT 1",
-        [strategy_id, direction, *states], db_path=db_path)
+        + scope_sql + " ORDER BY created_at DESC LIMIT 1",
+        [strategy_id, direction, *states,
+         *([scope_version] if scope_version else [])], db_path=db_path)
     if not row:
         return None
     try:
         artifact = json.loads(row["artifact"])
         if (artifact.get("strategy_id") != strategy_id or
+                (scope_version and
+                 artifact.get("strategy_version") != scope_version) or
                 artifact.get("timeframe") != config.SIGNAL_SAMPLE_TIMEFRAME or
                 int(artifact.get("horizon_hours") or 0) !=
                 config.SIGNAL_OUTCOME_HORIZON_HOURS):
@@ -220,15 +230,19 @@ def _online_conformal(model_id: str, target: str, db_path=None,
                       strategy_id=None) -> Optional[float]:
     """只用该模型随后已结算的影子预测更新半径，严格限制最近窗口。"""
     import storage.db as sdb
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
+    scope_sql = " AND s.strategy_version=?" if scope_version else ""
     rows = sdb.q(
         "SELECT s.features,o.high_ret_h,o.low_ret_h "
         "FROM signal_samples_canonical s "
         "JOIN signal_outcomes o ON o.signal_id=s.signal_id "
-        "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? "
-        "ORDER BY s.event_ts DESC LIMIT ?",
-        [str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID),
+        "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?" +
+        scope_sql + " ORDER BY s.event_ts DESC LIMIT ?",
+        [strategy_id,
          config.SIGNAL_SAMPLE_TIMEFRAME,
          config.SIGNAL_OUTCOME_HORIZON_HOURS,
+         *([scope_version] if scope_version else []),
          config.EXTREMA_CONFORMAL_WINDOW], db_path=db_path)
     actual, lower, upper = [], [], []
     for row in reversed(rows):

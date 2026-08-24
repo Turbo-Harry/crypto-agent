@@ -284,6 +284,7 @@ class FactorTrialOut(BaseModel):
     ts: float
     name: str
     strategy_id: str = "A_pullback"
+    strategy_version: Optional[str] = None
     status: str
     n_samples: Optional[int] = None
     n_folds: Optional[int] = None

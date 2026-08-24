@@ -105,13 +105,15 @@ def _log_trial(result, db_path=None):
     import storage.db as sdb
     sdb.init_db(db_path)
     sdb.x(
-        "INSERT OR IGNORE INTO factor_trials (ts,name,strategy_id,rationale,n_samples,n_folds,"
+        "INSERT OR IGNORE INTO factor_trials (ts,name,strategy_id,strategy_version,"
+        "rationale,n_samples,n_folds,"
         "mean_ic,icir,ic_tstat,gross_spread,turnover,net_spread,status,"
         "expression,dsr,pbo,missing_rate,fold_consistency,"
         "symbol_concentration,redundant_with,details,timeframe,horizon_hours,"
         "trial_key,data_hash,evaluation_version) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [time.time(), result["name"], result["strategy_id"],
+         result.get("strategy_version"),
          result.get("rationale", ""),
          result.get("n_samples", 0), result.get("n_folds", 0),
          result.get("mean_ic", 0), result.get("icir", 0),
@@ -141,7 +143,8 @@ def evaluate_factor(name: str, rationale: str, rows: List[dict],
                     total_candidates: Optional[int] = None,
                     accepted: Optional[Dict[str, Dict[str, float]]] = None,
                     expression: Optional[str] = None, db_path=None,
-                    strategy_id: Optional[str] = None):
+                    strategy_id: Optional[str] = None,
+                    strategy_version: Optional[str] = None):
     """评估 rows（每行 event_ts/label_end_ts/value/pnl_r/symbol/entry/stop）。"""
     total = len(rows)
     trials = int(total_candidates or 0)
@@ -156,6 +159,7 @@ def evaluate_factor(name: str, rationale: str, rows: List[dict],
     missing_rate = 1 - len(usable) / total if total else 1.0
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
     result = {"name": name, "strategy_id": strategy_id,
+              "strategy_version": strategy_version,
               "rationale": rationale or "",
               "expression": expression, "n_samples": len(usable),
               "n_folds": 0, "mean_ic": 0.0, "icir": 0.0,
@@ -167,7 +171,7 @@ def evaluate_factor(name: str, rationale: str, rows: List[dict],
               "candidate_universe": max(1, trials)}
     result["data_hash"] = _dataset_hash(rows)
     result["evaluation_version"] = EVALUATION_VERSION
-    result["trial_key"] = hashlib.sha256(json.dumps({
+    trial_identity = {
         "name": name, "expression": expression,
         "strategy_id": strategy_id,
         "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
@@ -175,7 +179,12 @@ def evaluate_factor(name: str, rationale: str, rows: List[dict],
         "data_hash": result["data_hash"],
         "evaluation_version": EVALUATION_VERSION,
         "candidate_universe": result["candidate_universe"],
-    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    }
+    if strategy_version:
+        trial_identity["strategy_version"] = strategy_version
+    result["trial_key"] = hashlib.sha256(json.dumps(
+        trial_identity, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
     if not rationale:
         result["status"] = "hypothesis_only"
         _log_trial(result, db_path)

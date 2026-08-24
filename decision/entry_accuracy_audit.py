@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import config
-from decision.signal_identity import config_identity
+from decision.signal_identity import config_identity, research_scope_version
 
 
 def _connect_read_only(db_path: str) -> sqlite3.Connection:
@@ -70,52 +70,56 @@ def audit_status(db_path: str | None = None,
     timeframe = config.SIGNAL_SAMPLE_TIMEFRAME
     horizon = config.SIGNAL_OUTCOME_HORIZON_HOURS
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
-    allowed_strategies = tuple(config.MARKET_REGIME_IMPLEMENTED_STRATEGIES)
+    allowed_strategies = tuple(config.ENTRY_ACCURACY_RESEARCH_STRATEGIES)
     if strategy_id not in allowed_strategies:
         raise ValueError(
             f"未知 strategy_id={strategy_id}; allowed={allowed_strategies}")
     # 与采样器使用同一个配置身份算法；B 不能在观测结果里伪装成 A 的
     # pullback 版本。这里只计算哈希，不访问交易所、不写库。
     strategy_version = config_identity(strategy_id)[0]
+    research_version = research_scope_version(strategy_id)
+    plain_scope_sql = " AND strategy_version=?" if research_version else ""
+    joined_scope_sql = " AND s.strategy_version=?" if research_version else ""
     conn = _connect_read_only(db_path)
     try:
-        scope = [strategy_id, timeframe, horizon]
+        scope = [strategy_id, timeframe, horizon,
+                 *([research_version] if research_version else [])]
         raw_candidates = _count(
             conn, "SELECT COUNT(*) FROM signal_samples WHERE strategy_id=? "
-            "AND timeframe=? AND horizon_hours=?", scope)
+            "AND timeframe=? AND horizon_hours=?" + plain_scope_sql, scope)
         candidates = _count(
             conn, "SELECT COUNT(*) FROM signal_samples_canonical WHERE strategy_id=? "
-            "AND timeframe=? AND horizon_hours=?", scope)
+            "AND timeframe=? AND horizon_hours=?" + plain_scope_sql, scope)
         duplicate_version_snapshots = max(0, raw_candidates - candidates)
         outcomes = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
             "JOIN signal_samples_canonical s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
-            "AND s.timeframe=? AND s.horizon_hours=?",
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql,
             scope)
         tp = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
             "JOIN signal_samples_canonical s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
-            "AND s.timeframe=? AND s.horizon_hours=? "
-            "AND o.tp_first=1", scope)
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
+            " AND o.tp_first=1", scope)
         sl = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
             "JOIN signal_samples_canonical s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
-            "AND s.timeframe=? AND s.horizon_hours=? "
-            "AND o.sl_first=1", scope)
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
+            " AND o.sl_first=1", scope)
         timeout = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
             "JOIN signal_samples_canonical s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
-            "AND s.timeframe=? AND s.horizon_hours=? "
-            "AND o.timeout=1", scope)
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql +
+            " AND o.timeout=1", scope)
         six_dim_outcomes = _count(
             conn, "SELECT COUNT(*) FROM signal_outcomes o "
             "JOIN signal_samples_canonical s "
             "ON s.signal_id=o.signal_id WHERE s.strategy_id=? "
-            "AND s.timeframe=? AND s.horizon_hours=? "
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql + " "
             "AND s.wick IS NOT NULL AND s.depth IS NOT NULL "
             "AND s.trend IS NOT NULL AND s.volume IS NOT NULL "
             "AND s.funding IS NOT NULL AND s.book IS NOT NULL", scope)
@@ -130,15 +134,18 @@ def audit_status(db_path: str | None = None,
         calibration_n = _count(
             conn, "SELECT COUNT(*) FROM forecast_calibration f "
             "JOIN signal_samples_canonical s ON s.signal_id=f.signal_id "
-            "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?", scope)
+            "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?" +
+            joined_scope_sql, scope)
         validated_factors = _count(
             conn, "SELECT COUNT(*) FROM factor_trials WHERE strategy_id=? "
-            "AND timeframe=? AND horizon_hours=? AND status='validated'", scope)
+            "AND timeframe=? AND horizon_hours=?" + plain_scope_sql +
+            " AND status='validated'", scope)
 
         models = _rows(
             conn, "SELECT model_id,model_type,direction,state,metrics "
-            "FROM model_artifacts WHERE strategy_id=? ORDER BY created_at DESC",
-            [strategy_id])
+            "FROM model_artifacts WHERE strategy_id=?" + plain_scope_sql +
+            " ORDER BY created_at DESC",
+            [strategy_id, *([research_version] if research_version else [])])
         model_states = Counter(
             f"{row['model_type']}:{row['state']}" for row in models)
         entry_kept = [row for row in models
@@ -169,14 +176,15 @@ def audit_status(db_path: str | None = None,
             conn, "SELECT a.signal_id,a.verdict FROM ai_judgments a "
             "JOIN signal_samples_canonical s ON s.signal_id=a.signal_id "
             "WHERE a.call_status='valid' AND a.outcome_r IS NOT NULL "
-            "AND s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?", scope)
+            "AND s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=?" +
+            joined_scope_sql, scope)
         harness_rows = _rows(
             conn, "SELECT r.signal_id,r.final_action FROM agent_evaluations e "
             "JOIN agent_runs r ON r.run_id=e.run_id "
             "JOIN signal_samples_canonical s ON s.signal_id=r.signal_id "
             "WHERE e.lifecycle_status='mature' AND r.runtime_status='completed' "
             "AND r.model_verdict IS NOT NULL AND s.strategy_id=? "
-            "AND s.timeframe=? AND s.horizon_hours=?", scope)
+            "AND s.timeframe=? AND s.horizon_hours=?" + joined_scope_sql, scope)
         harness_all_signal_ids = {row["signal_id"] for row in harness_rows}
         harness_all_reject_ids = {
             row["signal_id"] for row in harness_rows
@@ -304,7 +312,7 @@ def main() -> int:
     parser.add_argument("--db", default=None, help="要审计的运行/研究 SQLite 库")
     parser.add_argument(
         "--strategy", default=config.ENTRY_SIGNAL_STRATEGY_ID,
-        choices=config.MARKET_REGIME_IMPLEMENTED_STRATEGIES,
+        choices=config.ENTRY_ACCURACY_RESEARCH_STRATEGIES,
         help="要审计的策略证据域")
     parser.add_argument("--require-complete", action="store_true",
                         help="统计门未全部通过时返回退出码 2")

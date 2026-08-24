@@ -85,6 +85,12 @@ def entry_accuracy_status(db_path: str | None, *,
     return audit_status(db_path, strategy_id=strategy_id)
 
 
+def research_strategy_version(strategy_id: str) -> str | None:
+    """返回研究查询必须使用的精确协议身份；不授予交易权限。"""
+    from decision.signal_identity import research_scope_version
+    return research_scope_version(strategy_id)
+
+
 def live_readiness(db_path: str | None) -> dict[str, Any]:
     from decision.readiness import readiness_status
     return readiness_status(db_path)

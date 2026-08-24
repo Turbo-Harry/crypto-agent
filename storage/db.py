@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS factor_trials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, name TEXT,
     strategy_id TEXT NOT NULL DEFAULT 'A_pullback',
+    strategy_version TEXT,
     rationale TEXT,                         -- 经济逻辑必填(GP 产物标 hypothesis_only)
     n_samples INTEGER, n_folds INTEGER,
     mean_ic REAL, icir REAL, ic_tstat REAL, -- IC/ICIR/t 值(多重检验校正门槛 t>3.0)
@@ -198,7 +199,7 @@ CREATE TABLE IF NOT EXISTS factor_trials (
 );
 CREATE INDEX IF NOT EXISTS idx_factor_trials_ts ON factor_trials(ts);
 CREATE INDEX IF NOT EXISTS idx_factor_trials_scope
-    ON factor_trials(strategy_id,timeframe,horizon_hours,name,id);
+    ON factor_trials(strategy_id,strategy_version,timeframe,horizon_hours,name,id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_factor_trials_key
     ON factor_trials(trial_key) WHERE trial_key IS NOT NULL;
 
@@ -206,6 +207,7 @@ CREATE TABLE IF NOT EXISTS model_artifacts (
     model_id TEXT PRIMARY KEY,
     model_type TEXT NOT NULL,
     strategy_id TEXT NOT NULL DEFAULT 'A_pullback',
+    strategy_version TEXT,
     direction TEXT, version TEXT NOT NULL,
     state TEXT NOT NULL,                   -- candidate/validated/shadow/accepted/
                                            -- active/observing/kept/rolled_back/rejected
@@ -217,7 +219,7 @@ CREATE TABLE IF NOT EXISTS model_artifacts (
 CREATE INDEX IF NOT EXISTS idx_model_type_state
     ON model_artifacts(model_type, state, created_at);
 CREATE INDEX IF NOT EXISTS idx_model_strategy_state
-    ON model_artifacts(strategy_id, model_type, state, created_at);
+    ON model_artifacts(strategy_id, strategy_version, model_type, state, created_at);
 
 CREATE TABLE IF NOT EXISTS model_evaluations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -961,6 +963,20 @@ def _migrate_v34_reconcile_agent_replay_evidence(conn):
     _migrate_v33_agent_replay_evidence(conn)
 
 
+def _migrate_v35_research_strategy_version(conn):
+    """v35: 因子/模型制品绑定精确采样版本，禁止 C 跨协议借样本。"""
+    _add_column_if_missing(conn, "factor_trials", "strategy_version", "TEXT")
+    _add_column_if_missing(conn, "model_artifacts", "strategy_version", "TEXT")
+    conn.execute("DROP INDEX IF EXISTS idx_factor_trials_scope")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_factor_trials_scope ON "
+        "factor_trials(strategy_id,strategy_version,timeframe,horizon_hours,name,id)")
+    conn.execute("DROP INDEX IF EXISTS idx_model_strategy_state")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_strategy_state ON "
+        "model_artifacts(strategy_id,strategy_version,model_type,state,created_at)")
+
+
 def _migrate_v12_signal_supervision(conn):
     """v12: 所有结构候选留样 + 固定 horizon 首触/极值反事实标签。"""
     conn.executescript("""
@@ -1150,6 +1166,7 @@ MIGRATIONS = (
     (32, _migrate_v32_agent_proposals),
     (33, _migrate_v33_agent_replay_evidence),
     (34, _migrate_v34_reconcile_agent_replay_evidence),
+    (35, _migrate_v35_research_strategy_version),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

@@ -3,12 +3,13 @@ import json
 import time
 
 import config
+from decision.signal_identity import research_scope_version
 
 
 def _shadow_rows(model_id, db_path=None, after_ts=None):
     import storage.db as sdb
     model = sdb.q1(
-        "SELECT strategy_id FROM model_artifacts WHERE model_id=?",
+        "SELECT strategy_id,strategy_version FROM model_artifacts WHERE model_id=?",
         [model_id], db_path=db_path)
     strategy_id = (model.get("strategy_id") if model else None) or \
         config.ENTRY_SIGNAL_STRATEGY_ID
@@ -20,6 +21,9 @@ def _shadow_rows(model_id, db_path=None, after_ts=None):
            "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? ")
     params = [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
               config.SIGNAL_OUTCOME_HORIZON_HOURS]
+    if model and model.get("strategy_version"):
+        sql += "AND s.strategy_version=? "
+        params.append(model["strategy_version"])
     if after_ts is not None:
         sql += "AND s.event_ts>? "
         params.append(after_ts)
@@ -101,7 +105,7 @@ def _extrema_shadow_metrics(model_id, db_path=None, after_ts=None):
     from decision.extrema_forecast import interval_coverage, pinball_loss, \
         validate_quantiles
     model = sdb.q1(
-        "SELECT strategy_id FROM model_artifacts WHERE model_id=?",
+        "SELECT strategy_id,strategy_version FROM model_artifacts WHERE model_id=?",
         [model_id], db_path=db_path)
     strategy_id = (model.get("strategy_id") if model else None) or \
         config.ENTRY_SIGNAL_STRATEGY_ID
@@ -111,6 +115,9 @@ def _extrema_shadow_metrics(model_id, db_path=None, after_ts=None):
            "WHERE s.strategy_id=? AND s.timeframe=? AND s.horizon_hours=? ")
     params = [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
               config.SIGNAL_OUTCOME_HORIZON_HOURS]
+    if model and model.get("strategy_version"):
+        sql += "AND s.strategy_version=? "
+        params.append(model["strategy_version"])
     if after_ts is not None:
         sql += "AND s.event_ts>? "
         params.append(after_ts)
@@ -214,6 +221,11 @@ def advance(model_id=None, db_path=None):
     actions = []
     for model in models:
         state, mid = model["state"], model["model_id"]
+        current_scope = research_scope_version(model.get("strategy_id"))
+        if current_scope and model.get("strategy_version") != current_scope:
+            actions.append({"model_id": mid, "from": state, "to": state,
+                            "reason": "stale_strategy_version"})
+            continue
         if state == "validated":
             _update(mid, "shadow", db_path=db_path, reason="oos_validated")
             actions.append({"model_id": mid, "from": state, "to": "shadow"})
@@ -260,13 +272,17 @@ def advance(model_id=None, db_path=None):
                 actions.append({"model_id": mid, "from": state, "to": state,
                                 "reason": "shadow_only_enabled"})
                 continue
+            scope_sql = (" AND strategy_version=?"
+                         if model.get("strategy_version") else "")
             previous = sdb.q1(
                 "SELECT model_id FROM model_artifacts WHERE model_type=? "
                 "AND strategy_id=? AND direction=? "
                 "AND state IN ('active','observing','kept') "
-                "ORDER BY activated_at DESC LIMIT 1",
+                + scope_sql + " ORDER BY activated_at DESC LIMIT 1",
                 [model["model_type"], model.get("strategy_id") or
-                 config.ENTRY_SIGNAL_STRATEGY_ID, model.get("direction")],
+                 config.ENTRY_SIGNAL_STRATEGY_ID, model.get("direction"),
+                 *([model.get("strategy_version")]
+                   if model.get("strategy_version") else [])],
                 db_path=db_path)
             parent = previous["model_id"] if previous else None
             if parent:
@@ -337,6 +353,7 @@ def rollback(model_id=None, db_path=None, strategy_id=None):
     import storage.db as sdb
     sdb.init_db(db_path)
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
     if model_id:
         model = sdb.q1("SELECT * FROM model_artifacts WHERE model_id=?",
                        [model_id], db_path=db_path)
@@ -345,8 +362,10 @@ def rollback(model_id=None, db_path=None, strategy_id=None):
             "SELECT * FROM model_artifacts WHERE model_type='entry_probability' "
             "AND strategy_id=? "
             "AND state IN ('active','observing','kept','accepted') "
+            + ("AND strategy_version=? " if scope_version else "") +
             "ORDER BY COALESCE(activated_at,created_at) DESC LIMIT 1",
-            [strategy_id], db_path=db_path)
+            [strategy_id, *([scope_version] if scope_version else [])],
+            db_path=db_path)
     if not model:
         return False, "没有可回滚的模型"
     now = time.time()
@@ -364,11 +383,13 @@ def budget_expansion_allowed(db_path=None, strategy_id=None):
     import storage.db as sdb
     sdb.init_db(db_path)
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
     row = sdb.q1(
         "SELECT metrics FROM model_artifacts WHERE model_type='entry_probability' "
         "AND strategy_id=? AND state IN ('active','observing','kept') "
+        + ("AND strategy_version=? " if scope_version else "") +
         "ORDER BY created_at DESC LIMIT 1",
-        [strategy_id], db_path=db_path)
+        [strategy_id, *([scope_version] if scope_version else [])], db_path=db_path)
     if not row:
         return False
     try:
@@ -383,11 +404,16 @@ def snapshot(db_path=None, strategy_id=None):
     import storage.db as sdb
     sdb.init_db(db_path)
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
     rows = sdb.q(
         "SELECT model_id,model_type,strategy_id,direction,version,state,created_at,"
-        "training_cutoff,data_hash,feature_names,metrics,parent_id,activated_at "
+        "strategy_version,training_cutoff,data_hash,feature_names,metrics,"
+        "parent_id,activated_at "
         "FROM model_artifacts WHERE model_type IN ('entry_probability','extrema') "
-        "AND strategy_id=? ORDER BY created_at DESC", [strategy_id], db_path=db_path)
+        "AND strategy_id=?" +
+        (" AND strategy_version=?" if scope_version else "") +
+        " ORDER BY created_at DESC",
+        [strategy_id, *([scope_version] if scope_version else [])], db_path=db_path)
     for row in rows:
         for key in ("feature_names", "metrics"):
             try:

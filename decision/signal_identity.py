@@ -65,3 +65,16 @@ def config_identity(strategy_id: Optional[str] = None) -> Tuple[str, str]:
     version = (f"{config.ENTRY_STRATEGY_VERSION}:{strategy_id}:"
                f"{config_hash[:12]}")
     return version, config_hash
+
+
+def research_scope_version(strategy_id: Optional[str] = None) -> str | None:
+    """Return the exact sample identity required by versioned research lines.
+
+    A/B retain their established rolling canonical research behavior.  C is an
+    LLM protocol experiment, so prompt/implementation changes define a new
+    population and must never borrow prior protocol outcomes.
+    """
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    if strategy_id == config.AGENT_PROPOSAL_STRATEGY_ID:
+        return config_identity(strategy_id)[0]
+    return None

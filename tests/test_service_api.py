@@ -233,6 +233,13 @@ def main():
           breakout_readiness.status_code == 200
           and breakout_readiness.json()["scope"]["strategy_id"] == "B_breakout"
           and breakout_readiness.json()["counts"]["paper_closed"] == 0)
+    proposal_readiness = client.get(
+        "/research/readiness?strategy_id=C_agent_proposal")
+    check("/research/readiness 可按 C 当前协议独立审计",
+          proposal_readiness.status_code == 200
+          and proposal_readiness.json()["scope"]["strategy_id"] ==
+          config.AGENT_PROPOSAL_STRATEGY_ID
+          and proposal_readiness.json()["counts"]["candidates"] == 0)
     check("/research/readiness 拒绝未知策略",
           client.get("/research/readiness?strategy_id=unknown").status_code == 422)
     r = client.post("/scan/evolve/approve")

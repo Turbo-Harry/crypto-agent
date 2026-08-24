@@ -12,6 +12,7 @@ import time
 from typing import Iterable, List
 
 import config
+from decision.signal_identity import research_scope_version
 
 
 def _returns(closes):
@@ -251,9 +252,14 @@ def empirical_first_passage(db_path=None, direction=None, as_of_ts=None,
     import storage.db as sdb
     sdb.init_db(db_path)
     conditions = ["s.strategy_id=?", "s.timeframe=?", "s.horizon_hours=?"]
-    params = [strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID,
+    strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    params = [strategy_id,
               config.SIGNAL_SAMPLE_TIMEFRAME,
               config.SIGNAL_OUTCOME_HORIZON_HOURS]
+    scope_version = research_scope_version(strategy_id)
+    if scope_version:
+        conditions.append("s.strategy_version=?")
+        params.append(scope_version)
     if direction:
         conditions.append("s.direction=?")
         params.append(direction)
@@ -404,7 +410,12 @@ def calibration(db_path=None, min_n=10, as_of_ts=None, strategy_id=None):
                       "s.horizon_hours=?", "s.strategy_id=?"]
         params = [config.SIGNAL_SAMPLE_TIMEFRAME,
                   config.SIGNAL_OUTCOME_HORIZON_HOURS]
-        params.append(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+        strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+        params.append(strategy_id)
+        scope_version = research_scope_version(strategy_id)
+        if scope_version:
+            conditions.append("s.strategy_version=?")
+            params.append(scope_version)
         if as_of_ts is not None:
             conditions.append("s.event_ts+s.horizon_hours*3600<=?")
             params.append(float(as_of_ts))

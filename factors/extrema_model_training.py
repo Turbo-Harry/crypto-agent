@@ -5,6 +5,7 @@ import time
 from typing import List
 
 import config
+from decision.signal_identity import research_scope_version
 from decision.extrema_forecast import (conformal_radius, fit_linear_quantiles,
                                        interval_coverage, pinball_loss,
                                        predict_linear_quantiles, quantile)
@@ -15,13 +16,17 @@ from factors.intraday_factor_gate import purged_walk_forward_splits
 def _validated_features(db_path=None, strategy_id=None):
     import storage.db as sdb
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
+    scope_sql = " AND strategy_version=?" if scope_version else ""
     rows = sdb.q(
         "SELECT f.name,f.ic_tstat FROM factor_trials f JOIN "
         "(SELECT name,MAX(id) id FROM factor_trials WHERE strategy_id=? "
-        "AND timeframe=? AND horizon_hours=? GROUP BY name) x ON x.id=f.id "
+        "AND timeframe=? AND horizon_hours=?" + scope_sql +
+        " GROUP BY name) x ON x.id=f.id "
         "WHERE f.status='validated' ORDER BY f.ic_tstat DESC",
         [strategy_id, config.SIGNAL_SAMPLE_TIMEFRAME,
-         config.SIGNAL_OUTCOME_HORIZON_HOURS],
+         config.SIGNAL_OUTCOME_HORIZON_HOURS,
+         *([scope_version] if scope_version else [])],
         db_path=db_path)
     return [row["name"] for row in rows[:config.ENTRY_MODEL_MAX_FEATURES]]
 
@@ -29,14 +34,17 @@ def _validated_features(db_path=None, strategy_id=None):
 def _load_rows(direction, feature_names, db_path=None, strategy_id=None):
     import storage.db as sdb
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    scope_version = research_scope_version(strategy_id)
+    scope_sql = " AND s.strategy_version=?" if scope_version else ""
     samples = sdb.q(
         "SELECT s.*,o.high_ret_h,o.low_ret_h FROM signal_samples_canonical s "
         "JOIN signal_outcomes o ON o.signal_id=s.signal_id "
         "WHERE s.direction=? AND s.strategy_id=? "
-        "AND s.timeframe=? AND s.horizon_hours=? "
-        "ORDER BY s.event_ts", [direction, strategy_id,
+        "AND s.timeframe=? AND s.horizon_hours=?" + scope_sql +
+        " ORDER BY s.event_ts", [direction, strategy_id,
                                  config.SIGNAL_SAMPLE_TIMEFRAME,
-                                 config.SIGNAL_OUTCOME_HORIZON_HOURS],
+                                 config.SIGNAL_OUTCOME_HORIZON_HOURS,
+                                 *([scope_version] if scope_version else [])],
         db_path=db_path)
     return [{"signal_id": sample["signal_id"], "event_ts": sample["event_ts"],
              "label_end_ts": sample["event_ts"] +
@@ -217,6 +225,7 @@ def train_extrema_model(direction, db_path=None, feature_names=None,
     import storage.db as sdb
     sdb.init_db(db_path)
     strategy_id = str(strategy_id or config.ENTRY_SIGNAL_STRATEGY_ID)
+    strategy_version = research_scope_version(strategy_id)
     names = list(feature_names or _validated_features(db_path, strategy_id))
     names = names[:config.ENTRY_MODEL_MAX_FEATURES]
     # 无 validated 特征时仍报告真实路径样本数，避免把特征门失败误写成无数据。
@@ -227,14 +236,17 @@ def train_extrema_model(direction, db_path=None, feature_names=None,
     version = "extrema-linear-quantile-v1"
     data_digest = hashlib.sha256(
         "|".join(row["signal_id"] for row in rows).encode("utf-8")).hexdigest()
-    signature = hashlib.sha256(json.dumps({
+    signature_data = {
         "data_hash": data_digest, "version": version, "features": names,
         "strategy_id": strategy_id,
         "timeframe": config.SIGNAL_SAMPLE_TIMEFRAME,
         "horizon_hours": config.SIGNAL_OUTCOME_HORIZON_HOURS,
         "l2": config.EXTREMA_L2, "epochs": config.EXTREMA_EPOCHS,
-        "constraint": "parallel_location_shift"},
-        sort_keys=True).encode("utf-8")).hexdigest()
+        "constraint": "parallel_location_shift"}
+    if strategy_version:
+        signature_data["strategy_version"] = strategy_version
+    signature = hashlib.sha256(json.dumps(
+        signature_data, sort_keys=True).encode("utf-8")).hexdigest()
     prefix = ("extrema" if strategy_id == config.ENTRY_SIGNAL_STRATEGY_ID
               else f"extrema_{strategy_id}")
     model_id = f"{prefix}_{direction}_{signature[:16]}"
@@ -265,14 +277,18 @@ def train_extrema_model(direction, db_path=None, feature_names=None,
         "high_conformal_radius": evaluation["high_conformal_radius"],
         "low_conformal_radius": evaluation["low_conformal_radius"],
     }
+    if strategy_version:
+        artifact["strategy_version"] = strategy_version
     state = "validated" if evaluation["eligible_for_shadow"] else "rejected"
     now = time.time()
     with sdb.tx(db_path=db_path) as conn:
         conn.execute(
-            "INSERT INTO model_artifacts (model_id,model_type,strategy_id,direction,version,"
+            "INSERT INTO model_artifacts (model_id,model_type,strategy_id,"
+            "strategy_version,direction,version,"
             "state,created_at,training_cutoff,data_hash,feature_names,artifact,metrics) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            [model_id, "extrema", strategy_id, direction, artifact["version"], "candidate", now,
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [model_id, "extrema", strategy_id, strategy_version, direction,
+             artifact["version"], "candidate", now,
              max(row["event_ts"] for row in rows), data_digest, json.dumps(names),
              json.dumps(artifact), json.dumps(evaluation)])
         conn.execute(

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 import config
 from decision.feature_transforms import materialize_derived_features
+from decision.signal_identity import research_scope_version
 
 
 def sigmoid(value):
@@ -222,16 +223,21 @@ def load_artifact(direction, db_path=None, allow_shadow=False, strategy_id=None)
     states = ("active", "observing", "kept") if not allow_shadow else (
         "active", "observing", "kept", "shadow", "validated")
     placeholders = ",".join("?" for _ in states)
+    scope_version = research_scope_version(strategy_id)
+    scope_sql = " AND strategy_version=?" if scope_version else ""
     row = sdb.q1(
         f"SELECT * FROM model_artifacts WHERE model_type='entry_probability' "
         f"AND strategy_id=? AND direction=? AND state IN ({placeholders}) "
-        "ORDER BY created_at DESC LIMIT 1",
-        [strategy_id, direction, *states], db_path=db_path)
+        + scope_sql + " ORDER BY created_at DESC LIMIT 1",
+        [strategy_id, direction, *states,
+         *([scope_version] if scope_version else [])], db_path=db_path)
     if not row:
         return None
     try:
         artifact = json.loads(row["artifact"])
         if (artifact.get("strategy_id") != strategy_id or
+                (scope_version and
+                 artifact.get("strategy_version") != scope_version) or
                 artifact.get("timeframe") != config.SIGNAL_SAMPLE_TIMEFRAME or
                 int(artifact.get("horizon_hours") or 0) !=
                 config.SIGNAL_OUTCOME_HORIZON_HOURS or

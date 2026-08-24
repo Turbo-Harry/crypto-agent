@@ -185,6 +185,12 @@ class AgentHarnessStorageTest(unittest.TestCase):
         self.assertTrue(
             {"signal_samples", "model_artifacts", "agent_runs"} <= tables
         )
+        self.assertIn("strategy_version", factor_columns)
+        model_columns = {
+            row["name"] for row in db.q(
+                "PRAGMA table_info(model_artifacts)", db_path=self.tmp.name)
+        }
+        self.assertIn("strategy_version", model_columns)
         self.assertIn("outcome_r", memory_columns)
         run_columns = {
             row["name"] for row in db.q(
@@ -212,7 +218,8 @@ class AgentHarnessStorageTest(unittest.TestCase):
                 "PRAGMA table_info(agent_runs)", db_path=self.tmp.name)
         }
         self.assertEqual(db.q1(
-            "PRAGMA user_version", db_path=self.tmp.name)["user_version"], 34)
+            "PRAGMA user_version", db_path=self.tmp.name)["user_version"],
+                         db.SCHEMA_VERSION)
         self.assertIn("evidence_hash", columns)
 
         run = HarnessRun(
