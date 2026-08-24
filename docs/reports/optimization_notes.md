@@ -1651,3 +1651,11 @@
   心跳年龄 5.1 秒且继续推进，空仓、对账一致、无错误，configured=v8/v5、旧自然 latest run 仍是
   v8/v4 schema_error、Veto=false、`/models/entry` 仍为空。必须等新的自然候选才能验证 v5 修复载荷；
   不用离线调用或旧 v4 失败记录冒充自然部署成效。
+- 首轮自然 v8/v5：16:30 形成 NEAR/DOGE/HOOD/AVAX/BNB 五条 B_breakout short 影子候选，A 无候选。
+  BNB 首响应合法完成为 `shadow_reject`，风险/信心 0.78/0.75、延迟 1,830ms，精确引用冻结的 news 与
+  market 锚；HOOD 首响应因自造 `:signal` 锚失败，修复轮不再报锚错误、改由方向语义门拒绝，直接证明
+  `allowed_evidence_ids` 已进入并约束自然修复。NEAR/DOGE/HOOD 最终 schema error，AVAX 在 4,211ms
+  记 timeout，全部失败关闭为 baseline pass；五条均 pending、Veto=false、订单 0。批后 `/health=ok`、
+  心跳年龄 0.3 秒、空仓、对账一致、无错误，paper/live PID 仍为 27319/90574。v5 当前合法完成率仅
+  1/5，锚修复目标已实证，但拦亏准确率必须等 4h 标签；其余语义失败与 timeout 保留为后续稳定性样本，
+  不因单批结果降低门槛或直接授予执行权。
