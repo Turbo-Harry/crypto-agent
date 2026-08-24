@@ -2261,3 +2261,8 @@
 - 全量证据：按 CI 独立数据库、事件文件和运行目录自动发现并通过 58/58 个脚本，失败 0；AI repo
   9/9、参数集中、测试隔离、23 条修复护栏、code graph、py_compile 与 diff check 全绿。该接线只补齐
   C 的风险反事实生产者，不激活模型、不授予 Veto、不扩大预算，也不追溯冒充已有 10 条 C 的历史 Trace。
+- 部署证据：实现提交 `6ac5335`。部署前确认 8091 paper 空仓、未熔断、对账 balanced、错误为空并暂停，
+  只重启 `com.crypto.paper`：PID `21109→30128`；8090 live PID `90574` 未变化。重启后 health ok、空仓、
+  对账 balanced、错误为空。下一根自然 C 周期在 22:15 产生 AAVE/NEAR 两条新提案和两条 completed
+  Harness Trace，均绑定 `4abf0977cd79`、evaluation pending、`execution_authority=0`、Veto false；C 当前
+  候选由 10 增至 12，旧 10 条没有追溯补跑，首批完整 4h 标签仍需自然等待。
