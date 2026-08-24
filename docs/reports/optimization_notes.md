@@ -1845,3 +1845,11 @@
 - 部署身份纠偏：提交后旧 paper 进程先热重载 config 身份、但函数体仍是旧代码，产生 1 条标记 v5.0、
   实际仍走旧 provider 参数的 schema error（run `proposal-run-0417f26a9d7363bcd9a82963`）。该行保留，
   implementation 升 v5.1 后退出当前统计；只有完整重启后的 v5.1 才是正式自然基线。
+- 自然验收证据：paper 完整重启为 PID 63310 后，v5.1 首个自然批次
+  `proposal-run-f9acbc4613912cadf8dc6498` 于 18:25:16 完成，耗时 1585ms，2 个 proposal 全部 valid，
+  `error_type/error_detail` 均为空。INJ long 与 ZRO short 都只引用本标的 15m + microstructure 两个锚，
+  `reward_risk=2.0`、`geometry_valid=1`、`prediction_passed=0`、`execution_authority=0`；当前协议统计为
+  run 1/completed 1/proposal 2/mature 0。模拟盘空仓、对账 balanced、`/error` 为空，live PID 90574 未动。
+- 边界说明：这证明紧凑 JSON/400-token 修复已打通自然 Harness 提案链，不证明入场模型成熟或提高胜率。
+  `/models/entry` 仍为空且预算扩张为 false；两条提案需等待真实 4h 首触标签，并按当前 v5.1 身份从零累计
+  每方向 300/60/60 与后续 shadow 门，禁止借旧 C 样本或直接下单。

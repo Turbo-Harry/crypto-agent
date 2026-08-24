@@ -12,9 +12,11 @@
 - 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.1-full-restart-boundary`；v4.2 四个自然
   批次仅 1 completed、3 schema error，最新错误被定位为双提案长 evidence 在 200-token 共享预算下没有
   形成完整 JSON。v5.0 在代码提交后、进程完整重启前被 config 热重载，产生 1 条“新身份+旧函数体”的
-  schema error，已由 v5.1 身份隔离。v5.1 仍须从零收集完整重启后的自然证据。
+  schema error，已由 v5.1 身份隔离。完整重启后的首个 v5.1 自然批次已在 1585ms 内 completed，生成
+  INJ long 与 ZRO short 两条有效 shadow 提案；两条均为 2:1、只有两个必要 evidence 锚且零执行权限。
 - 入场概率与极值模型按 long/short 分开训练；300/60/60 是每个拟训练方向的门，不是把双方向总数相加。
-  当前 A long 成熟 128（TP 41/SL 62），A short 成熟 40（TP 6/SL 31），均未达到训练门。
+  当前 A long 成熟 130（TP 41/SL 64），A short 成熟 40（TP 6/SL 31），均未达到训练门；C v5.1
+  当前为 2 条 pending，不能计入成熟样本。
 
 ## 目标
 
