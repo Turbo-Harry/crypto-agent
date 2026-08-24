@@ -224,10 +224,19 @@ def _agent_db_path(request: Request):
 
 
 @router.get("/agent/status", response_model=AgentStatusOut, tags=["Agent Harness"])
-def agent_status(request: Request):
+def agent_status(
+        request: Request,
+        strategy_id: str = config.ENTRY_SIGNAL_STRATEGY_ID):
     """Agent Harness health and active version; read-only."""
     path = _agent_db_path(request)
-    return AgentStatusOut(**agent_status_summary(path))
+    try:
+        strategy_version = decision_api.research_strategy_version(strategy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    configured_version = decision_api.configured_harness_version(strategy_id)
+    return AgentStatusOut(**agent_status_summary(
+        path, strategy_id=strategy_id, strategy_version=strategy_version,
+        configured_version=configured_version))
 
 
 @router.get("/agent/runs", response_model=AgentRunsOut, tags=["Agent Harness"])

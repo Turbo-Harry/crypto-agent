@@ -157,6 +157,24 @@ def main():
     check("/scan/evolve 含 effective_wick 且 needs_approval=false",
           r.status_code == 200 and "effective_wick" in r.json()
           and r.json()["needs_approval"] is False)
+    from decision.agent_lifecycle import configured_version
+    from decision.signal_identity import research_scope_version
+    current_strategy_version = research_scope_version(
+        config.ENTRY_SIGNAL_STRATEGY_ID)
+    current_harness_version = configured_version(
+        config.ENTRY_SIGNAL_STRATEGY_ID)
+    sdb.x(
+        "INSERT INTO signal_samples "
+        "(signal_id,symbol,direction,event_ts,kline_ts,timeframe,strategy_id,"
+        "strategy_version,config_hash,feature_schema_version,entry,stop,tp,atr,"
+        "horizon_hours,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ["status-signal", "BTC", "long", time.time(), 1_700_000_000_000,
+         config.SIGNAL_SAMPLE_TIMEFRAME, config.ENTRY_SIGNAL_STRATEGY_ID,
+         current_strategy_version, "status-config",
+         config.SIGNAL_FEATURE_SCHEMA_VERSION, 100.0, 99.0, 102.0, 1.0,
+         config.SIGNAL_OUTCOME_HORIZON_HOURS, time.time(), time.time()],
+        db_path=trader._db_path)
     sdb.x(
         "INSERT INTO agent_runs "
         "(run_id,signal_id,idempotency_key,created_ts,runtime_status,"
@@ -171,7 +189,7 @@ def main():
     sdb.x(
         "INSERT INTO agent_versions "
         "(version,strategy_id,role,status,created_ts) VALUES (?,?,?,?,?)",
-        ["mature-version", config.ENTRY_SIGNAL_STRATEGY_ID, "champion",
+        [current_harness_version, config.ENTRY_SIGNAL_STRATEGY_ID, "champion",
          "observing", time.time()], db_path=trader._db_path)
     agent_status = client.get("/agent/status")
     agent_body = agent_status.json()
@@ -187,9 +205,20 @@ def main():
           and agent_body["latest_run_tool_policy_version"] ==
               config.AGENT_HARNESS_TOOL_POLICY_VERSION
           and agent_body["latest_run_lifecycle_status"] == "pending"
-          and agent_body["lifecycle_version"] == "mature-version"
+          and agent_body["strategy_id"] == config.ENTRY_SIGNAL_STRATEGY_ID
+          and agent_body["configured_version"] == current_harness_version
+          and agent_body["lifecycle_version"] == current_harness_version
           and agent_body["lifecycle_status"] == "observing"
           and agent_body["veto_enabled"] is True)
+    breakout_status = client.get("/agent/status?strategy_id=B_breakout")
+    check("/agent/status 按 B 当前身份隔离且不展示 A 生命周期",
+          breakout_status.status_code == 200
+          and breakout_status.json()["strategy_id"] == "B_breakout"
+          and ":B_breakout:" in breakout_status.json()["configured_version"]
+          and breakout_status.json()["lifecycle_version"] is None
+          and breakout_status.json()["veto_enabled"] is False)
+    check("/agent/status 拒绝未知策略",
+          client.get("/agent/status?strategy_id=unknown").status_code == 422)
     check("/agent/runs 只读查询返回 runs",
           client.get("/agent/runs").status_code == 200
           and "runs" in client.get("/agent/runs").json())
@@ -232,10 +261,11 @@ def main():
     check("/factors/trials 返回结构化列表",
           "trials" in client.get("/factors/trials").json())
     research_readiness = client.get("/research/readiness").json()
-    check("/research/readiness 不把空测试库冒充统计完成",
+    check("/research/readiness 不把单条状态夹具冒充统计完成",
           research_readiness["statistically_complete"] is False
           and research_readiness["counts"]["paper_closed"] == 0
-          and research_readiness["counts"]["raw_candidate_snapshots"] == 0
+          and research_readiness["counts"]["raw_candidate_snapshots"] == 1
+          and research_readiness["counts"]["outcomes"] == 0
           and research_readiness["counts"]["duplicate_version_snapshots"] == 0
           and research_readiness["budget"]["expansion_allowed"] is False)
     breakout_readiness = client.get(

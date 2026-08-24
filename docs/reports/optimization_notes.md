@@ -2181,3 +2181,15 @@
   `C_agent_proposal`，完整版本分别绑定 `71848d5359e9`、`f4440c07ea39`、`4abf0977cd79`；未知策略
   返回 422。当前精确 scope 为 A 9 候选/0 outcome/9 pending、B 8/0/8 pending、C 6/0/0 pending，
   三者成熟 Harness 均为 0；这证明接口隔离和诚实进度，不证明已产模、可下单或胜率提高。
+
+## 2026-08-24 Harness 状态接口区分当前配置与历史生命周期
+
+- 触发：部署后 `/agent/status` 的 Prompt/Tool Policy 与最新 run 已是 v13/v11/v5，但 `current_version`
+  仍显示历史 B 的 v8/v4 shadow。全局 latest 让观察者误以为旧生命周期就是当前可执行状态。
+- 实现：状态查询沿请求策略与当前精确采样身份过滤 run；生命周期必须同时匹配策略和当前完整 Harness
+  version。响应新增 `strategy_id`、`configured_version`，没有当前生命周期时返回 null 且 Veto false；
+  A/B/C 可独立查询，未知策略 422。
+- 安全边界：纯只读观测修复，不注册/推进 lifecycle，不改变 shadow、Veto、模型或订单权限。定向证据为
+  服务 API 64/64、接口边界 17/17、Harness 生命周期 9/9；按 CI 独立数据库、事件文件和运行目录
+  自动发现并通过 58/58 个测试脚本，失败 0。参数集中、测试隔离、23 条修复护栏、code graph、
+  AI repo 9/9、py_compile 与 diff check 全绿；部署证据待本批次后续补记。

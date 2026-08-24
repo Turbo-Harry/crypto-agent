@@ -149,7 +149,13 @@ def main():
     assert latest_analysis(db_path) is None
     assert list_factor_trials(db_path, "A_pullback") == []
     assert list_risk_events(db_path) == []
-    agent_status = agent_status_summary(db_path)
+    from decision.agent_lifecycle import configured_version
+    from decision.signal_identity import research_scope_version
+    strategy_id = config.ENTRY_SIGNAL_STRATEGY_ID
+    agent_status = agent_status_summary(
+        db_path, strategy_id=strategy_id,
+        strategy_version=research_scope_version(strategy_id),
+        configured_version=configured_version(strategy_id))
     assert agent_status["total_runs"] == 0
     assert agent_status["configured_prompt_version"] == \
         config.AGENT_HARNESS_PROMPT_VERSION

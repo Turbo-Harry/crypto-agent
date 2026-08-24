@@ -1392,3 +1392,15 @@
   Harness version 含 `B_breakout`，不再静默回退 A。
 - 预防：任何多策略只读接口至少用非默认策略和未知策略做两条契约测试；验收不仅看 200/字段存在，
   还要核对顶层身份、嵌套身份、完整版本和样本计数来自同一 scope。
+
+### 2026-08-24 全局最新 Harness 行不是当前策略状态
+
+- 现象：A 当前 v5 没有生命周期版本，`/agent/status` 却把历史 B v4/v8 的 shadow 版本显示为
+  `current_version`；运行数和失败率也混合了全部策略、全部配置身份。
+- 根因：状态查询对 `agent_versions` 和 `agent_runs` 都用全表 latest/count，没有通过 run→物理 signal
+  绑定请求策略与当前 `strategy_version`，也没有单列“当前配置版本”和“已有生命周期版本”。
+- 修复：状态端点支持 A/B/C 参数，显式返回 `strategy_id` 与 `configured_version`；运行健康只统计当前
+  策略身份，生命周期只接受同策略且 version 等于当前完整 Harness 身份的记录。不存在时保持 null，
+  `veto_enabled=false`，未知策略 422。
+- 预防：多策略状态页禁止把 `ORDER BY created_at DESC LIMIT 1` 当作 current；current 必须先定义配置
+  identity，再查完全相等的生命周期记录，latest runtime 也必须单独按同 scope 过滤。

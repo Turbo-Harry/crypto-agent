@@ -94,6 +94,12 @@ def research_strategy_version(strategy_id: str) -> str | None:
     return research_scope_version(strategy_id)
 
 
+def configured_harness_version(strategy_id: str) -> str:
+    """返回当前 Harness 完整身份；只用于只读审计。"""
+    from decision.agent_lifecycle import configured_version
+    return configured_version(strategy_id)
+
+
 def live_readiness(db_path: str | None) -> dict[str, Any]:
     from decision.readiness import readiness_status
     return readiness_status(db_path)

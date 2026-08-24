@@ -181,6 +181,8 @@ class ScanEvolveOut(BaseModel):
 
 class AgentStatusOut(BaseModel):
     """Agent Harness runtime, latest run and mature lifecycle; read-only."""
+    strategy_id: str
+    configured_version: str
     current_version: Optional[str] = None
     current_status: Optional[str] = None
     lifecycle_version: Optional[str] = None

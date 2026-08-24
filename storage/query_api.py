@@ -44,21 +44,34 @@ def list_anomalies(db_path: str | None, limit: int = 50) -> list[dict[str, Any]]
                 [max(1, min(limit, 500))], db_path=db_path)
 
 
-def agent_status_summary(db_path: str | None) -> dict[str, Any]:
+def agent_status_summary(
+        db_path: str | None, *, strategy_id: str,
+        strategy_version: str, configured_version: str) -> dict[str, Any]:
     _ready(db_path)
-    rows = db.q("SELECT runtime_status FROM agent_runs", db_path=db_path)
+    rows = db.q(
+        "SELECT r.runtime_status FROM agent_runs r "
+        "JOIN signal_samples s ON s.signal_id=r.signal_id "
+        "WHERE s.strategy_id=? AND s.strategy_version=?",
+        [strategy_id, strategy_version], db_path=db_path)
     failed = sum(row["runtime_status"] not in
                  ("completed", "disabled", "no_key") for row in rows)
-    versions = db.q("SELECT version,status FROM agent_versions "
-                    "ORDER BY created_ts DESC LIMIT 1", db_path=db_path)
+    versions = db.q(
+        "SELECT version,status FROM agent_versions "
+        "WHERE strategy_id=? AND version=? ORDER BY created_ts DESC LIMIT 1",
+        [strategy_id, configured_version], db_path=db_path)
     current = versions[0] if versions else {}
     latest_runs = db.q(
         "SELECT r.prompt_version,r.tool_policy_version,r.runtime_status,"
         "r.created_ts,e.lifecycle_status FROM agent_runs r "
         "LEFT JOIN agent_evaluations e ON e.run_id=r.run_id "
-        "ORDER BY r.created_ts DESC LIMIT 1", db_path=db_path)
+        "JOIN signal_samples s ON s.signal_id=r.signal_id "
+        "WHERE s.strategy_id=? AND s.strategy_version=? "
+        "ORDER BY r.created_ts DESC LIMIT 1",
+        [strategy_id, strategy_version], db_path=db_path)
     latest = latest_runs[0] if latest_runs else {}
     return {
+        "strategy_id": strategy_id,
+        "configured_version": configured_version,
         "current_version": current.get("version"),
         "current_status": current.get("status"),
         "lifecycle_version": current.get("version"),
