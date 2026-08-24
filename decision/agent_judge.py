@@ -90,12 +90,15 @@ def harness_model_available():
     return bool(_read_key())
 
 
-def production_harness_model_call(prompt):
+def production_harness_model_call(prompt, *, timeout_seconds=None):
     """Paper Harness 的受限 provider 回调；超时由 Harness 参数统一约束。"""
     from interfaces.agent import ModelCallResult
+    timeout_seconds = (config.AGENT_HARNESS_TIMEOUT_MS / 1000.0
+                       if timeout_seconds is None else float(timeout_seconds))
     data = _request_llm(
         prompt,
-        timeout=max(0.001, config.AGENT_HARNESS_TIMEOUT_MS / 1000.0),
+        timeout=max(0.001, min(
+            config.AGENT_HARNESS_TIMEOUT_MS / 1000.0, timeout_seconds)),
         model=config.AGENT_HARNESS_MODEL,
         system_prompt=HARNESS_SYSTEM_PROMPT,
         json_mode=config.AGENT_HARNESS_JSON_MODE,
@@ -127,6 +130,7 @@ def production_harness_model_call(prompt):
 
 
 production_harness_model_call.model_version = config.AGENT_HARNESS_MODEL
+production_harness_model_call.supports_timeout_budget = True
 
 
 def parse_judgment(text):

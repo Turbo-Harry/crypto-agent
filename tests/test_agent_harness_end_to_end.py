@@ -230,6 +230,12 @@ class AgentHarnessEndToEndTest(unittest.TestCase):
         self.assertEqual(raw.pricing_version, config.AGENT_HARNESS_PRICING_VERSION)
         self.assertGreater(raw.estimated_cost, 0)
 
+        captured.clear()
+        with mock.patch.object(agent_judge, "_request_llm", side_effect=fake_call):
+            agent_judge.production_harness_model_call(
+                "repair-context", timeout_seconds=.25)
+        self.assertEqual(captured["timeout"], .25)
+
     def test_provider_json_mode_is_explicit_and_legacy_default_is_text(self):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = b'{"choices":[]}'

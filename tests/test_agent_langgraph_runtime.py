@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import os
 import tempfile
+import time
 import unittest
 from dataclasses import replace
 from unittest.mock import patch
@@ -493,6 +494,59 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
         self.assertEqual(timed_out.run.final_action, FinalAction.BASELINE_PASS)
         self.assertEqual(invalid_payload.run.final_action,
                          FinalAction.BASELINE_PASS)
+
+    def test_late_valid_reject_is_discarded_by_total_time_budget(self):
+        def late_reject(_prompt):
+            time.sleep(.08)
+            return {
+                "verdict": "reject", "risk_probability": .9,
+                "confidence": .9, "reason_codes": ["extreme_market_event"],
+                "evidence_ids": ["market:1"], "reason": "late severe event",
+            }
+
+        result = run_graph_harness(
+            make_input("late-total-timeout"), baseline_passed=True,
+            model_call=late_reject, config=HarnessConfig(timeout_ms=50),
+            db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.TIMEOUT)
+        self.assertEqual(result.run.final_action, FinalAction.BASELINE_PASS)
+        self.assertIsNone(result.decision)
+        self.assertGreaterEqual(result.run.model_latency_ms, 50)
+
+    def test_semantic_repair_receives_only_remaining_provider_budget(self):
+        budgets = []
+
+        def budgeted_model(_prompt, *, timeout_seconds=None):
+            budgets.append(timeout_seconds)
+            if len(budgets) == 1:
+                time.sleep(.01)
+                return {
+                    "verdict": "abstain", "risk_probability": .55,
+                    "confidence": .5,
+                    "reason_codes": ["insufficient_evidence"],
+                    "missing_information": [],
+                    "abstain_reason": "缺少已验证模型",
+                    "reason": "invalid governance evidence",
+                }
+            return {
+                "verdict": "abstain", "risk_probability": .55,
+                "confidence": .5, "reason_codes": [], "evidence_ids": [],
+                "missing_information": [],
+                "abstain_reason": "mixed current market evidence",
+                "reason": "insufficient independent risk families",
+            }
+
+        budgeted_model.supports_timeout_budget = True
+        result = run_graph_harness(
+            make_input("remaining-repair-budget"), baseline_passed=True,
+            model_call=budgeted_model, config=HarnessConfig(timeout_ms=100),
+            db_path=self.path)
+
+        self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
+        self.assertEqual(len(budgets), 2)
+        self.assertGreater(budgets[0], budgets[1])
+        self.assertLessEqual(budgets[0], .1)
 
     def test_baseline_reject_never_reaches_model(self):
         calls = []

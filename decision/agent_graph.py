@@ -491,9 +491,26 @@ class _Nodes:
                                        else RuntimeStatus.NO_KEY),
                     "model_outcome": "skipped"}
         try:
-            runnable = RunnableLambda(self.model_call).with_config(
+            elapsed_total_ms = round(
+                (time.monotonic() - state["started_monotonic"]) * 1000)
+            remaining_ms = self.config.timeout_ms - elapsed_total_ms
+            if remaining_ms <= 0:
+                raise TimeoutError("harness total time budget exhausted")
+
+            def invoke_with_budget(value):
+                if getattr(self.model_call,
+                           "supports_timeout_budget", False) is True:
+                    return self.model_call(
+                        value, timeout_seconds=max(0.001, remaining_ms / 1000.0))
+                return self.model_call(value)
+
+            runnable = RunnableLambda(invoke_with_budget).with_config(
                 {"run_name": "trading_risk_critic"})
             provider_result = runnable.invoke(prompt)
+            if ((time.monotonic() - state["started_monotonic"]) * 1000 >=
+                    self.config.timeout_ms):
+                raise TimeoutError(
+                    "model response arrived after harness total time budget")
             if isinstance(provider_result, ModelCallResult):
                 raw = provider_result.content
                 current_usage = {

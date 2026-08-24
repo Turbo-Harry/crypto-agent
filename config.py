@@ -225,7 +225,7 @@ AGENT_HARNESS_JSON_MODE = True
 # paper/live 共用同一编排实现，但模型仍固定 shadow、无执行权限。
 AGENT_HARNESS_CONTEXT_VERSION = "context-v3-accuracy-evidence"
 AGENT_HARNESS_RETRIEVAL_VERSION = "retrieval-v1"
-AGENT_HARNESS_TOOL_POLICY_VERSION = "tool-policy-v3-provider-json-output"
+AGENT_HARNESS_TOOL_POLICY_VERSION = "tool-policy-v4-total-time-budget"
 # DeepSeek 2026-08-23 官方美元价（每百万 token）；只用于 shadow 成本审计。
 # cache 明细缺失时按 cache miss 计费，防止低估模型成本。
 AGENT_HARNESS_PRICING_VERSION = "deepseek-v4-flash-usd-2026-08-23"
@@ -234,7 +234,7 @@ AGENT_HARNESS_INPUT_CACHE_MISS_USD_PER_M = 0.14
 AGENT_HARNESS_OUTPUT_USD_PER_M = 0.28
 AGENT_HARNESS_MAX_TOOL_CALLS = 3
 AGENT_HARNESS_MAX_STEPS = 8
-AGENT_HARNESS_TIMEOUT_MS = 4000
+AGENT_HARNESS_TIMEOUT_MS = 4000  # 整个 Harness 总预算；修复重试只能消费剩余时间
 AGENT_HARNESS_MAX_SEMANTIC_RETRIES = 1 # 合法 JSON 但违背证据语义时最多修复一次
 AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 

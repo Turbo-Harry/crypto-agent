@@ -1583,3 +1583,19 @@
   以及 `pullback_depth_atr=3.28/pullback_volume_confirmation=0` 的结构不一致。B 同轮为 abstain。
   两条 evaluation 均 pending、零 Veto、零订单；这只证明 v7 自然运行和证据门生效，必须等待 4h
   路径标签判断该 reject 是 saved loss 还是 missed profit。
+
+## 2026-08-24 Harness v7 端到端总时限预声明
+
+- 触发证据：首条自然 v7 A/ZAMA 首响应因 evidence 锚错误触发一次修复，累计 `latency_ms=4446`、
+  `model_latency_ms=4395`，超过配置的 4,000ms。现实现给首请求和修复请求各自完整 4 秒网络 timeout，
+  理论最坏接近 8 秒；这会让下单前判断消费陈旧价格，且配置名义预算与实际行为不一致。
+- 冻结变更：Tool Policy 身份升级为 `tool-policy-v4-total-time-budget`。4 秒改为从 context 开始的
+  Harness 端到端硬预算；每次生产 provider 调用只取得剩余秒数，预算耗尽不发起修复，任何迟到结果
+  一律记录 timeout、不得形成 Veto。Prompt v7、模型、Context、Schema、Retrieval、风险/信心门、
+  100/30、费用口径和 paper-only 权限均不变；v7/v3 的首条样本保留审计但不混入 v7/v4 生命周期。
+- 验收要求：专项证明迟到的合法 reject 仍回退量化基线、第二次请求预算严格小于第一次、生产回调
+  接受并向 HTTP 层传递剩余预算；随后跑全部 Agent 专项、全量 57 脚本和静态护栏。只重启 paper，
+  首条 v7/v4 自然 run 必须总延迟不超过预算，或明确 timeout 且零 Veto/零订单。
+- 离线证据：LangGraph 专项扩至 23/23，覆盖迟到合法 reject 失败关闭和修复剩余预算；Harness E2E
+  13/13 覆盖动态 HTTP timeout。全部 `test_agent_*.py` 绿，最终全量自动发现套件 57/57；AI 仓库、
+  依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile` 与 `diff --check` 全绿。

@@ -19,6 +19,12 @@
 - 修复：Harness v7 明确 long/short 动量与资金费成本方向；普通 reject 至少两个不同风险族，单证据只允许 `extreme_market_event`；确定性校验拒绝无方向冲突的 `signal_inconsistency`、无真实账户冲突的 `position_risk_conflict` 和引用有利资金费的 reject，最多修复一次后失败关闭。
 - 预防：LLM 的自然语言“解释正确”不能代替机器语义门；每新增可执行 reason code，都要用正反冻结反例证明字段、方向和风险族一致。
 
+### 2026-08-24 Harness 的 4 秒预算被语义修复按请求重复消费
+- 现象：首条自然 v7 A/ZAMA 经一次语义修复后总延迟 4,446ms，超过配置的 `AGENT_HARNESS_TIMEOUT_MS=4000`；理论最坏可由两次各 4 秒的请求扩大到接近 8 秒。
+- 根因：provider 回调把 4 秒当作每次 HTTP 请求 timeout；LangGraph 只累计展示延迟，没有在重试前计算剩余总预算，也没有丢弃超总预算才返回的结果。
+- 修复：Tool Policy v4 将 4 秒定义为整个 Harness 的硬总预算；生产 provider 每次只取得剩余秒数，预算耗尽不再重试，迟到的合法结果也记 timeout 并保持量化基线结果。
+- 预防：任何“最多重试 N 次”的外部调用都必须同时有每次预算和端到端总预算；只限制单次 timeout 会把尾延迟按重试次数倍增。
+
 ## 交易所 API 类
 
 ### 2026-08-16 OKX 条件单挂单报 50015（triggerPx 参数错）
