@@ -485,6 +485,7 @@ class _Nodes:
                 "attempt": retry_count,
                 "violations": list(state.get("semantic_errors", ())),
                 "previous_response": state.get("raw_response"),
+                "allowed_evidence_ids": sorted(_evidence_ids(state)),
                 "instruction": (
                     "Return exactly one corrected JSON object for the same "
                     "frozen candidate, without Markdown or extra fields. "
@@ -496,7 +497,9 @@ class _Nodes:
                     "strategy routing as evidence. Treat forecast.p_loss_prior "
                     "as one unvalidated feature, not the answer; recompute the "
                     "loss probability from the frozen market evidence and make "
-                    "the verdict consistent with configured thresholds."),
+                    "the verdict consistent with configured thresholds. Copy "
+                    "evidence_ids only from allowed_evidence_ids, using each "
+                    "identifier exactly as written."),
             }
         prompt = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                             separators=(",", ":"))

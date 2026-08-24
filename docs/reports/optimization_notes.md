@@ -1630,3 +1630,19 @@
   `schema_error → baseline_pass`，evaluation pending、Veto=0、订单=0。部署后健康、空仓、对账和
   `/error` 继续正常。该条证明超时与证据锚会失败关闭，不证明 v8 已有拦亏能力；保持版本冻结继续
   采样，不因一次 provider 格式失败再次重置身份。
+
+## 2026-08-24 Harness v8 修复锚白名单预声明
+
+- 触发证据：16:15 首条自然 v8/v4 A/SOL run 的首响应与唯一修复响应均把合法的整条 market 锚
+  自造为字段级 evidence_id，最终 `schema_error → baseline_pass`。校验器正确失败关闭，但修复载荷
+  只列错误，没有列同一冻结上下文允许使用的精确锚，因此当前身份尚无一条合法完成样本。
+- 冻结变更：Prompt 继续使用 `harness-risk-v8-liquidity-field-semantics`；Tool Policy 升级为
+  `tool-policy-v5-explicit-repair-anchors`。仅在语义修复轮加入由既有 `_evidence_ids` 校验来源生成、排序
+  后的 `allowed_evidence_ids`，并要求逐字复制。模型、Context、Schema、Retrieval、4 秒端到端预算、
+  0.70/0.70、流动性门槛、100/30、paper-only、零 Veto 和基线拒绝不可恢复边界均不变。
+- 验收要求：专项必须证明修复轮收到合法锚且不包含自造锚，原有错误锚仍由确定性校验挡住；随后运行
+  全套 Agent、全量 57 脚本和静态护栏。只允许重启 paper；首条自然 v8/v5 run 若发生修复，必须只
+  引用白名单锚，否则继续失败关闭。是否提升拦亏准确率仍须等待 4h outcome 和 100/30 生命周期门。
+- 离线证据：LangGraph 25/25、全部 Agent 测试 92/92、最终自动发现套件 57/57，红 0；AI 仓库与
+  入口契约、依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile`、`diff --check` 全绿。
+  依赖影响面仍限定在 decision 内部既有 `_evidence_ids → model repair` 路径，不新增跨层调用。

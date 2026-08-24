@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import tempfile
 import time
@@ -444,6 +445,15 @@ class AgentLangGraphRuntimeTest(unittest.TestCase):
             inp, baseline_passed=True, model_call=model, db_path=self.path)
 
         self.assertEqual(len(calls), 2)
+        repair = json.loads(calls[1])["semantic_repair"]
+        self.assertIn(
+            "signal:evidence-anchor:market",
+            repair["allowed_evidence_ids"])
+        self.assertNotIn("market:1", repair["allowed_evidence_ids"])
+        self.assertEqual(
+            repair["allowed_evidence_ids"],
+            sorted(repair["allowed_evidence_ids"]))
+        self.assertIn("only from allowed_evidence_ids", repair["instruction"])
         self.assertEqual(result.run.runtime_status, RuntimeStatus.COMPLETED)
         self.assertEqual(result.run.final_action, FinalAction.SHADOW_REJECT)
         self.assertEqual(result.run.evidence_ids,
