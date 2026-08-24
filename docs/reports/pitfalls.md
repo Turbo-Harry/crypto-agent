@@ -1320,3 +1320,15 @@
   `stop_no_promotion`，保持两个普通风险族地板。
 - 预防：任何提高“精准率”的 veto/filter 都必须验收被保留交易本身，而不仅是被拒交易更差；事件相关
   数据必须按决策时点聚类，不能用逐币行数冒充独立样本量。
+
+### 2026-08-24 深度利用率不是价格滑点
+
+- 现象：合约张数单位修复后，自然 A 候选仍出现 DOGE 8,112～16,573bps、XRP 1,026bps 的
+  `expected_slippage_bps`；固定 10bps 门因此拒绝过半候选并制造看似漂亮的过滤均值。
+- 根因：旧公式把 `150 USDT / top-N 可见名义深度 × 10,000` 当成价格 impact；可见深度等于订单名义时
+  会机械输出 10,000bps（100%），但真实成交可能全部落在同一最佳档，VWAP 冲击仅为半价差。
+- 修复：按 150 USDT/mid 换算目标基础币数量，long 逐档扫 asks、short 逐档扫 bids，以成交 VWAP 相对
+  mid 计算 bps；未知方向要求双侧可成交并取较差值，任一实际所需侧深度不足显式缺失。feature schema
+  升 v5、C implementation 升 v6，旧 proxy 样本不混计。
+- 预防：execution 特征名称若带 cost/slippage/impact，必须用可复算的成交价格定义；容量比只能另名为
+  participation/utilization，禁止通过乘 10,000 冒充基点价格变化。

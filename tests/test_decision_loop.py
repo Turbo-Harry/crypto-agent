@@ -122,6 +122,19 @@ def test_microstructure_snapshot():
     check("spread bps 从最佳档计算", features["spread_bps"] == 200.0)
     check("买深度更厚时 microprice 偏上", features["microprice_bps"] > 0)
     check("多档深度失衡为正", features["depth_imbalance"] > 0)
+    check("逐档 VWAP 滑点包含半价差而非名义/深度比例",
+          abs(features["expected_slippage_bps"] - 100.0) < 1e-9)
+    asymmetric = {"bids": [[99.0, 2.0]],
+                  "asks": [[101.0, 1.0], [105.0, 2.0]]}
+    long_slip = _microstructure_features(
+        asymmetric, depth=2, direction="long")["expected_slippage_bps"]
+    short_slip = _microstructure_features(
+        asymmetric, depth=2, direction="short")["expected_slippage_bps"]
+    check("已知方向只模拟实际开仓侧", long_slip > short_slip)
+    thin = {"bids": [[99.0, 0.1]], "asks": [[101.0, 0.1]]}
+    check("150 USDT 可见深度不足显式缺失",
+          _microstructure_features(
+              thin, depth=2)["expected_slippage_bps"] is None)
     ofi0, state = _dynamic_ofi(first, None)
     second = {"bids": [[99.0, 10.0]], "asks": [[101.0, 1.0]]}
     ofi1, _ = _dynamic_ofi(second, state)

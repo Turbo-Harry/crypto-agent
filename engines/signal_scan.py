@@ -147,8 +147,13 @@ def _book_imbalance(book, depth=10):
     return (b - a) / (b + a)
 
 
-def _microstructure_features(book, depth=10):
-    """从信号时点盘口提取价差/微观价格/多档深度；无数据返回 None。"""
+def _microstructure_features(book, depth=10, direction=None):
+    """从信号时点盘口提取微观结构与 150 USDT 逐档 VWAP 滑点。
+
+    A/B 已知方向时只模拟实际开仓侧；C 尚未选方向时要求买卖两侧都能在
+    可见深度内成交，并取较差一侧。深度不足显式缺失，禁止把名义额/深度
+    利用率伪装成价格滑点。
+    """
     if not book or not book.get("bids") or not book.get("asks"):
         return {"spread_bps": None, "microprice_bps": None,
                 "depth_imbalance": None, "depth_slope": None,
@@ -163,17 +168,43 @@ def _microstructure_features(book, depth=10):
         bid_depth, ask_depth = sum(row[1] for row in bids), sum(row[1] for row in asks)
         top_depth = sum(row[1] for row in bids[:3]) + sum(row[1] for row in asks[:3])
         full_depth = bid_depth + ask_depth
-        visible_notional = sum(price * qty for price, qty in bids + asks)
-        impact_bps = (config.MAX_NOTIONAL_PER_TRADE / visible_notional * 10_000
-                      if visible_notional > 0 else None)
+        target_base = config.MAX_NOTIONAL_PER_TRADE / mid if mid > 0 else 0.0
+
+        def _sweep(levels):
+            remaining = target_base
+            quote = base_qty = 0.0
+            for price, qty in levels:
+                if price <= 0 or qty <= 0:
+                    continue
+                fill = min(qty, remaining)
+                quote += fill * price
+                base_qty += fill
+                remaining -= fill
+                if remaining <= 1e-12:
+                    break
+            return quote / base_qty if remaining <= 1e-12 and base_qty > 0 else None
+
+        buy_vwap = _sweep(asks)
+        sell_vwap = _sweep(bids)
+        buy_slippage = ((buy_vwap - mid) / mid * 10_000
+                        if buy_vwap is not None and mid else None)
+        sell_slippage = ((mid - sell_vwap) / mid * 10_000
+                         if sell_vwap is not None and mid else None)
+        if direction == "long":
+            expected_slippage = buy_slippage
+        elif direction == "short":
+            expected_slippage = sell_slippage
+        else:
+            expected_slippage = (max(buy_slippage, sell_slippage)
+                                 if buy_slippage is not None and
+                                 sell_slippage is not None else None)
         return {
             "spread_bps": (ask - bid) / mid * 10_000 if mid else None,
             "microprice_bps": (micro - mid) / mid * 10_000 if mid else None,
             "depth_imbalance": ((bid_depth - ask_depth) / full_depth
                                 if full_depth else None),
             "depth_slope": top_depth / full_depth if full_depth else None,
-            "expected_slippage_bps": ((ask - bid) / mid * 5_000 + impact_bps
-                                      if mid and impact_bps is not None else None),
+            "expected_slippage_bps": expected_slippage,
         }
     except Exception:
         return {"spread_bps": None, "microprice_bps": None,
@@ -405,7 +436,8 @@ class SignalScanMixin:
             market_features = {
                 "book_imbalance": _book_imbalance(
                     book, config.SHADOW_BOOK_DEPTH),
-                **_microstructure_features(book, config.SHADOW_BOOK_DEPTH),
+                **_microstructure_features(
+                    book, config.SHADOW_BOOK_DEPTH, raw.get("dir")),
             }
             # A/B 的相邻快照状态必须隔离。同币同轮可能先形成 B、随后形成 A；
             # 若共用状态，A 会把 B 刚写入的同一盘口误算成零 OFI。
@@ -647,7 +679,8 @@ class SignalScanMixin:
                 down = (math.sqrt(sum(value * value for value in returns_1h
                                       if value < 0))
                         if len(returns_1h) == 4 else None)
-                micro = _microstructure_features(_book, config.SHADOW_BOOK_DEPTH)
+                micro = _microstructure_features(
+                    _book, config.SHADOW_BOOK_DEPTH, direction)
                 event_flow = {}
                 try:
                     get_orderflow = getattr(self.rt, "get_orderflow", None)

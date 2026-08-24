@@ -342,11 +342,11 @@ AGENT_HARNESS_CONTEXT_MAX_CHARS = 24000
 # 2R 止盈全部由确定性代码计算。提案只进入反事实标签链，永不调用执行层。
 AGENT_PROPOSAL_SHADOW_ENABLED = True
 AGENT_PROPOSAL_STRATEGY_ID = "C_agent_proposal"
-# v5 保留确定性方向资格，并压缩重复 evidence，避免双提案被共享 200-token
-# 上限截断。仍仅 paper shadow，协议变化重新计自然样本。
+# v5 保留确定性方向资格，并压缩重复 evidence；v6 把盘口冲击从
+# notional/visible-depth 代理改为逐档 VWAP。仍仅 paper shadow，协议变化重计样本。
 AGENT_PROPOSAL_PROMPT_VERSION = "agent-proposal-v5-compact-evidence"
 AGENT_PROPOSAL_IMPLEMENTATION_VERSION = \
-    "agent-proposal-impl-v5.1-full-restart-boundary"
+    "agent-proposal-impl-v6-directional-vwap-slippage"
 AGENT_PROPOSAL_SCHEMA_VERSION = "agent-proposal-schema-v2-abstain-reason"
 AGENT_PROPOSAL_MICROSTRUCTURE_FIELDS = (
     "spread_bps", "microprice_bps", "depth_imbalance", "depth_slope",
@@ -418,7 +418,8 @@ SIGNAL_REGIME_TIMEFRAME = "4H"
 SIGNAL_LOOKBACK_BARS = 300
 SIGNAL_TIMEFRAME_SECONDS = {"5m": 300, "15m": 900, "1H": 3600, "4H": 14400}
 SIGNAL_BAR_CLOSE_GRACE_SECONDS = 2       # 交易所时间/传输边界缓冲
-SIGNAL_FEATURE_SCHEMA_VERSION = "signal-features-v4"  # v4: 行情路由 + 显式 strategy_id
+# v5: expected_slippage_bps 改为 150 USDT 逐档 VWAP；深度不足显式缺失。
+SIGNAL_FEATURE_SCHEMA_VERSION = "signal-features-v5"
 SIGNAL_OUTCOME_HORIZON_HOURS = MAX_HOLD_HOURS  # 标签/执行/预测同窗口
 SIGNAL_OUTCOME_BAR = "1m"
 SIGNAL_OUTCOME_LABEL_VERSION = "first-passage-15m-4h-v1"

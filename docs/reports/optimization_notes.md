@@ -2050,3 +2050,22 @@
 - 裁决：`stop_no_promotion`。不得把单一 `liquidity_failure` 改成直接 veto，也不得因 A-long 朴素均值
   为正而放宽 Harness 两个普通风险族地板。继续收集补证据后的 B 自然路径，并要求保留组绝对 EV 下界、
   4/5 时间折、方向/币种稳定性和样本门同时通过后，才允许另立 paper shadow challenger。
+
+## 2026-08-24 方向化逐档 VWAP 滑点语义修复
+
+- 触发证据：固定流动性门审计中 A-long/A-short 的 `expected_slippage_bps` 最大分别达到
+  8,112/16,573bps；逐样本定位后，价差仍仅 0.01～6bps。合约张数已在 adapter 归一，剩余异常来自
+  `_microstructure_features` 把订单名义/可见深度利用率直接当作价格 bps，而非逐档成交 VWAP。
+- 冻结变更：目标量固定为现役名义上限 `150 USDT / mid` 对应的基础币数量。已知 long 只扫 asks、
+  已知 short 只扫 bids；C 未定方向时买卖两侧都必须在 top-N 可见深度内完成，取较差侧。滑点定义为
+  实际 VWAP 相对 mid 的价格变化 bps，已自然包含半价差；深度不足返回 None 并进入 missing 清单。
+- 身份与权限：`SIGNAL_FEATURE_SCHEMA_VERSION` 升 `signal-features-v5`，A/B/C 样本与 Harness 生命周期均
+  不借旧 v4 proxy；C implementation 升 `agent-proposal-impl-v6-directional-vwap-slippage`。Prompt v13、
+  Tool Policy v11、8/10bps 门、两个普通风险族、100/30、300/60/60、固定 2:1、风险预算、Veto 与订单
+  权限均不变。旧 GRASS v4 的 8.0398bps 只保留审计，不作为 v5 生产语义证明。
+- 离线证据：方向化纯函数验证 long/short 分侧、未知方向双侧保守值与深度不足缺失；决策闭环 64/64、
+  交易所层 51/51、策略 B 39/39、C 提案 17/17 和相关 py_compile 通过。全量 58 脚本、护栏、提交、
+  paper 重启及首条自然 v5 样本待后续完成；完成前不宣称新语义已部署或改善胜率。
+- 全量证据：按 CI 隔离数据库、事件文件和运行目录自动发现并通过 58/58 个测试脚本，失败 0；
+  LangGraph 48/48、候选冻结 17/17、因子门 32/32、概率模型 29/29、过拟合护栏 8/8，参数集中、测试
+  隔离、23 条修复护栏、code graph、AI repo check 与 diff check 全绿。

@@ -20,7 +20,7 @@
   SOL 单族样本已首次完成并正确 abstain；静态审计随后发现旧“高风险+高信心必须 reject”校验与单族
   禁止 reject 冲突。当前 challenger 冻结为 Prompt v13 + Tool Policy v11，只在证据地板满足时强制
   reject；地板不满足时允许诚实保留高风险估计并 abstain。仍为 pending shadow，`veto_enabled=false`。
-- 主动提案当前冻结 implementation 为 `agent-proposal-impl-v5.1-full-restart-boundary`；v4.2 四个自然
+- 主动提案当前冻结 implementation 为 `agent-proposal-impl-v6-directional-vwap-slippage`；v4.2 四个自然
   批次仅 1 completed、3 schema error，最新错误被定位为双提案长 evidence 在 200-token 共享预算下没有
   形成完整 JSON。v5.0 在代码提交后、进程完整重启前被 config 热重载，产生 1 条“新身份+旧函数体”的
   schema error，已由 v5.1 身份隔离。完整重启后的首个 v5.1 自然批次已在 1585ms 内 completed，生成
@@ -45,7 +45,8 @@
    负资金费不是 long 成本。
 3. 消除流动性字段歧义：`depth` 是回踩位置质量，`book` 是方向对齐盘口失衡，
    `book_imbalance/depth_imbalance` 是买卖压力方向；它们都不是绝对可见深度，不得支持
-   `liquidity_failure`。
+   `liquidity_failure`。`expected_slippage_bps` 必须是 150 USDT 逐档成交 VWAP 相对 mid 的方向化价格
+   冲击；深度不足必须缺失，禁止用名义额/可见深度利用率冒充价格 bps。
 4. 固定流动性严重门：只有 `spread_bps≥8` 或 `expected_slippage_bps≥10` 才取得
    `liquidity_failure` 风险族资格。低于门槛仍可影响总体概率，但不算独立拒绝证据。
 5. 机器校验概率/信心、方向、资金费、持仓冲突、流动性门、风险族数量和 evidence 锚；首次判断即收到
@@ -77,6 +78,7 @@
 
 - 当前完整 v13/v11 每策略自然成熟样本至少 100，合格 reject 至少 30；Trace、概率和 evidence 覆盖 100%。
 - 所有 `liquidity_failure` 都满足冻结点差或预期滑点门；方向失衡不得冒充绝对深度不足。
+- 当前样本必须是 `signal-features-v5`；旧 v4 的深度利用率 proxy 不得与逐档 VWAP 语义混入同一验收。
 - A/B 分策略审计盘口、点差、预期滑点和订单流覆盖；FakeAdapter 提供盘口时端到端候选必须冻结非空
   `book_imbalance/spread_bps/expected_slippage_bps`，并验证 B 的盘口/OI 状态不会改写 A 的同名状态，
   同时保持 B 零订单、零执行权限。
