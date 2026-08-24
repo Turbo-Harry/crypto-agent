@@ -235,33 +235,23 @@ class PositionMixin:
         # 2026-08-22 实盘模式: 单笔风险固定 LIVE_RISK_PER_TRADE USDT(预算1%),
         # 名义上限 LIVE_MAX_NOTIONAL;模拟盘维持原口径(账户1%风险)。
         if getattr(self, "live_mode", False):
+            # 2026-08-25 用户确认: C 单与 A 单同口径——BTC/ETH 保留特殊名义
+            # (680/230)与 1 合约兜底,其余币名义上限 LIVE_MAX_NOTIONAL
             qty = config.LIVE_RISK_PER_TRADE / (price * stop_dist)
-            if sig.get("cai_live"):
-                # 2026-08-25 用户指示"真实花费<10 USDT": C 单严格按
-                # 10 USDT 名义上限,不用 BTC/ETH 特殊名义兜底——买不满
-                # 最小合约的符号由预检拒绝(宁可错过,不放大仓位)
-                _cap = getattr(config, "AGENT_PROPOSAL_LIVE_MAX_NOTIONAL",
-                               config.LIVE_MAX_NOTIONAL)
-                qty = min(qty, _cap / price)
-            else:
-                _notional_cap = config.LIVE_SPECIAL_NOTIONAL.get(
-                    base, config.LIVE_MAX_NOTIONAL)
-                qty = min(qty, _notional_cap / price)
-                # BTC/ETH 特殊名义: 1 USDT 风险算出的数量 < 最小合约时,
-                # 用最小合约数兜底(用户指示 10x 交易 BTC/ETH——实际单笔风险
-                # 随之放大到 ~2-3 USDT,仍在 30 USDT 硬止损内)
-                if base in config.LIVE_SPECIAL_NOTIONAL:
-                    # 最小可买 = 1 合约(floor 对齐粒度),不是 min_sz×ct_val
-                    # (BTC 0.01 合约粒度 → 0.01 BTC;ETH 0.1 ETH)
-                    qty = max(qty, inst.ct_val)
+            _notional_cap = config.LIVE_SPECIAL_NOTIONAL.get(
+                base, config.LIVE_MAX_NOTIONAL)
+            qty = min(qty, _notional_cap / price)
+            if base in config.LIVE_SPECIAL_NOTIONAL:
+                # 最小可买 = 1 合约(floor 对齐粒度),不是 min_sz×ct_val
+                # (BTC 0.01 合约粒度 → 0.01 BTC;ETH 0.1 ETH)
+                qty = max(qty, inst.ct_val)
         else:
             qty = (self.exchange.fetch_balance().usdt_total * RISK_PER_TRADE) / (price * stop_dist)
             qty = min(qty, config.MAX_NOTIONAL_PER_TRADE / price)  # 小仓位：名义上限(config)
         qty *= size_factor          # 连亏半仓等经验决策真正生效（B6）
         # 特殊币(BTC/ETH)半仓后会跌破 1 合约再被 floor 到 0——兜底必须在
         # size_factor 之后(2026-08-23 BTC 连续 reject_min_size 的真因)
-        if (getattr(self, "live_mode", False) and not sig.get("cai_live")
-                and base in config.LIVE_SPECIAL_NOTIONAL):
+        if getattr(self, "live_mode", False) and base in config.LIVE_SPECIAL_NOTIONAL:
             qty = max(qty, inst.ct_val)
         # 市场最大下单量限制（市价单，张→币）
         if inst.max_mkt_sz > 0:

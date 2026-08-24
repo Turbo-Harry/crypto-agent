@@ -400,7 +400,8 @@ AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED = True   # 2026-08-25 用户指示: 实盘
 # 真实花费<10 USDT,实盘与模拟盘一致":
 AGENT_PROPOSAL_LIVE_SYMBOLS = ()        # 空=不限符号,候选池提案均可执行
 AGENT_PROPOSAL_LIVE_MAX_DAILY_ORDERS = 0  # 0=不限,按扫描提案笔数执行
-AGENT_PROPOSAL_LIVE_MAX_NOTIONAL = 10.0  # 单笔真实花费(名义)上限 USDT
+# 单笔名义口径与 A 单一致(2026-08-25 用户确认): BTC/ETH 特殊名义
+# 680/230 保留,其余币 LIVE_MAX_NOTIONAL=10
 # 实盘不得用 bootstrap 绕过已验证模型门。
 AGENT_PROPOSAL_LIVE_BOOTSTRAP_ENABLED = True  # 2026-08-25 用户指示: 实盘 bootstrap 通道
 
