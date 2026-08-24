@@ -1546,3 +1546,10 @@
 - 验收要求：空库应返回当前配置但 latest/lifecycle 为空；同库存在 pending 新 run 和 observing 旧版本时，
   两层身份必须同时准确返回且 Veto=true。随后运行 service、接口边界、全量套件和静态护栏，只部署
   paper，并核对配置=v6/v3、latest run=v6/v3 pending、lifecycle=v5 shadow、Veto=false 四项并存。
+- 离线证据：service API 53/53、接口边界 17/17；最终全量自动发现套件 57/57，AI 仓库、代码图、
+  参数集中化、隔离、23 条修复护栏、`py_compile` 与 diff check 全绿。实现提交 `272600d`。
+- paper 部署：重启前 PID `1760`，空仓、今日零交易、未熔断、对账一致且无错误；只重启 paper 到
+  PID `5415`，live PID `90574` 未变化。真实 `/agent/status` 同时返回 configured=v6/v3、latest run=
+  v6/v3 completed+pending、lifecycle=v5 shadow、`veto_enabled=false`；不再需要从旧 current 字段猜测
+  新版本是否已部署。部署后 `/health=ok`、心跳年龄 9.1 秒、空仓、今日零交易、未熔断、对账一致、
+  `/error` 为空；本轮仅修正只读可观测性，没有改变任何订单或 Agent 权限。
