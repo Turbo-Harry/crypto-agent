@@ -2107,4 +2107,11 @@
   forecast 15/15、replay 14/14、决策闭环 64/64、服务 60/60 与接口边界 17/17 通过；回归反例分别证明
   旧 v4 不能进入当前 readiness、因子 observation、概率/极值训练、经验首触、模型加载或 Harness 门。
   按 CI 的隔离数据库/事件/运行目录自动发现并通过 58/58 个脚本，失败 0；参数、隔离、23 条修复护栏、
-  code graph、AI repo、py_compile 与 diff check 全绿。提交、paper 重启和宿主 API 复核待后续完成。
+  code graph、AI repo、py_compile 与 diff check 全绿。
+- 部署证据：实现提交 `36a5757`。先确认 paper 空仓、对账 balanced 后暂停扫描，只完整重启
+  `850→8704`；live PID `90574` 未变化。重启后 `/health=ok`、心跳 2.0s、未暂停、空仓、未熔断、
+  `/reconcile=balanced`、`/error` 为空、模型列表为空且预算扩张 false。
+- 宿主 API 复核：A 当前 identity `71848d5359e9` 为候选 8/outcome 0，B 当前 identity
+  `f4440c07ea39` 为 0/0，C 当前 identity `4abf0977cd79` 为 4/0；三者 validated factor、校准和模型状态
+  均为空。A readiness 明确返回当前 v13/v11/v5 完整 Harness version、`agent_version=null`、成熟 0/100、
+  reject 0/30。旧 204/179 与旧 Harness 3 条不再出现在当前门，但物理审计数据完整保留。
