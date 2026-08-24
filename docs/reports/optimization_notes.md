@@ -1725,7 +1725,7 @@
   合计 89 个同向快照；模型却把其中绝大多数返回为 `no_aligned_candidate`。这不是市场没有候选，而是
   Prompt 让模型从小数自行推导资格、输出 abstain 原因又没有确定性校验，导致反事实样本链长期为 0。
 - 冻结变更：Prompt 升为 `agent-proposal-v4-deterministic-eligibility`，implementation 升为
-  `agent-proposal-impl-v4-deterministic-eligibility`。每个冻结快照新增由现有三周期同号函数计算的
+  `agent-proposal-impl-v4.1-deterministic-eligibility`。每个冻结快照新增由现有三周期同号函数计算的
   `aligned_direction=long|short|null`；模型只能选择非 null 且方向完全一致的候选。若任一快照已同向，
   空提案不得再报 `no_aligned_candidate`，应按真实原因使用 microstructure_conflict、
   insufficient_microstructure、liquidity_too_weak 或 no_clear_edge；反之全部 null 时必须报
@@ -1740,3 +1740,7 @@
   不新增 `aligned_direction/eligible_candidates`、身份与幂等结果不变。最终自动发现套件 58/58、红 0；
   AI 仓库与入口契约、依赖图、参数集中化、测试隔离、23 条修复护栏、`py_compile`、`diff --check`
   全绿。实现只改变 C 的 shadow 输入/语义校验，不修改 A/B、provider、费用、阈值、订单或风险预算。
+- 部署竞态隔离：提交 v4 后、重启前，旧 paper PID `37072` 热读到新配置并留下 run
+  `proposal-run-961ef81431f73b53cfe6170c`；其标签虽为 v4，冻结 payload 却没有
+  `aligned_direction/eligible_candidates`，属于“新标签、旧内存代码”的混合样本。该审计行原样保留，
+  不删除、不改库；最终 implementation 身份升为 v4.1，使接口、cycle key 与验收精确排除该混合 run。

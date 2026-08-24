@@ -998,6 +998,10 @@
   C 专属 signal identity；旧竞态样本不会与最终 v2 混计。v1 重放显式省略新字段，A/B 身份也不变化。
 - 预防：Prompt/配置与代码共同升级时，实验身份必须同时包含实现版本；验收要对比同 K input hash 和
   payload 字段，不能只看 run.prompt_version。发现竞态样本后保留审计记录并用身份隔离，不手工改库。
+- 再现与加固：v4 部署前旧 paper PID `37072` 再次热读新配置，生成
+  `proposal-run-961ef81431f73b53cfe6170c`；标签为 v4，但 payload 缺少 v4 必备的
+  `aligned_direction/eligible_candidates`。保留该行作为负面审计证据，并把最终实现身份升为 v4.1；
+  重启后只统计精确 v4.1，首个自然样本还必须逐字段验证 payload，禁止仅凭版本标签验收。
 
 ### 2026-08-24 只有 input hash 无法解释 Agent 为什么空仓
 
