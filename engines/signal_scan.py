@@ -1241,10 +1241,28 @@ class SignalScanMixin:
                                      final_decision="rejected",
                                      reject_reason=f"score_gate:{gate_score}<{_thr}")
                     continue
+                _rr_reason = (rr_prediction or {}).get("reason") or "missing"
+                _paper_bootstrap = bool(
+                    getattr(self, "paper_bootstrap_orders_enabled", False) and
+                    not getattr(self, "live_mode", False) and
+                    _rr_reason == "no_validated_active_model")
+                if _paper_bootstrap:
+                    # 只覆盖“尚无首模”这一治理缺口；2:1 几何和成本已在
+                    # preopen 审计中先通过，额度/冷却/分数也已在上方通过。
+                    # 保持 passed=False，避免把 bootstrap 伪装成模型验证通过。
+                    rr_prediction["bootstrap_override"] = True
+                    rr_prediction["bootstrap_mode"] = "paper_baseline_collection"
+                    if signal_id:
+                        from engines.signal_sampling import merge_sample_features
+                        merge_sample_features(
+                            signal_id, {"preopen_2to1": rr_prediction},
+                            db_path=self._db_path)
+                    print(f"🧪 {base}: 无 active 模型，paper bootstrap 基线采集")
                 if (getattr(self, "require_2to1_prediction", False) and
-                        not (rr_prediction or {}).get("passed")):
+                        not (rr_prediction or {}).get("passed") and
+                        not _paper_bootstrap):
                     _reason = "2to1_prediction:" + (
-                        (rr_prediction or {}).get("reason") or "missing")
+                        _rr_reason)
                     self._log_scan_decision(base, True, sig["dir"],
                                             "model_reject", _reason)
                     _sample_decision(rule_decision="reject",

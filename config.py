@@ -598,9 +598,11 @@ ORDERFLOW_MIN_EVENTS = 10
 ORDERFLOW_MAX_AGE_SECONDS = 5
 
 # ---- 开仓概率 meta-label（固定 1R 止损 / 2R 止盈） ----
-# 模拟盘只允许“已通过样本外 + 独立 shadow 验证”的概率模型参与开仓；候选即使
-# 被拒仍结算 4h 反事实路径，因此 fail-closed 不会切断训练/校准数据。
+# 模拟盘成熟阶段只允许“已通过样本外 + 独立 shadow 验证”的概率模型参与
+# meta-label 决策。冷启动阶段经用户 2026-08-24 明确授权，可由现役基线策略
+# 下 paper 单采集真实成交/平仓证据；仅缺 active 模型可被该通道覆盖，其他门不变。
 PAPER_REQUIRE_VALIDATED_2TO1_PREDICTION = True
+PAPER_BOOTSTRAP_BASELINE_ORDERS = True
 ENTRY_REQUIRED_REWARD_RISK = 2.0
 ENTRY_COST_MODEL_VERSION = "roundtrip-plus-conservative-funding-v1"
 ENTRY_MODEL_SHADOW_ONLY = False

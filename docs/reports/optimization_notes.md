@@ -3,6 +3,13 @@
 > 用途：主agent在等待调研员/质疑官报告期间自查发现的候选问题。
 > 合并后按收益/风险排序实施。每个条目：证据 → 危害 → 修法。
 
+### 2026-08-24 paper baseline bootstrap
+- 用户明确授权无 active 模型期用模拟盘下单采集真实成交/平仓数据。实现只在真实 OKX paper 组装开启，
+  且仅覆盖 `no_validated_active_model`；模型若已存在但成本后 EV 下界非正仍拒绝。候选审计保留
+  `passed=false` 并标记 `bootstrap_override=true`，避免把冷启动订单冒充模型证明。
+- 固定 2:1、单笔风险 1%、名义 150 USDT、组合 600 USDT、交易所侧止损及所有现役量化/Agent 风控不变；
+  live 与 FakeAdapter 均无 bootstrap 权限。
+
 ### 2026-08-24 入场成熟度阶段语义修正
 - 证据：首个 entry 模型训练依赖每方向自然候选 300/TP 60/SL 60；模型 shadow 晋升可用训练截止点
   后 60 个候选路径，均不要求成交。自然 paper 60 笔属于激活后完整计划验收。

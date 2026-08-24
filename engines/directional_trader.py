@@ -207,6 +207,11 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         self.require_2to1_prediction = bool(
             _real_okx and not self.live_mode and
             _c.PAPER_REQUIRE_VALIDATED_2TO1_PREDICTION)
+        # 冷启动只存在于真实 OKX 模拟盘组装。Fake/live 即使修改实例配置也
+        # 不会意外获得权限；模型一旦存在，负 EV 等模型拒绝仍失败关闭。
+        self.paper_bootstrap_orders_enabled = bool(
+            _real_okx and not self.live_mode and
+            _c.PAPER_BOOTSTRAP_BASELINE_ORDERS)
         self.agent_model_call = None
         self.agent_proposal_model_call = None
         if (_real_okx and getattr(_c, "AGENT_HARNESS_ENABLED", False)):

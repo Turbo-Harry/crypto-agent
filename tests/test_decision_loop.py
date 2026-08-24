@@ -446,6 +446,41 @@ def test_strict_2to1_preopen_wiring(tmp):
           harness and harness["final_action"] == "shadow_reject")
 
 
+def test_paper_bootstrap_collects_real_closes(tmp):
+    """首模为空时仅 paper baseline 可下单；审计不得伪装成模型通过。"""
+    print("== paper 首模冷启动采集 ==")
+    import config
+    import storage.db as sdb
+    work = os.path.join(tmp, "paper_bootstrap")
+    os.makedirs(work, exist_ok=True)
+    dt, fake = _make_trader(work)
+    _seed_explicit_extreme_event(dt)
+    dt.require_2to1_prediction = True
+    dt.paper_bootstrap_orders_enabled = True
+    dt.agent_model_call = _anchored_harness_reject
+    fake.candles["BTC-USDT-SWAP"] = _make_candles()
+    fake.last_prices["BTC-USDT-SWAP"] = 110.0
+    fake.last_prices["BTC-USDT"] = 110.0
+    dt.watchlist = ["BTC"]
+    dt.watch_scores = {"BTC": 0.9}
+    dt._watch_date = time.strftime("%Y-%m-%d")
+    dt._last_watch_refresh = time.time()
+    dt.signal_cool = {}
+    dt.threshold_learner.threshold = config.THRESHOLD_INITIAL
+    dt.scan_signals()
+    row = sdb.q1(
+        "SELECT features,final_decision,trade_id FROM signal_samples "
+        "ORDER BY event_ts DESC LIMIT 1", db_path=dt._db_path)
+    audit = json.loads(row["features"])["preopen_2to1"] if row else {}
+    check("paper bootstrap 在无模型时产生模拟订单", len(fake.orders) >= 1)
+    check("bootstrap 订单与候选绑定供后续真实平仓采集",
+          row and row["final_decision"] == "opened" and row["trade_id"])
+    check("bootstrap 保留无模型事实而不伪造验证通过",
+          audit.get("passed") is False and
+          audit.get("reason") == "no_validated_active_model" and
+          audit.get("bootstrap_override") is True)
+
+
 def test_open_logged_only_on_fill(tmp):
     """开仓决策只在成交入账后记 open；下单失败不得虚增开仓数。"""
     import sqlite3
@@ -669,6 +704,7 @@ if __name__ == "__main__":
     test_four_hour_time_exit(tmp)
     test_threshold_gate(tmp)
     test_strict_2to1_preopen_wiring(tmp)
+    test_paper_bootstrap_collects_real_closes(tmp)
     test_open_logged_only_on_fill(tmp)
     test_extrema_shadow_wiring(tmp)
     test_harness_shadow_keeps_legacy_authority(tmp)
