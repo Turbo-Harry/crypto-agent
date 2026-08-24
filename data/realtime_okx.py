@@ -49,6 +49,7 @@ class OKXRealtime:
         self._orderflow = OrderFlowAccumulator(
             config.ORDERFLOW_BOOK_DEPTH, config.ORDERFLOW_WINDOW_SECONDS,
             config.ORDERFLOW_MIN_EVENTS, config.ORDERFLOW_MAX_AGE_SECONDS)
+        self._trade_flow = {base: deque() for base in self.symbols}
 
     def _on_message(self, ws, message):
         try:
@@ -114,10 +115,15 @@ class OKXRealtime:
                         entry["vol_ts"] = now
             elif channel == "trades":
                 base = inst.split("-")[0]
-                # 主动买卖：side 字段（buy/sell）
-                buys = sum(1 for t in d["data"] if t.get("side") == "buy")
-                total = len(d["data"])
-                self.latest.setdefault(base, {})["taker_buy"] = buys / total if total else 0.5
+                flow = self._trade_flow.setdefault(base, deque())
+                for trade in d["data"]:
+                    flow.append((now, trade.get("side") == "buy"))
+                while flow and now - flow[0][0] > config.ORDERFLOW_WINDOW_SECONDS:
+                    flow.popleft()
+                buys = sum(int(is_buy) for _, is_buy in flow)
+                entry = self.latest.setdefault(base, {})
+                entry["taker_buy_60s"] = buys / len(flow) if flow else None
+                entry["trade_flow_count_60s"] = len(flow)
             elif channel == "books5":
                 base = inst.split("-")[0]
                 self._orderflow.update(base, d["data"][0], ts=now)
@@ -143,7 +149,7 @@ class OKXRealtime:
                 {"channel": "tickers", "instId": f"{base}-USDT"},
                 {"channel": "tickers", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "funding-rate", "instId": f"{base}-USDT-SWAP"},
-                {"channel": "trades", "instId": f"{base}-USDT"},
+                {"channel": "trades", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "books5", "instId": f"{base}-USDT-SWAP"},
             ]
             sub = {"op": "subscribe", "args": args}
@@ -165,7 +171,7 @@ class OKXRealtime:
                 {"channel": "tickers", "instId": f"{base}-USDT"},
                 {"channel": "tickers", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "funding-rate", "instId": f"{base}-USDT-SWAP"},
-                {"channel": "trades", "instId": f"{base}-USDT"},
+                {"channel": "trades", "instId": f"{base}-USDT-SWAP"},
                 {"channel": "books5", "instId": f"{base}-USDT-SWAP"},
             ]
             with self._restart_lock:

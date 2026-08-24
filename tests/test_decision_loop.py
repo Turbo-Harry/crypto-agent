@@ -29,6 +29,7 @@ from execution.trade_journal import (
 from exchange.fake_adapter import FakeAdapter
 from engines.directional_trader import DirectionalTrader, _ExpAdapter, _scan_slot
 from engines.signal_scan import _dynamic_ofi, _microstructure_features
+from decision.orderflow_entry import paper_intraday_entry_decision
 
 
 def _anchored_harness_reject(prompt):
@@ -140,6 +141,62 @@ def test_microstructure_snapshot():
     ofi1, _ = _dynamic_ofi(second, state)
     check("首个快照不伪造 OFI", ofi0 is None)
     check("买量增加且卖量减少产生正 OFI", ofi1 > 0)
+
+
+def test_paper_intraday_confirmation():
+    """完整日内最终确认必须同时覆盖多周期、连续流、成本和波动。"""
+    print("== paper 日内最终确认 ==")
+    kwargs = {
+        "one_minute": [{"open": 100, "close": 100.1}],
+        "five_minute": [{"open": 99.8, "close": 100.1}],
+        "orderflow": {"status": "ready", "ofi_event_multilevel": .2,
+                      "ofi_event_cancel_imbalance": .1,
+                      "ofi_event_count": 20, "ofi_event_age_ms": 100},
+        "microstructure": {"spread_bps": 2, "expected_slippage_bps": 3},
+        "realtime": {"taker_buy_60s": .65, "trade_flow_count_60s": 30,
+                     "vol_15m": .01},
+    }
+    passed_gate = paper_intraday_entry_decision(
+        {"dir": "long"}, **kwargs)
+    check("1m/5m、OFI、成交、成本与波动同向才放行",
+          passed_gate["passed"] and passed_gate["size_factor"] == 1.0)
+    reduced = paper_intraday_entry_decision(
+        {"dir": "long"}, **dict(kwargs,
+            realtime={"taker_buy_60s": .65, "trade_flow_count_60s": 30,
+                      "vol_15m": .02}))
+    check("较高但未异常波动只缩仓不放大风险",
+          reduced["passed"] and reduced["size_factor"] == .5)
+    stale = paper_intraday_entry_decision(
+        {"dir": "long"}, **dict(kwargs,
+            orderflow={"status": "stale", "ofi_event_multilevel": None}))
+    check("订单流缺失或陈旧失败关闭",
+          not stale["passed"] and stale["reason"] == "orderflow_not_ready")
+    thin_flow = paper_intraday_entry_decision(
+        {"dir": "long"}, **dict(
+            kwargs,
+            realtime={"taker_buy_60s": .8, "trade_flow_count_60s": 2,
+                      "vol_15m": .01}))
+    check("少量成交不得伪装成连续成交确认",
+          not thin_flow["passed"] and
+          thin_flow["reason"] == "trade_flow_missing")
+    volatile = paper_intraday_entry_decision(
+        {"dir": "long"}, **dict(
+            kwargs,
+            realtime={"taker_buy_60s": .65, "trade_flow_count_60s": 30,
+                      "vol_15m": .04}))
+    check("异常波动必须空仓",
+          not volatile["passed"] and
+          volatile["reason"] == "volatility_too_high")
+    short = paper_intraday_entry_decision(
+        {"dir": "short"}, **dict(
+            kwargs,
+            one_minute=[{"open": 100, "close": 99.9}],
+            five_minute=[{"open": 100.2, "close": 99.9}],
+            orderflow={"status": "ready", "ofi_event_multilevel": -.2,
+                       "ofi_event_cancel_imbalance": -.1},
+            realtime={"taker_buy_60s": .35, "trade_flow_count_60s": 30,
+                      "vol_15m": .01}))
+    check("空头确认按方向镜像解释成交和订单流", short["passed"])
 
 
 def test_only_closed_kline_is_sampled(tmp):
@@ -695,6 +752,7 @@ if __name__ == "__main__":
     tmp = tempfile.mkdtemp(prefix="tst_dec_")
     test_realized_pnl_usdt()
     test_microstructure_snapshot()
+    test_paper_intraday_confirmation()
     test_only_closed_kline_is_sampled(tmp)
     test_scan_slot_alignment()
     test_no_setup_skips_slow_context(tmp)

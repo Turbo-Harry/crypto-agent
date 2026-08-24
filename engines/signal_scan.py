@@ -1016,6 +1016,43 @@ class SignalScanMixin:
             print(f"Agent主动提案 shadow failed: {type(exc).__name__}: {exc}")
             return None
 
+    def _paper_intraday_entry_confirmation(self, base, sig):
+        """模拟盘最终确认：已收线 1m/5m + 连续成交/OFI + 当前执行成本。"""
+        from decision.orderflow_entry import paper_intraday_entry_decision
+
+        def closed_rows(timeframe, seconds, required):
+            candles = self._fetch_klines_any(base, timeframe, required + 3)
+            last_open_ms = int((time.time() -
+                                config.SIGNAL_BAR_CLOSE_GRACE_SECONDS) //
+                               seconds * seconds * 1000) - seconds * 1000
+            usable = [row for row in candles
+                      if int(row.ts) <= last_open_ms]
+            return [{"ts": int(row.ts), "open": float(row.open),
+                     "close": float(row.close)}
+                    for row in usable[-required:]]
+
+        try:
+            one_minute = closed_rows(
+                "1m", 60, config.PAPER_ENTRY_CONFIRM_1M_BARS)
+            five_minute = closed_rows(
+                "5m", 300, config.PAPER_ENTRY_CONFIRM_5M_BARS)
+            realtime = self.rt.get(base, max_age=60) if self.rt else {}
+            getter = getattr(self.rt, "get_orderflow", None) if self.rt else None
+            orderflow = getter(base) if getter else {}
+            book = self.exchange.fetch_order_book(
+                self._inst_id(base, "swap"), depth=config.ORDERFLOW_BOOK_DEPTH)
+            micro = _microstructure_features(
+                book, depth=config.ORDERFLOW_BOOK_DEPTH,
+                direction=sig.get("dir"))
+            return paper_intraday_entry_decision(
+                sig, one_minute=one_minute, five_minute=five_minute,
+                orderflow=orderflow or {}, microstructure=micro,
+                realtime=realtime or {})
+        except Exception as exc:
+            return {"passed": False,
+                    "reason": f"confirmation_error:{type(exc).__name__}",
+                    "size_factor": 1.0}
+
     def scan_signals(self):
         """扫一轮候选池信号（每 15 分钟，日内短线）。
         频率约束（用户要求：看币动态调整笔数）：每个币每天的允许笔数按其当日
@@ -1269,6 +1306,28 @@ class SignalScanMixin:
                                      final_decision="rejected",
                                      reject_reason=_reason)
                     continue
+                _intraday_confirmation = {"passed": True, "size_factor": 1.0,
+                                           "reason": "not_required"}
+                if getattr(self, "paper_intraday_confirmation_enabled", False):
+                    _intraday_confirmation = \
+                        self._paper_intraday_entry_confirmation(base, sig)
+                    if signal_id:
+                        from engines.signal_sampling import merge_sample_features
+                        merge_sample_features(
+                            signal_id,
+                            {"paper_intraday_confirmation":
+                             _intraday_confirmation},
+                            db_path=self._db_path)
+                    if not _intraday_confirmation.get("passed"):
+                        _reason = ("intraday_confirmation:" +
+                                   str(_intraday_confirmation.get("reason")))
+                        self._log_scan_decision(
+                            base, True, sig["dir"], "microstructure_reject",
+                            _reason)
+                        _sample_decision(
+                            rule_decision="reject", final_decision="rejected",
+                            reject_reason=_reason)
+                        continue
                 # 决策（经验库，统一 ScoredExperience — B6）
                 dec = self.evolver.decide(base, SIGNAL_SCORE, "回踩确认", 0, 0, 0.02, 0.05, 0,
                                           journal=self.journal,
@@ -1340,7 +1399,9 @@ class SignalScanMixin:
                         base, sig,
                         score=sig.get("shadow_score") or SIGNAL_SCORE,
                         stop_adj=dec.get("stop_adj", 0.0),
-                        size_factor=dec.get("size_factor", 1.0),
+                        size_factor=(dec.get("size_factor", 1.0) *
+                                     _intraday_confirmation.get(
+                                         "size_factor", 1.0)),
                         adopted_ids=dec.get("adopted_lesson_ids", []))
                     if tid:
                         try:

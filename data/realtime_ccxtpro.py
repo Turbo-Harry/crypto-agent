@@ -17,6 +17,7 @@ import json
 import asyncio
 import threading
 import time
+from collections import deque
 
 import config
 from data.orderflow import OrderFlowAccumulator
@@ -42,6 +43,7 @@ class OKXRealtime:
         self._orderflow = OrderFlowAccumulator(
             config.ORDERFLOW_BOOK_DEPTH, config.ORDERFLOW_WINDOW_SECONDS,
             config.ORDERFLOW_MIN_EVENTS, config.ORDERFLOW_MAX_AGE_SECONDS)
+        self._trade_flow = {base: deque() for base in self.symbols}
 
     def _resolve_cred(self):
         """凭证解析: LIVE_MODE → 实盘凭证;否则 okx_config.json(与 connect() 一致)。
@@ -103,6 +105,7 @@ class OKXRealtime:
         tasks = {}
         f_tasks = {}
         book_tasks = {}
+        trade_tasks = {}
         while not self._shutdown:
             for base in list(self.subscribed):
                 if base in tasks and not tasks[base].done():
@@ -114,9 +117,12 @@ class OKXRealtime:
                 if base not in book_tasks or book_tasks[base].done():
                     book_tasks[base] = asyncio.ensure_future(
                         self._watch_book(ex, base))
+                if base not in trade_tasks or trade_tasks[base].done():
+                    trade_tasks[base] = asyncio.ensure_future(
+                        self._watch_trades(ex, base))
             await asyncio.sleep(1)
         for t in (list(tasks.values()) + list(f_tasks.values()) +
-                  list(book_tasks.values())):
+                  list(book_tasks.values()) + list(trade_tasks.values())):
             t.cancel()
 
     async def _watch_one(self, ex, base):
@@ -126,10 +132,22 @@ class OKXRealtime:
                 t = await ex.watch_ticker(sym)
                 last = t.get("last")
                 if last:
-                    self.latest.setdefault(base, {})
-                    self.latest[base]["price"] = float(last)
-                    self.latest[base]["price_ts"] = time.time()
-                    self._last_msg_ts = time.time()
+                    now = time.time()
+                    entry = self.latest.setdefault(base, {})
+                    price = float(last)
+                    entry["price"] = price
+                    entry["price_ts"] = now
+                    win = entry.setdefault("price_win", deque())
+                    win.append((now, price))
+                    while win and now - win[0][0] > 900:
+                        win.popleft()
+                    if len(win) >= 2:
+                        prices = [point[1] for point in win]
+                        lo = min(prices)
+                        if lo > 0:
+                            entry["vol_15m"] = (max(prices) - lo) / lo
+                            entry["vol_ts"] = now
+                    self._last_msg_ts = now
             except Exception:
                 await asyncio.sleep(2)   # 单币任务容错,不影响其它币
 
@@ -161,6 +179,26 @@ class OKXRealtime:
             except Exception:
                 await asyncio.sleep(2)
 
+    async def _watch_trades(self, ex, base):
+        """连续合约成交方向，供 paper 最终确认；不参与 live 决策。"""
+        sym = f"{base}/USDT:USDT"
+        while not self._shutdown:
+            try:
+                trades = await ex.watch_trades(sym)
+                now = time.time()
+                flow = self._trade_flow.setdefault(base, deque())
+                for trade in trades or []:
+                    flow.append((now, trade.get("side") == "buy"))
+                while flow and now - flow[0][0] > config.ORDERFLOW_WINDOW_SECONDS:
+                    flow.popleft()
+                buys = sum(int(is_buy) for _, is_buy in flow)
+                entry = self.latest.setdefault(base, {})
+                entry["taker_buy_60s"] = buys / len(flow) if flow else None
+                entry["trade_flow_count_60s"] = len(flow)
+                self._last_msg_ts = now
+            except Exception:
+                await asyncio.sleep(2)
+
     def _seed_candles_from_rest(self):
         """冷启动预热(与旧模块同语义): REST 拉最近 15 根 1m K 线算 vol_15m。"""
         if not self._fetch_candles:
@@ -176,6 +214,12 @@ class OKXRealtime:
                         entry = self.latest.setdefault(base, {})
                         entry["vol_15m"] = round((hi - lo) / lo, 6)
                         entry["vol_ts"] = time.time()
+                        now = time.time()
+                        win = entry.setdefault("price_win", deque())
+                        for candle in rows:
+                            ts = float(candle.ts) / 1000.0
+                            if now - 900 <= ts <= now:
+                                win.append((ts, float(candle.close)))
                         ok += 1
             except Exception:
                 continue

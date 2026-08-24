@@ -212,6 +212,9 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         self.paper_bootstrap_orders_enabled = bool(
             _real_okx and not self.live_mode and
             _c.PAPER_BOOTSTRAP_BASELINE_ORDERS)
+        self.paper_intraday_confirmation_enabled = bool(
+            _real_okx and not self.live_mode and
+            _c.PAPER_INTRADAY_CONFIRM_ENABLED)
         self.agent_model_call = None
         self.agent_proposal_model_call = None
         if (_real_okx and getattr(_c, "AGENT_HARNESS_ENABLED", False)):
