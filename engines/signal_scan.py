@@ -1120,7 +1120,9 @@ class SignalScanMixin:
                                                   update_signal_decision)
             merge_sample_features(signal_id, {
                 "agent_proposal_execution": {
-                    "paper_only": True, "trade_id": tid,
+                    "paper_only": not _live,
+                    "live_bootstrap": bool(_live and bootstrap),
+                    "trade_id": tid,
                     "entry_deviation_bps": deviation_bps,
                     "confirmation": confirmation,
                 }}, db_path=self._db_path)

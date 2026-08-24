@@ -212,6 +212,11 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
         self.paper_bootstrap_orders_enabled = bool(
             _real_okx and not self.live_mode and
             _c.PAPER_BOOTSTRAP_BASELINE_ORDERS)
+        # 2026-08-25 用户指示"实盘开 bootstrap 通道": 无已验证模型时
+        # 实盘 C 单也允许小仓执行采集证据
+        self.live_bootstrap_orders_enabled = bool(
+            _real_okx and self.live_mode and
+            getattr(_c, "AGENT_PROPOSAL_LIVE_BOOTSTRAP_ENABLED", False))
         self.paper_intraday_confirmation_enabled = bool(
             _real_okx and not self.live_mode and
             _c.PAPER_INTRADAY_CONFIRM_ENABLED)
@@ -224,10 +229,14 @@ class DirectionalTrader(SignalScanMixin, PositionMixin,
                 )
                 if harness_model_available():
                     self.agent_model_call = production_harness_model_call
-                    # C 主动提案与执行严格限于 OKX paper；live 连模型调用能力
-                    # 都不装配，避免把配置误改演变为真实资金权限。
-                    _proposal_ok = (not self.live_mode and getattr(
-                        _c, "AGENT_PROPOSAL_SHADOW_ENABLED", False))
+                    # 2026-08-25 用户指示"把他加进实盘里"+实盘 bootstrap 通道:
+                    # live 也装配提案模型能力,由独立开关门控执行权限。
+                    _proposal_ok = (
+                        getattr(_c, "AGENT_PROPOSAL_SHADOW_ENABLED", False)
+                        and ((not self.live_mode)
+                             or getattr(_c,
+                                        "AGENT_PROPOSAL_LIVE_EXECUTION_ENABLED",
+                                        False)))
                     if _proposal_ok:
                         from decision.agent_proposals import \
                             production_proposal_model_call
