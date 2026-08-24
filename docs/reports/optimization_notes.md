@@ -1757,3 +1757,14 @@
 - 验收：专项必须证明 provider payload 确实带 JSON object 模式，原有 14 项资格/幂等/零权限回归全绿；
   全量仍为 58/58。paper 重启后的首个自然 v4.2 run 必须有可复算 input hash、完整资格字段，且只能是
   合法 completed 或带明确原因的 fail-closed；无论结果都保持 execution_authority=false、订单 0。
+- 实装与自然证据：提交 `90a0f89` 后只 kickstart `com.crypto.paper`，PID `44966→46417`；live PID
+  `90574` 未变化。重启后空仓、未熔断、对账一致、`/error` 为空。首个自然 v4.2 run
+  `proposal-run-e097a7f1fde894e0b058d45e` 在 1740ms 内 completed，冻结资格仅 ZRO=short，run/audit/
+  本地复算 input hash 三者均为 `6c6b52fe...893587`；模型输出 1 条且严格验证 1/1。确定性几何为
+  entry 1.1311、stop 1.1415714286、tp 1.1101571429、2:1；落库仍是 rule=shadow、final=rejected、
+  `execution_authority=0`、`prediction_passed=0`，原因 `no_validated_active_model`，因此没有触发订单。
+- 回归与 Harness 同轮证据：提案专项 15/15、主 Harness 13/13、v1 回放 3/3；最终自动发现 58/58、
+  红 0，AI repo、依赖图、参数、测试隔离、23 条修复护栏、`py_compile` 全绿。同一模拟盘自然出现 3 条
+  v8/v6 Harness run，均在首次模型 step 完成、`retry_count=0`，动作分别为 1 次 shadow_reject、2 次
+  agent_abstain；policy 均保持 `baseline_pass`，因为 `veto_enabled=false`。这证明首次契约可用性改善，
+  但 `/models/entry` 仍为空、当前评估仍 `insufficient_data`，不得据此宣称胜率改善或启用 veto/下单。
