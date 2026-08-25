@@ -823,7 +823,9 @@ LOSS_STREAK_COOL_PAPER_ENABLED = False
 LOSS_HALF_PAPER_ENABLED = False   # 2026-08-23 用户指示"模拟盘不要有冷却":
                                   # 连亏半仓在模拟盘也关闭(全仓激进采集),实盘保持
 # 2026-08-23 用户指示: BTC/ETH 用 10x 杠杆(其余币 B+C 分档 3x-5x)
-LIVE_LEVERAGE_MAP = {"BTC": 10, "ETH": 10}
+# 2026-08-25 用户指示"都开到5x吧,反正低仓位": 实盘全部统一 5x
+LIVE_LEVERAGE_MAP = {"BTC": 5, "ETH": 5}
+LIVE_LEVERAGE_DEFAULT = 5        # 其余币也统一 5x(低仓位,保证金充裕)
 # BTC/ETH 的名义上限=最小合约名义(BTC 0.01≈680 / ETH 0.01≈25),
 # 覆盖 10 USDT 通用上限——否则永远买不起最小张数
 LIVE_SPECIAL_NOTIONAL = {"BTC": 680, "ETH": 230}

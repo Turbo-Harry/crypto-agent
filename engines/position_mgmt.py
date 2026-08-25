@@ -223,7 +223,9 @@ class PositionMixin:
         # → 5x;否则 3x;最终钳制 [LEVERAGE_MIN, LEVERAGE_MAX]。
         lev = leverage_for(base, score, self.journal.trades)
         if getattr(self, "live_mode", False):
-            lev = config.LIVE_LEVERAGE_MAP.get(base, lev)   # BTC/ETH 10x
+            # 2026-08-25 用户指示: 实盘全部统一 5x
+            lev = config.LIVE_LEVERAGE_MAP.get(
+                base, getattr(config, "LIVE_LEVERAGE_DEFAULT", 5))
         inst = self.exchange.instrument(inst_id)
         for side in ["long", "short"]:
             try:
