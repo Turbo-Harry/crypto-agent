@@ -173,9 +173,17 @@ check("H9 仓位快照新鲜(<5min)", s_age < 300, f"{s_age:.0f}s 前")
 # 2026-08-20 口径修正: 订单流字段(of_*)是 best-effort 网络源,Binance/Gate
 # 无覆盖的币(AI16Z 等)按设计记缺失——不算缺陷。只查【核心特征】
 # (MFE/MAE/R 倍数/滑点/持仓时长)缺失的行。
+# 2026-08-25 口径修正: 持仓 <120s 的秒级单(如 STX 24.7s 快止盈)物理上
+# 凑不齐 1m K 线窗口,mae_r/mfe_r 按设计缺失——豁免,不算缺陷。
 _core_fields = ("mae_r", "mfe_r", "r_multiple", "slippage_bps", "holding_hours")
 _where = " OR ".join(f"features_missing LIKE '%{f}%'" for f in _core_fields)
-badf = q(DB, f"SELECT COUNT(*) c FROM trade_features WHERE {_where}")
+badf = q(DB, f"SELECT COUNT(*) c FROM trade_features tf "
+             f"JOIN trades t ON t.id = tf.trade_id "
+             f"WHERE ({_where}) AND "
+             f"NOT (COALESCE(t.exit_time,0) - COALESCE(t.entry_time,0) < 120 "
+             f"     AND tf.features_missing NOT LIKE '%r_multiple%' "
+             f"     AND tf.features_missing NOT LIKE '%slippage_bps%' "
+             f"     AND tf.features_missing NOT LIKE '%holding_hours%')")
 check("H10 核心特征缺失率=0（订单流 best-effort 除外）", badf[0]["c"] == 0,
       f"{badf[0]['c']} 行有缺失字段")
 
