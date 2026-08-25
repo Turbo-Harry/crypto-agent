@@ -317,6 +317,30 @@ def _cancellation_imbalance(current, previous):
 # 参数别名（统一维护于 config.py,本模块不私藏数值）
 
 
+def passage_gate_ok(entry, stop, tp, direction, klines_closes):
+    """触达概率门(2026-08-25 用户指示'预测到达止盈概率>60%才下单维持胜率'):
+    用近段 15m 收益 bootstrap 估 P(先触止盈),>= ENTRY_MIN_P_HIT_TP 才放行;
+    数据不足返回 False(拒单,不猜)。"""
+    try:
+        import config as _c
+        from decision.forecast import forecast, _returns
+        if not klines_closes or len(klines_closes) < 60:
+            return False
+        rets = _returns(list(klines_closes)[-_c.FORECAST_LOOKBACK_BARS:])
+        if len(rets) < 30:
+            return False
+        fc = forecast(entry=float(entry), atr=abs(float(entry) - float(stop)),
+                      direction=direction, stop=float(stop), tp=float(tp),
+                      hourly_returns=rets,
+                      horizon=_c.FORECAST_HORIZON_BARS,
+                      paths=_c.FORECAST_PATHS)
+        if not fc:
+            return False
+        return fc["p_hit_tp"] >= getattr(_c, "ENTRY_MIN_P_HIT_TP", 0.60)
+    except Exception:
+        return False
+
+
 def dynamic_tp_net_ev(selected, entry, stop):
     """预测位期望净盈利(USDT 口径,2026-08-25 用户指示):
     触TP盈利×P(触TP) − 触SL亏损×P(触SL) − 手续费(cost_r×risk)。
@@ -989,6 +1013,16 @@ class SignalScanMixin:
                 _dynamic_tp = {"passed": False,
                                "reason": f"optimizer_error:{type(exc).__name__}",
                                "version": config.DYNAMIC_TP_VERSION}
+        # 2026-08-25 用户指示: 预测触达止盈概率>60% 才下单(胜率维持)
+        try:
+            _closes15 = [k.get("close") for k in klines
+                         if isinstance(k, dict) and k.get("close")]
+            if not passage_gate_ok(entry_ref, _stop, _tp, direction, _closes15):
+                print(f"⛔ 拒单 {base}: 预测触达止盈概率 < "
+                      f"{config.ENTRY_MIN_P_HIT_TP*100:.0f}%,不接")
+                return None
+        except Exception:
+            pass
         return {"dir": direction, "entry": entry_ref,
                 "stop": _stop, "tp": _tp,
                 "atr": atr_val,
@@ -1263,6 +1297,19 @@ class SignalScanMixin:
                         sig["ai_target"] = True
             except Exception:
                 pass
+            # 2026-08-25 用户指示: 预测触达止盈概率>60% 才下单
+            try:
+                _c_kl = self._fetch_klines_any(
+                    str(proposal["base"]),
+                    config.SIGNAL_SAMPLE_TIMEFRAME, 60) or []
+                _c_closes = [r[4] for r in _c_kl if len(r) > 4]
+                if not passage_gate_ok(sig["entry"], sig["stop"], sig["tp"],
+                                       sig["dir"], _c_closes):
+                    print(f"⛔ 拒单 {proposal['base']}: 预测触达止盈概率 < "
+                          f"{config.ENTRY_MIN_P_HIT_TP*100:.0f}%")
+                    continue
+            except Exception:
+                continue
             tid = self.open_position(
                 str(proposal["base"]), sig, score=0,
                 size_factor=float(confirmation.get("size_factor") or 1.0))

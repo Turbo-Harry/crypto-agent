@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from engines.signal_scan import dynamic_tp_net_ev
+from engines.signal_scan import dynamic_tp_net_ev, passage_gate_ok
 
 _passed = _failed = 0
 
@@ -45,6 +45,23 @@ def main():
 
     # 数据缺失 → None
     check("缺字段 → None", dynamic_tp_net_ev({}, 100.0, 98.0) is None)
+
+    # ---- 触达概率门(2026-08-25 用户指示 >60% 才下单) ----
+    # 强上涨漂移序列 → P(触TP) 高 → 放行
+    import math
+    up = [100 * math.exp(0.002 * i) for i in range(200)]
+    check("强上涨漂移 → 触达门放行",
+          passage_gate_ok(entry=100.0, stop=99.5, tp=100.5,
+                          direction="long", klines_closes=up) is True)
+    # 零漂移 1:1 → P(触TP)≈50% < 60% → 拒单
+    flat = [100.0] * 200
+    check("零漂移 1:1 → 触达门拒单(≈50%<60%)",
+          passage_gate_ok(entry=100.0, stop=99.5, tp=100.5,
+                          direction="long", klines_closes=flat) is False)
+    # 数据不足 → 拒单
+    check("数据不足 → 触达门拒单",
+          passage_gate_ok(entry=100.0, stop=99.5, tp=100.5,
+                          direction="long", klines_closes=[100.0]*10) is False)
 
     print(f"\n结果: {_passed} 通过, {_failed} 失败")
     return 0 if _failed == 0 else 1
