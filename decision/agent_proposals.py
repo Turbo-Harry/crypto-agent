@@ -383,7 +383,9 @@ def _parse_model_output(
 def _geometry(snapshot: MarketSnapshot, direction: str) -> dict[str, float]:
     entry = snapshot.reference_entry
     risk = config.STOP_ATR_MULT * snapshot.atr
-    reward = config.TP_ATR_MULT * snapshot.atr
+    # 2026-08-25 用户指示"肯定追求高胜率": 几何盈亏比 = ENTRY_REQUIRED_REWARD_RISK
+    # (1:1),与结构模式 TP_RR_MULT 同口径
+    reward = config.ENTRY_REQUIRED_REWARD_RISK * risk
     if entry <= 0 or risk <= 0 or reward <= 0:
         raise ValueError("invalid deterministic geometry")
     if direction == "long":
@@ -395,7 +397,7 @@ def _geometry(snapshot: MarketSnapshot, direction: str) -> dict[str, float]:
     rr = reward / risk
     if not math.isclose(rr, config.ENTRY_REQUIRED_REWARD_RISK,
                         rel_tol=1e-9, abs_tol=1e-9):
-        raise ValueError("configured geometry is not fixed 2:1")
+        raise ValueError("configured geometry does not match required RR")
     return {"entry": entry, "stop": stop, "tp": tp, "atr": snapshot.atr,
             "reward_risk": rr}
 

@@ -528,7 +528,12 @@ FEE_RATE_TAKER = 0.0005        # OKX 基础 taker 费率 0.05%(VIP0,双边收)
 FUNDING_EXPECTED_INTERVAL_HOURS = 8  # 信号时点费率按持有时长折算；收益不抵扣成本
 REJECT_WICK_RATIO = 1.0      # 拒绝K线: 影线/实体 最小比（激进第二档 1.5→1.0,信号更多）
 STOP_ATR_MULT = 1.0          # 止损距离 = N × ATR(结构位模式下的下限)
-TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR（2:1 盈亏比,结构模式随止损距）
+TP_ATR_MULT = 2.0            # 止盈距离 = N × ATR(旧 2:1 口径保留,仅 atr 模式用)
+# 2026-08-25 用户指示"肯定追求高胜率": 结构模式下止盈=止损距×TP_RR_MULT
+# (1:1 → 胜率基线 50%,信号 edge 抬到 50%+);动态止盈在净EV>0 候选里
+# 选触达概率最高者(胜率优先),AI 目标位 rr≥1 即采用。
+TP_RR_MULT = 1.0             # 结构模式止盈盈亏比(1.0=1:1 胜率优先)
+DYNAMIC_TP_SELECT_MODE = "winrate"  # "winrate"(净EV>0里选P触TP最高) | "ev"
 # 2026-08-25 用户质疑"ATR 不靠谱": 止损锚定结构位(近20根摆动低/高点外扩
 # 缓冲),ATR 距离作为【下限】(结构位太近时取 ATR);止盈 = 止损距离×2,
 # 2:1 口径恒定。STOP_MODE="atr" 可回滚到纯 ATR 旧口径。
@@ -695,7 +700,7 @@ PAPER_ENTRY_VOL_SIZE_FACTOR = 0.50
 # 下 paper 单采集真实成交/平仓证据；仅缺 active 模型可被该通道覆盖，其他门不变。
 PAPER_REQUIRE_VALIDATED_2TO1_PREDICTION = True
 PAPER_BOOTSTRAP_BASELINE_ORDERS = True
-ENTRY_REQUIRED_REWARD_RISK = 2.0
+ENTRY_REQUIRED_REWARD_RISK = 1.0   # 2026-08-25 用户指示追求高胜率: 1:1 门槛
 ENTRY_COST_MODEL_VERSION = "roundtrip-plus-conservative-funding-v1"
 ENTRY_MODEL_SHADOW_ONLY = False
 ENTRY_MODEL_MIN_SAMPLES = 300

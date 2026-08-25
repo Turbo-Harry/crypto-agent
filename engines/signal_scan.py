@@ -155,7 +155,8 @@ def resolve_stop_tp(entry, atr_val, direction, swing_level=None):
         stop = (min(atr_stop, s_struct) if direction == "long"
                 else max(atr_stop, s_struct))
     risk = abs(entry - stop)
-    tp = entry + 2 * risk if direction == "long" else entry - 2 * risk
+    _rr = getattr(config, "TP_RR_MULT", 2.0)
+    tp = entry + _rr * risk if direction == "long" else entry - _rr * risk
     return round(stop, 8), round(tp, 8)
 
 
@@ -1257,7 +1258,7 @@ class SignalScanMixin:
                     _rr = ((float(_ai_target) - float(sig["entry"])) / _risk
                            if sig["dir"] == "long" else
                            (float(sig["entry"]) - float(_ai_target)) / _risk)
-                    if _rr >= 2.0:
+                    if _rr >= getattr(config, "ENTRY_REQUIRED_REWARD_RISK", 1.0):
                         sig["tp"] = float(_ai_target)
                         sig["ai_target"] = True
             except Exception:

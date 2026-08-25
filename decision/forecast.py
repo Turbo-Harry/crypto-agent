@@ -511,7 +511,19 @@ def optimize_take_profit(sig, base, klines, factor_features, db_path=None):
         return {"passed": False, "reason": "no_evaluable_target",
                 "orderflow_score": round(flow_score, 6),
                 "version": config.DYNAMIC_TP_VERSION}
-    best = max(ranked, key=lambda item: (item["ev_r"], item["p_hit_tp"]))
+    # 2026-08-25 用户指示"肯定追求高胜率": winrate 模式在净EV>0 候选中
+    # 选触达概率最高者;ev 模式保持原口径(成本后EV最优)
+    _select_mode = getattr(config, "DYNAMIC_TP_SELECT_MODE", "ev")
+    if _select_mode == "winrate":
+        _positive = [c for c in ranked
+                     if c["ev_r"] > config.DYNAMIC_TP_MIN_EV_R]
+        if _positive:
+            best = max(_positive,
+                       key=lambda item: (item["p_hit_tp"], item["ev_r"]))
+        else:
+            best = max(ranked, key=lambda item: (item["ev_r"], item["p_hit_tp"]))
+    else:
+        best = max(ranked, key=lambda item: (item["ev_r"], item["p_hit_tp"]))
     return {"passed": best["ev_r"] > config.DYNAMIC_TP_MIN_EV_R,
             "reason": ("positive_cost_adjusted_ev" if
                        best["ev_r"] > config.DYNAMIC_TP_MIN_EV_R else

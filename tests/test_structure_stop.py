@@ -35,27 +35,27 @@ def main():
     # 多: 入场100, ATR=2, 摆动低点95 → 结构止损 95-0.4=94.6, ATR止损 98
     s, t = resolve_stop_tp(100.0, 2.0, "long", swing_level=95.0)
     check("多: 结构止损 94.6(比ATR 98 更宽)", s == 94.6, f"stop={s}")
-    check("多: 止盈=止损距×2 → 110.8", abs(t - 110.8) < 1e-9, f"tp={t}")
+    check("多: 止盈=止损距×1 → 105.4", abs(t - 105.4) < 1e-9, f"tp={t}")
 
     # 结构位太近: 摆动低点 99.5 → 结构止损 99.1, 但 ATR 下限 98 更宽 → 取 98
     s2, t2 = resolve_stop_tp(100.0, 2.0, "long", swing_level=99.5)
     check("结构位过近 → ATR 下限(98)", s2 == 98.0, f"stop={s2}")
-    check("止盈仍 2:1(104)", abs(t2 - 104.0) < 1e-9, f"tp={t2}")
+    check("止盈 1:1(102)", abs(t2 - 102.0) < 1e-9, f"tp={t2}")
 
     # 结构位缺失 → 纯 ATR
     s3, t3 = resolve_stop_tp(100.0, 2.0, "long", swing_level=None)
-    check("无结构位 → 纯 ATR(98/104)", s3 == 98.0 and t3 == 104.0,
+    check("无结构位 → 纯 ATR(98/102)", s3 == 98.0 and t3 == 102.0,
           f"stop={s3} tp={t3}")
 
     # 空头镜像
     s4, t4 = resolve_stop_tp(100.0, 2.0, "short", swing_level=105.0)
-    check("空: 结构止损 105.4 / 止盈 89.2",
-          s4 == 105.4 and abs(t4 - 89.2) < 1e-9, f"stop={s4} tp={t4}")
+    check("空: 结构止损 105.4 / 止盈 94.6",
+          s4 == 105.4 and abs(t4 - 94.6) < 1e-9, f"stop={s4} tp={t4}")
 
     # 旧口径
     config.STOP_MODE = "atr"
     s5, t5 = resolve_stop_tp(100.0, 2.0, "long", swing_level=95.0)
-    check("atr 模式 → 98/104(忽略结构位)", s5 == 98.0 and t5 == 104.0,
+    check("atr 模式 → 98/102(忽略结构位)", s5 == 98.0 and t5 == 102.0,
           f"stop={s5} tp={t5}")
 
     config.STOP_MODE = _old_mode
