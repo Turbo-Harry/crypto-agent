@@ -10,7 +10,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from engines.signal_scan import dynamic_tp_net_ev, passage_gate_ok
+from engines.signal_scan import (dynamic_tp_net_ev, passage_gate_ok,
+                                   tp_net_ok)
 
 _passed = _failed = 0
 
@@ -62,6 +63,15 @@ def main():
     check("数据不足 → 触达门拒单",
           passage_gate_ok(entry=100.0, stop=99.5, tp=100.5,
                           direction="long", klines_closes=[100.0]*10) is False)
+
+    # ---- 止盈位覆盖成本门(2026-08-25 用户指示) ----
+    # 正常 1:1: 盈利 1R,成本 ~0.05R → 放行
+    check("盈利1R 覆盖成本 → 放行",
+          tp_net_ok(entry=100.0, stop=99.0, tp=101.0, direction="long") is True)
+    # 超近目标: 盈利 0.2R,成本 ~0.05R → 仍正? 用极小目标 0.001R → 拒
+    check("极小目标(盈利<成本) → 拒单",
+          tp_net_ok(entry=100.0, stop=99.0, tp=100.0005,
+                    direction="long") is False)
 
     print(f"\n结果: {_passed} 通过, {_failed} 失败")
     return 0 if _failed == 0 else 1

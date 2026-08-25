@@ -341,6 +341,28 @@ def passage_gate_ok(entry, stop, tp, direction, klines_closes):
         return False
 
 
+def tp_net_ok(entry, stop, tp, direction):
+    """止盈位覆盖成本门(2026-08-25 用户指示'预测止盈位-成本<0也应拒绝'):
+    止盈盈利 = |tp−entry|;成本 = execution_cost_r × 止损距(双边费+资金费)。
+    盈利 − 成本 ≤ ENTRY_MIN_TP_NET_USDT → 拒单。成本算不出 → 拒单(保守)。"""
+    try:
+        import config as _c
+        from decision.entry_probability import execution_cost_r
+        _risk = abs(float(entry) - float(stop))
+        _profit = abs(float(tp) - float(entry))
+        if _risk <= 0 or _profit <= 0:
+            return False
+        cr = execution_cost_r({"entry": float(entry), "stop": float(stop),
+                               "tp": float(tp), "dir": direction,
+                               "atr": _risk})
+        if cr is None:
+            return False
+        return (_profit - float(cr) * _risk
+                > getattr(_c, "ENTRY_MIN_TP_NET_USDT", 0.0))
+    except Exception:
+        return False
+
+
 def dynamic_tp_net_ev(selected, entry, stop):
     """预测位期望净盈利(USDT 口径,2026-08-25 用户指示):
     触TP盈利×P(触TP) − 触SL亏损×P(触SL) − 手续费(cost_r×risk)。
@@ -1021,6 +1043,10 @@ class SignalScanMixin:
                 print(f"⛔ 拒单 {base}: 预测触达止盈概率 < "
                       f"{config.ENTRY_MIN_P_HIT_TP*100:.0f}%,不接")
                 return None
+            if not tp_net_ok(entry_ref, _stop, _tp, direction):
+                print(f"⛔ 拒单 {base}: 预测止盈位盈利 − 成本 ≤ "
+                      f"{config.ENTRY_MIN_TP_NET_USDT},不接")
+                return None
         except Exception:
             pass
         return {"dir": direction, "entry": entry_ref,
@@ -1307,6 +1333,11 @@ class SignalScanMixin:
                                        sig["dir"], _c_closes):
                     print(f"⛔ 拒单 {proposal['base']}: 预测触达止盈概率 < "
                           f"{config.ENTRY_MIN_P_HIT_TP*100:.0f}%")
+                    continue
+                if not tp_net_ok(sig["entry"], sig["stop"], sig["tp"],
+                                 sig["dir"]):
+                    print(f"⛔ 拒单 {proposal['base']}: 预测止盈位盈利 − 成本 ≤ "
+                          f"{config.ENTRY_MIN_TP_NET_USDT}")
                     continue
             except Exception:
                 continue
