@@ -87,7 +87,9 @@ def test_full_trade_flow():
         print("    （信号为空，跳过后续断言）")
         return
     check("止损在入场下方", sig["stop"] < sig["entry"])
-    check("止盈 = 2:1", abs(sig["tp"] - sig["entry"]) > abs(sig["stop"] - sig["entry"]))
+    # 2026-08-25 用户指示追求高胜率: 1:1 口径(止盈距 ≥ 止损距)
+    check("止盈 ≥ 止损距(1:1 胜率口径)",
+          abs(sig["tp"] - sig["entry"]) >= abs(sig["stop"] - sig["entry"]))
 
     # 开仓（模拟盘 FakeAdapter 记账）
     tid = dt.open_position(base, sig, score=80)

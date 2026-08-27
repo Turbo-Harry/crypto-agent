@@ -59,7 +59,14 @@ class CCXTAdapter(ExchangeAdapter):
         self._ccxt = ccxt.okx({
             "apiKey": api_key, "secret": secret, "password": passphrase,
             "enableRateLimit": True,
+            # 2026-08-27 沙盘私有接口挂起事故: 显式 15s 请求超时,
+            # 失败快速抛错走重试/退避,不把调用方卡死
+            "timeout": 15000,
         })
+        # 私有接口失败退避状态(挂起/连续失败时快速短路,不每拍重试)
+        self._private_fails = {}   # op -> {"ts":..., "n":...}
+        # 退避期间返回的缓存快照(引擎任务照常运行,H9 不因交易所故障误报)
+        self._private_cache = {}   # op -> last-good value
         if sandbox:
             self._ccxt.set_sandbox_mode(True)
         self._markets_loaded = False
@@ -262,14 +269,55 @@ class CCXTAdapter(ExchangeAdapter):
         return f"ca{int(time.time()*1000)}{uuid.uuid4().hex[:8]}"  # G1 格式
 
     # ---------- 账户 ----------
+    def _private_backoff(self, op: str) -> bool:
+        """私有接口失败退避(2026-08-27): 连续失败时按 30s×2^n 退避(上限 10min),
+        期间调用方直接收到快速 ExchangeError,不再每拍撞挂死的交易所。"""
+        import time as _t
+        now = _t.time()
+        st = self._private_fails.get(op)
+        if not st:
+            return False
+        if now - st["ts"] > 600:
+            self._private_fails.pop(op, None)
+            return False
+        wait = min(600, 30 * (2 ** min(st["n"] - 1, 5)))
+        return (now - st["ts"]) < wait
+
+    def _private_mark(self, op: str, ok: bool):
+        import time as _t
+        if ok:
+            self._private_fails.pop(op, None)
+            return
+        st = self._private_fails.setdefault(op, {"ts": 0.0, "n": 0})
+        now = _t.time()
+        if now - st["ts"] < 600:
+            st["n"] += 1
+        else:
+            st["n"] = 1
+        st["ts"] = now
+
+    def _backoff_or_cache(self, op: str):
+        """退避窗口内: 有缓存返回缓存(不抛错→任务照常运行,错误行不刷屏),
+        无缓存抛错(窗口首败语义,让引擎知道接口不可用)。"""
+        if not self._private_backoff(op):
+            return None
+        if op in self._private_cache:
+            return self._private_cache[op]
+        raise ExchangeError(f"{op} 接口退避中(OKX 私有接口连续失败,无缓存)")
+
     def fetch_balance(self) -> BalanceInfo:
         self._load()
+        _cached = self._backoff_or_cache("balance")
+        if _cached is not None:
+            return _cached
         try:
             b = self._ccxt.fetch_balance()
+            self._private_mark("balance", True)
         except Exception as e:
+            self._private_mark("balance", False)
             raise ExchangeError(f"余额失败: {e}")
         usdt = b.get("USDT") or {}
-        return BalanceInfo(
+        out = BalanceInfo(
             total_eq=float(b.get("total", {}).get("USDT")
                            or usdt.get("total") or 0),
             usdt_free=float(usdt.get("free") or 0),
@@ -279,13 +327,20 @@ class CCXTAdapter(ExchangeAdapter):
                     for c, v in (b or {}).items()
                     if c not in ("info", "free", "used", "total", "timestamp",
                                  "datetime")})
+        self._private_cache["balance"] = out
+        return out
 
     def fetch_positions(self, inst_id: Optional[str] = None) -> List[PositionInfo]:
         self._load()
+        _cached = self._backoff_or_cache("positions")
+        if _cached is not None:
+            return _cached
         sym = self._to_ccxt_symbol(inst_id) if inst_id else None
         try:
             raw = self._ccxt.fetch_positions([sym] if sym else None)
+            self._private_mark("positions", True)
         except Exception as e:
+            self._private_mark("positions", False)
             raise ExchangeError(f"持仓失败: {e}")
         out = []
         for p in raw:
@@ -315,6 +370,7 @@ class CCXTAdapter(ExchangeAdapter):
                 base_qty=abs(contracts) * ct_val,
                 avg_px=float(p.get("entryPrice") or 0),
                 mgn_mode=info.get("mgnMode") or "cross"))   # G15 语义
+        self._private_cache["positions"] = out
         return out
 
     def set_leverage(self, inst_id: str, lever: int, pos_side: str,
