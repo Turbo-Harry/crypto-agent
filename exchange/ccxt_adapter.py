@@ -56,13 +56,22 @@ class CCXTAdapter(ExchangeAdapter):
     def __init__(self, api_key: str, secret: str, passphrase: str,
                  sandbox: bool = True):
         import ccxt
-        self._ccxt = ccxt.okx({
+        import os as _os
+        _params = {
             "apiKey": api_key, "secret": secret, "password": passphrase,
             "enableRateLimit": True,
             # 2026-08-27 沙盘私有接口挂起事故: 显式 15s 请求超时,
             # 失败快速抛错走重试/退避,不把调用方卡死
             "timeout": 15000,
-        })
+        }
+        # 2026-08-31 网络事故: OKX DNS 被劫持(169.254.0.2),ccxt 默认
+        # trust_env=False 不吃环境代理——显式把 Clash 代理注入 ccxt
+        # (REST 与 ccxt.pro WS 都走 proxies 配置)
+        _proxy = (_os.environ.get("HTTPS_PROXY")
+                  or _os.environ.get("https_proxy") or "")
+        if _proxy:
+            _params["proxies"] = {"http": _proxy, "https": _proxy}
+        self._ccxt = ccxt.okx(_params)
         # 私有接口失败退避状态(挂起/连续失败时快速短路,不每拍重试)
         self._private_fails = {}   # op -> {"ts":..., "n":...}
         # 退避期间返回的缓存快照(引擎任务照常运行,H9 不因交易所故障误报)
